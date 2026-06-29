@@ -1743,13 +1743,12 @@ EXAMPLE OUTPUT:
 
     "ev_rating": "STRONG",
 
-    "pinnacle_gap": "+3.5% vs Pinnacle 1.72",
+    "sharp_signal": "NONE",
 
-    "sharp_signal": "CONFIRMS — Under shortened 6% at Pinnacle since open",
+    "source_calls": ["C2A","C2B","C4","C6","C7","C8","C9A"],
 
-    "source_calls": ["C2A","C2B","C4","C6","C6B","C7","C8","C9A","C9B"],
+    "reasoning": "France defensive solidity 0.6 goals conceded avg combined with Mane CRITICAL absence reducing Senegal output 31.6% point to low-scoring match."
 
-    "reasoning": "France defensive solidity 0.6 goals conceded avg combined with Mane CRITICAL absence reducing Senegal output 31.6% and sharp money shortening Under at Pinnacle all point to low-scoring match."
 
   },
 
