@@ -397,7 +397,7 @@ Start your response with { and end with }.`;
                     )}
 
                     {isActive && analysisError && (
-                      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
                         {analysisError}
                       </div>
                     )}
@@ -414,6 +414,15 @@ Start your response with { and end with }.`;
                             ? JSON.stringify(analysisResult, null, 2)
                             : analysisRaw}
                         </pre>
+                        {tokenUsage && (
+                          <p className="font-mono text-xs text-slate">
+                            Tokens used:{" "}
+                            <span className="text-accent-amber">{tokenUsage.input}</span>{" "}
+                            in,{" "}
+                            <span className="text-accent-amber">{tokenUsage.output}</span>{" "}
+                            out
+                          </p>
+                        )}
                       </div>
                     )}
                   </li>
