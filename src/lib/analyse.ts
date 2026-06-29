@@ -528,6 +528,7 @@ export async function collectMatchData(
   // When debugging, capture every raw HTTP call made by afGet/saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
+  lastCompetitionsRaw = null;
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
