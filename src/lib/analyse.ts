@@ -614,6 +614,7 @@ export async function collectMatchData(
   // 9: odds + Pinnacle
   await runStep("9", "Fetching odds and Pinnacle data... (11/11)", async () => {
     // 9A: resolve Stake bookmaker id (cached)
+    currentDebugCall = "9A";
     let stakeId: string | null =
       typeof window !== "undefined"
         ? window.localStorage.getItem("stake_bookmaker_id")
@@ -637,6 +638,7 @@ export async function collectMatchData(
     );
 
     // 9B: TheStatsAPI odds (Pinnacle)
+    currentDebugCall = "9B";
     let saOdds: unknown = null;
     let saOddsError: string | null = null;
     if (statsApiResolved && statsApiMatchId) {
