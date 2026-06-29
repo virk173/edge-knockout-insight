@@ -105,6 +105,9 @@ export interface TacticalAnalysis {
 export interface Absence {
   player?: string;
   team?: string;
+  // Raw variables from Claude (preferred source of truth).
+  gap_score_inputs?: GapScoreInputs;
+  multiplier_inputs?: MultiplierInputs;
   gap_score?: number;
   gap_calculation?: string;
   classification?: string; // "CRITICAL" | "SIGNIFICANT" | ...
