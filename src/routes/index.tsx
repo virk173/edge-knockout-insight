@@ -450,6 +450,18 @@ Start your response with { and end with }.`;
     }
   }
 
+  function handleResetBudget() {
+    const confirmed = window.confirm(
+      "Reset today's API call counter to 0? This does not affect actual API usage limits — it only resets the local counter.",
+    );
+    if (!confirmed) return;
+    const today = new Date().toISOString().slice(0, 10);
+    window.localStorage.removeItem(`apifootball_calls_${today}`);
+    setApiCalls(getApiCallCount());
+    toast.success("API budget counter reset to 0");
+  }
+
+
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
   const counterCritical = apiCalls >= CRITICAL_THRESHOLD;
@@ -579,11 +591,21 @@ Start your response with { and end with }.`;
           </div>
 
           {debugMode && (
-            <div className="w-full rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
-              REAL API TEST — South Africa vs Canada June 28. Full pipeline
-              verification.
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex-1 rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
+                REAL API TEST — South Africa vs Canada June 28. Full pipeline
+                verification.
+              </div>
+              <button
+                type="button"
+                onClick={handleResetBudget}
+                className="shrink-0 rounded-md border border-accent-amber/60 px-4 py-2 text-sm font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10 focus:outline-none focus:ring-1 focus:ring-accent-amber"
+              >
+                Reset API Budget
+              </button>
             </div>
           )}
+
 
           {counterCritical ? (
             <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
