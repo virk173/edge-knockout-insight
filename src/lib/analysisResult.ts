@@ -4,24 +4,6 @@
  * so the UI must render defensively.
  */
 
-export interface LineMovementSignal {
-  market?: string;
-  outcome?: string;
-  opening_odds?: number;
-  current_odds?: number;
-  movement_pct?: number;
-  signal?: string; // "SHARP MOVE" | "DRIFT" | "STABLE"
-  confidence_impact?: string;
-  note?: string;
-}
-
-export interface PinnacleGap {
-  market?: string;
-  stake_odds?: number;
-  pinnacle_odds?: number;
-  gap_pct?: string; // e.g. "+3.5%"
-  verdict?: string; // "STAKE OFFERS VALUE vs PINNACLE" | "STAKE WORSE THAN PINNACLE"
-}
 
 export interface EnsembleCheck {
   market?: string;
