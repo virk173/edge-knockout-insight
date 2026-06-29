@@ -313,7 +313,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
 
 
-const TOTAL_STEPS = 12;
+const TOTAL_STEPS = 13;
 
 function normalize(name: string): string {
   return name
