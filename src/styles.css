@@ -23,6 +23,11 @@
   --font-display: "Space Grotesk", sans-serif;
   --color-accent-amber: var(--accent-amber);
   --color-slate: var(--slate);
+  --color-signal-blue: var(--signal-blue);
+  --color-signal-green: var(--signal-green);
+  --color-signal-orange: var(--signal-orange);
+  --color-signal-red: var(--signal-red);
+  --color-slate-deep: var(--slate-deep);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
