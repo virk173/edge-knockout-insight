@@ -452,38 +452,64 @@ function movementSignal(
   if (movement_pct <= -8) signal = "SHARP MOVE"; // shortened > 8%
   else if (movement_pct >= 8) signal = "DRIFT"; // drifted > 8%
   else if (Math.abs(movement_pct) < 5) signal = "STABLE";
-  else signal = "MINOR";
+  else signal = "BORDERLINE"; // 5-8% either direction
   return { movement_pct: Math.round(movement_pct * 100) / 100, signal };
 }
 
-// Loosely classify a market by id and/or name into our target buckets.
-function classifyMarket(id: unknown, name: unknown): string | null {
-  const idStr = id != null ? String(id) : "";
-  const n = typeof name === "string" ? name.toLowerCase() : "";
-  if (idStr === "101" || /\b1x2\b|full[- ]?time result|match result|moneyline/.test(n))
-    return "1X2 Full Time Result";
-  if (/over\/?under|total goals|o\/u|totals/.test(n) && /2\.?5/.test(n + idStr))
-    return "Over/Under 2.5 Goals";
-  if (/over\/?under|total goals|o\/u|totals/.test(n) && !/corner|card/.test(n))
-    return "Over/Under Goals";
-  if (/both teams to score|btts|gg\/ng/.test(n)) return "BTTS";
-  if (/asian handicap|handicap|spread/.test(n) && !/corner|card/.test(n))
-    return "Asian Handicap";
-  if (/corner/.test(n)) return "Corners Over/Under";
-  if (/card|booking/.test(n)) return "Cards Over/Under";
-  return null;
+// Confirmed OddsPapi Pinnacle market structure: bookmakerOdds.pinnacle.markets
+// is an object keyed by market id; each market.outcomes is keyed by outcome id;
+// each outcome's price lives at outcome.players["0"].price.
+//   101  = Full Time Result 1X2  (101 Home, 102 Draw, 103 Away)
+//   1010 = Over/Under 2.5 Goals  (1010 Over, 1011 Under)
+//   104  = BTTS                  (104 Yes, 105 No)
+const PINNACLE_MARKET_MAP: Record<
+  string,
+  { bucket: string; outcomes: Record<string, string> }
+> = {
+  "101": {
+    bucket: "1X2 Full Time Result",
+    outcomes: { "101": "Home", "102": "Draw", "103": "Away" },
+  },
+  "1010": {
+    bucket: "Over/Under 2.5 Goals",
+    outcomes: { "1010": "Over 2.5", "1011": "Under 2.5" },
+  },
+  "104": {
+    bucket: "BTTS",
+    outcomes: { "104": "Yes", "105": "No" },
+  },
+};
+
+// Read a Pinnacle outcome's current price from outcome.players["0"].price,
+// tolerating minor field-name variation.
+function pinnaclePrice(outcome: unknown): number | null {
+  const players = getField(outcome, ["players"]);
+  if (players && typeof players === "object") {
+    const rec = players as Record<string, unknown>;
+    const first = rec["0"] ?? Object.values(rec)[0];
+    const p = toNum(getField(first, ["price", "currentPrice", "odds", "value"]));
+    if (p != null) return p;
+  }
+  return toNum(getField(outcome, ["price", "current", "odds", "value"]));
 }
 
-// Extract { current, opening } prices from an outcome object, trying common
-// OddsPapi field names defensively.
-function extractPrices(outcome: unknown): { current: number | null; opening: number | null } {
-  const current = toNum(
-    getField(outcome, ["current", "currentOdds", "price", "latest", "latestPrice", "odds", "value"]),
-  );
-  const opening = toNum(
-    getField(outcome, ["opening", "openingOdds", "openPrice", "open", "openingPrice", "first"]),
-  );
-  return { current, opening };
+// Opening-price baseline cache. OddsPapi's /odds response returns only the
+// current price, so we persist the first-seen price per fixture/outcome and
+// treat it as the opening line to compute genuine line movement over time.
+function loadOpeningBaseline(fixtureId: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(`oddspapi_opening_${fixtureId}`);
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+function saveOpeningBaseline(fixtureId: string, baseline: Record<string, number>): void {
+  try {
+    localStorage.setItem(`oddspapi_opening_${fixtureId}`, JSON.stringify(baseline));
+  } catch {
+    /* ignore quota / privacy-mode errors */
+  }
 }
 
 interface PinnacleMarketSummary {
@@ -499,64 +525,48 @@ interface PinnacleMarketSummary {
 
 // Build a structured Pinnacle summary (markets + line movement) from a raw
 // /v4/odds response. Returns null if no Pinnacle markets are present.
-function buildPinnacleSummary(oddsJson: unknown): {
-  markets: PinnacleMarketSummary[];
-  raw: unknown;
-} | null {
+function buildPinnacleSummary(
+  oddsJson: unknown,
+  fixtureId: string,
+): { markets: PinnacleMarketSummary[]; raw: unknown } | null {
   // Locate bookmakerOdds.pinnacle.markets, tolerating nesting in data/response.
-  const root =
-    getField(oddsJson, ["data", "response", "result"]) ?? oddsJson;
+  const root = getField(oddsJson, ["data", "response", "result"]) ?? oddsJson;
   const bookmakerOdds =
     getField(root, ["bookmakerOdds"]) ??
     getField(extractArray(root)[0], ["bookmakerOdds"]);
   const pinnacle = getField(bookmakerOdds, ["pinnacle", "Pinnacle"]);
   const rawMarkets = getField(pinnacle, ["markets"]);
-  if (!rawMarkets) return null;
+  if (!rawMarkets || typeof rawMarkets !== "object") return null;
+  const marketsObj = rawMarkets as Record<string, unknown>;
 
-  const marketList: unknown[] = Array.isArray(rawMarkets)
-    ? rawMarkets
-    : typeof rawMarkets === "object"
-      ? Object.entries(rawMarkets as Record<string, unknown>).map(([k, v]) =>
-          v && typeof v === "object" && !Array.isArray(v)
-            ? { id: k, ...(v as Record<string, unknown>) }
-            : { id: k, value: v },
-        )
-      : [];
-
+  const baseline = loadOpeningBaseline(fixtureId);
   const markets: PinnacleMarketSummary[] = [];
-  for (const m of marketList) {
-    const id = getField(m, ["id", "marketId", "key"]);
-    const name = getField(m, ["name", "marketName", "label", "title"]);
-    const bucket = classifyMarket(id, name);
-    if (!bucket) continue;
 
-    const rawOutcomes =
-      getField(m, ["outcomes", "selections", "runners", "lines", "odds"]) ?? [];
-    const outcomesArr: unknown[] = Array.isArray(rawOutcomes)
-      ? rawOutcomes
-      : typeof rawOutcomes === "object"
-        ? Object.entries(rawOutcomes as Record<string, unknown>).map(([k, v]) =>
-            v && typeof v === "object" ? { name: k, ...(v as Record<string, unknown>) } : { name: k, value: v },
-          )
-        : [];
+  for (const [mid, conf] of Object.entries(PINNACLE_MARKET_MAP)) {
+    const m = marketsObj[mid];
+    if (!m) continue;
+    const outcomesObj = getField(m, ["outcomes"]);
+    if (!outcomesObj || typeof outcomesObj !== "object") continue;
+    const rec = outcomesObj as Record<string, unknown>;
 
-    const outcomes = outcomesArr.map((o) => {
-      const oid = getField(o, ["id", "outcomeId", "key"]);
-      let oname =
-        (getField(o, ["name", "outcomeName", "label", "selection"]) as string | undefined) ??
-        (oid != null ? String(oid) : "outcome");
-      // Map known 1X2 outcome ids.
-      if (String(oid) === "101") oname = "Home";
-      else if (String(oid) === "102") oname = "Draw";
-      else if (String(oid) === "103") oname = "Away";
-      const { current, opening } = extractPrices(o);
+    const outcomes: PinnacleMarketSummary["outcomes"] = [];
+    for (const [oid, oname] of Object.entries(conf.outcomes)) {
+      const o = rec[oid];
+      if (!o) continue;
+      const current = pinnaclePrice(o);
+      const bkey = `${conf.bucket}|${oname}`;
+      let opening: number | null = baseline[bkey] ?? null;
+      if (opening == null && current != null) {
+        opening = current; // first observation becomes the opening baseline
+        baseline[bkey] = current;
+      }
       const mv = movementSignal(opening, current);
-      return { name: String(oname), current, opening, ...mv };
-    });
-
-    markets.push({ market: bucket, outcomes });
+      outcomes.push({ name: oname, current, opening, ...mv });
+    }
+    if (outcomes.length) markets.push({ market: conf.bucket, outcomes });
   }
 
+  saveOpeningBaseline(fixtureId, baseline);
   return markets.length ? { markets, raw: pinnacle } : null;
 }
 
