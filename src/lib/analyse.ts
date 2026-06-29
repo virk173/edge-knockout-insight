@@ -375,23 +375,15 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
   return json?.response ?? null;
 }
 
-// Counts OddsPapi calls within the current pipeline run, to honour the free
-// tier's 0.88s cooldown. Reset at the start of every collectMatchData run.
-let oddspapiCallsThisRun = 0;
-
-// OddsPapi GET (via server proxy). The server appends the apiKey query param.
-// Free tier enforces a ~0.88s cooldown between calls, so we always wait 900ms
-// before issuing a call. On HTTP 429 (rate limit) we wait 2s and retry once;
-// if the retry also fails we surface the error (the C9B caller swallows it).
-async function opGet(path: string): Promise<unknown> {
-  // 900ms cooldown before every OddsPapi call (including the first this run).
-  await sleep(ODDSPAPI_COOLDOWN_MS);
-  oddspapiCallsThisRun++;
-  const url = `${OP_BASE}${path}`;
+// TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
+// On HTTP 429 (rate limit) we wait 2s and retry once; on 404 we return null
+// (used for lineups "not announced yet"). Other failures throw with detail.
+async function saGet(path: string): Promise<unknown> {
+  const url = `${SA_BASE}${path}`;
 
   const attempt = async (): Promise<{ ok: boolean; status: number | string; statusText?: string; json: unknown }> => {
     try {
-      return await apiFetch({ data: { provider: "oddspapi", url } });
+      return await apiFetch({ data: { provider: "statsapi", url } });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: false, status: "network error", statusText: msg, json: null };
@@ -405,23 +397,31 @@ async function opGet(path: string): Promise<unknown> {
     result = await attempt();
   }
 
+  // 404 = resource not yet available (e.g. lineups not announced). Treat as null.
+  if (!result.ok && String(result.status) === "404") {
+    debugSink?.push({ api: "TheStatsAPI", url, status: 404, ok: true, json: null, callLabel: currentDebugCall ?? undefined });
+    return null;
+  }
+
   if (!result || !result.ok) {
     const status = result?.status ?? "no response";
-    // Surface the OddsPapi error body (e.g. {"error":{"message":"Invalid API
-    // key",...}}) so an invalid/expired key is obvious in debug + logs.
-    const bodyErr = getField(getField(result?.json, ["error"]), ["message"]);
+    // Surface the TheStatsAPI error body so an invalid/expired key is obvious.
+    const bodyErr =
+      getField(getField(result?.json, ["error"]), ["message"]) ??
+      getField(result?.json, ["message", "error"]);
     const detail =
       (typeof bodyErr === "string" && bodyErr) || result?.statusText || "";
     const hint =
-      String(status) === "401"
-        ? " — the ODDSPAPI_KEY secret is invalid or expired; update it with a valid key from oddspapi.io"
+      String(status) === "401" || String(status) === "403"
+        ? " — the STATSAPI_KEY secret is invalid or expired; update it with a valid key from thestatsapi.com"
         : "";
-    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: result?.json ?? null, error: `${detail}${hint}`, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`OddsPapi ${status} ${detail}${hint}`.trim());
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: result?.json ?? null, error: `${detail}${hint}`, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`TheStatsAPI ${status} ${detail}${hint}`.trim());
   }
   const json = result.json ?? null;
-  debugSink?.push({ api: "OddsPapi", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
-  return json;
+  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  // TheStatsAPI wraps payloads in { data: ... }. Return the inner data.
+  return getField(json, ["data"]) ?? json;
 }
 
 // --- Pinnacle line-movement helpers ---
