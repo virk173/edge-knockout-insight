@@ -132,6 +132,7 @@ function Index() {
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
+    setTokenUsage(null);
 
     const formattedData = formatDataForClaude(result.callResults);
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
