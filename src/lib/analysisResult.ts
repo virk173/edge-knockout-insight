@@ -145,8 +145,6 @@ export interface AnalysisResult {
   kickoff_local?: string;
   round?: string;
   classification?: string; // "COMPETITIVE" | "HEAVY MISMATCH" | "JACKPOT"
-  line_movement_signals?: LineMovementSignal[];
-  pinnacle_gap_check?: PinnacleGap[];
   ensemble_check?: EnsembleCheck;
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
