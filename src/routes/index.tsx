@@ -27,7 +27,7 @@ const CLAUDE_LOADING_MESSAGES = [
   "Analysing team form and statistics...",
   "Evaluating tactical matchups...",
   "Calculating expected value...",
-  "Checking Pinnacle line movement...",
+  "Checking confirmed lineups...",
   "Building parlay recommendations...",
   "Validating EV thresholds...",
   "Generating betting cards...",
@@ -534,51 +534,7 @@ Start your response with { and end with }.`;
                 )}
               </div>
 
-              {collection?.competitionsRawPreview !== undefined && (
-                <div className="flex flex-col gap-3 rounded-md border border-signal-blue/40 bg-background/60 p-4">
-                  <div className="font-mono text-sm font-semibold text-signal-blue">
-                    TheStatsAPI raw response preview:
-                  </div>
-                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-3 font-mono text-xs text-slate">
-                    {collection.competitionsRawPreview || "(empty response)"}
-                  </pre>
-                  {collection.competitionsFirst5 &&
-                    collection.competitionsFirst5.length > 0 && (
-                      <>
-                        <div className="font-mono text-sm font-semibold text-signal-blue">
-                          First 5 competition objects:
-                        </div>
-                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-3 font-mono text-xs text-slate">
-                          {JSON.stringify(
-                            collection.competitionsFirst5,
-                            null,
-                            2,
-                          )}
-                        </pre>
-                      </>
-                    )}
-                  {collection.internationalTournaments && (
-                    <>
-                      <div className="font-mono text-sm font-semibold text-signal-blue">
-                        International Tournaments found in TheStatsAPI:
-                      </div>
-                      {collection.internationalTournaments.length > 0 ? (
-                        <ul className="flex flex-col gap-1 rounded bg-black/40 p-3 font-mono text-xs text-slate">
-                          {collection.internationalTournaments.map((t) => (
-                            <li key={t.id}>
-                              <span className="text-amber">{t.id}</span> — {t.name}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <pre className="rounded bg-black/40 p-3 font-mono text-xs text-slate">
-                          (none found)
-                        </pre>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
+
 
               {collection && (
                 <DebugReportView report={buildDebugReport(collection)} />
@@ -678,27 +634,16 @@ function DebugReportView({ report }: { report: DebugReport }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Verified TheStatsAPI IDs */}
+      {/* Resolved TheStatsAPI lineup match id */}
       <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs text-slate">
         <span>
-          competition_id:{" "}
+          statsapi lineup match_id:{" "}
           <span className="text-accent-amber">
-            {report.competitionId ?? "NOT RESOLVED"}
-          </span>
-        </span>
-        <span>
-          season_id:{" "}
-          <span className="text-accent-amber">
-            {report.seasonId ?? "NOT RESOLVED"}
-          </span>
-        </span>
-        <span>
-          statsapi match_id:{" "}
-          <span className="text-accent-amber">
-            {report.statsMatchId ?? "NOT RESOLVED"}
+            {report.statsMatchId ?? "NOT RESOLVED (LINEUP PENDING)"}
           </span>
         </span>
       </div>
+
 
       <DebugCallGroup title="PART 1 — API-Football calls" rows={afRows} />
       <DebugCallGroup title="PART 2 — TheStatsAPI calls" rows={saRows} />

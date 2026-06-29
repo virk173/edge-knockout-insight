@@ -3,18 +3,13 @@ import {
   ChevronDown,
   ChevronUp,
   Lock,
-  Zap,
   Info,
-  TrendingDown,
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type AnalysisResult,
-  type LineMovementSignal,
-  type PinnacleGap,
   type TierLeg,
-  parseGapPct,
   formatEv,
   normalizeDimensions,
 } from "@/lib/analysisResult";
@@ -128,45 +123,13 @@ function ensemblePill(alignment?: string) {
 function SignalStrip({ result }: { result: AnalysisResult }) {
   const ens = ensemblePill(result.ensemble_check?.alignment);
 
-  // Strongest sharp move (max |movement_pct|).
-  const sharp = (result.line_movement_signals ?? [])
-    .filter((s) => (s.signal ?? "").toUpperCase().includes("SHARP"))
-    .sort(
-      (a, b) => Math.abs(b.movement_pct ?? 0) - Math.abs(a.movement_pct ?? 0),
-    )[0];
-
-  // Best positive Pinnacle gap.
-  const bestGap = (result.pinnacle_gap_check ?? [])
-    .map((g) => ({ g, n: parseGapPct(g.gap_pct) }))
-    .filter((x) => Number.isFinite(x.n) && x.n > 0)
-    .sort((a, b) => b.n - a.n)[0];
-
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Pill className={ens.className}>{ens.text}</Pill>
-
-      {sharp ? (
-        <Pill className="border-signal-green/40 bg-signal-green/15 text-signal-green">
-          <Zap size={13} /> Sharp: {sharp.market} {sharp.movement_pct}%
-        </Pill>
-      ) : (
-        <Pill className="border-border bg-card text-slate">
-          No sharp moves detected
-        </Pill>
-      )}
-
-      {bestGap ? (
-        <Pill className="border-signal-green/40 bg-signal-green/15 text-signal-green">
-          💰 Best value: {bestGap.g.market} +{bestGap.n}%
-        </Pill>
-      ) : (
-        <Pill className="border-border bg-card text-slate">
-          No Stake value vs Pinnacle
-        </Pill>
-      )}
     </div>
   );
 }
+
 
 // ─────────────────────────────────────────────────────────────
 // Match header
@@ -248,7 +211,6 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
     );
   }
 
-  const gapPositive = parseGapPct(t.pinnacle_gap) >= 0;
   const sharp = (t.sharp_signal ?? "").toUpperCase();
   const sharpBadge = sharp.includes("CONFIRM")
     ? { text: "⚡ CONFIRMS", className: "bg-signal-green/15 text-signal-green border-signal-green/40" }
@@ -286,17 +248,9 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Pill
-          className={
-            gapPositive
-              ? "border-signal-green/40 bg-signal-green/15 text-signal-green"
-              : "border-signal-red/40 bg-signal-red/15 text-signal-red"
-          }
-        >
-          {t.pinnacle_gap ?? "No Pinnacle gap"}
-        </Pill>
         <Pill className={sharpBadge.className}>{sharpBadge.text}</Pill>
       </div>
+
 
       <ExpandableText text={t.reasoning} />
 
@@ -533,85 +487,9 @@ function AnalystNote({ note }: { note?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Market intelligence
+// (Market intelligence / Pinnacle card removed — lineups-only pipeline)
 // ─────────────────────────────────────────────────────────────
-function lineRowStyle(signal?: string) {
-  const v = (signal ?? "").toUpperCase();
-  if (v.includes("SHARP"))
-    return { icon: <Zap size={13} />, className: "bg-accent-amber/10 text-accent-amber" };
-  if (v.includes("DRIFT"))
-    return { icon: <TrendingDown size={13} />, className: "bg-signal-blue/10 text-signal-blue" };
-  return { icon: <span className="opacity-50">•</span>, className: "bg-card text-slate" };
-}
 
-function gapRowStyle(verdict?: string) {
-  const v = (verdict ?? "").toUpperCase();
-  if (v.includes("OFFERS VALUE"))
-    return { icon: "💰", className: "bg-signal-green/10 text-signal-green" };
-  if (v.includes("WORSE"))
-    return { icon: "⚠️", className: "bg-signal-red/10 text-signal-red" };
-  return { icon: "•", className: "bg-card text-slate" };
-}
-
-function MarketIntelligence({ result }: { result: AnalysisResult }) {
-  const lines = result.line_movement_signals ?? [];
-  const gaps = result.pinnacle_gap_check ?? [];
-  return (
-    <div className={cn(CARD, "flex flex-col gap-4")}>
-      <SectionLabel>Market Intelligence</SectionLabel>
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-slate">Line Movement</span>
-          {lines.length === 0 && (
-            <span className="text-xs text-slate">No data.</span>
-          )}
-          {lines.map((l: LineMovementSignal, i) => {
-            const s = lineRowStyle(l.signal);
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs",
-                  s.className,
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {s.icon} {l.market}
-                </span>
-                <span className="font-semibold">
-                  {l.movement_pct}% · {l.signal}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-slate">Pinnacle Gap</span>
-          {gaps.length === 0 && (
-            <span className="text-xs text-slate">No data.</span>
-          )}
-          {gaps.map((g: PinnacleGap, i) => {
-            const s = gapRowStyle(g.verdict);
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs",
-                  s.className,
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {s.icon} {g.market}
-                </span>
-                <span className="font-semibold">{g.gap_pct}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
@@ -889,7 +767,7 @@ export function BettingDashboard({ result }: { result: AnalysisResult }) {
 
       <AnalystNote note={result.analyst_note} />
 
-      <MarketIntelligence result={result} />
+
 
       <AnalysisDetails result={result} />
 

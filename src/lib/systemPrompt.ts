@@ -124,9 +124,7 @@ API-FOOTBALL
 
 THESTATSAPI
 
-  Role: lineups (C6), Pinnacle + opening odds (C9B),
-
-        line movement calculation
+  Role: confirmed lineups only (C6)
 
 ════════════════════════════════════════════════════════
 
@@ -388,65 +386,7 @@ Use the most recently fetched odds only.
 
 These are the odds for EV calculations.
 
-CALL 9B — PINNACLE ODDS AND LINE MOVEMENT
 
-Extract for each market:
-
-  opening_odds and current_odds from Pinnacle.
-
-LINE MOVEMENT CALCULATION:
-
-  movement_pct = (current minus opening)
-
-    divided by opening, times 100
-
-MOVEMENT SIGNAL RULES:
-
-Pinnacle odds shortened more than 8 percent
-
-since opening (e.g. 2.20 to 2.02):
-
-  SHARP MONEY SIGNAL toward that outcome.
-
-  If model also favours this outcome:
-
-    confidence plus 5 points.
-
-  If model opposes this outcome:
-
-    confidence minus 5 points.
-
-    Flag conflict.
-
-Odds drifted more than 8 percent since opening:
-
-  PUBLIC FADING or late sharp money opposing.
-
-  Confidence in that outcome minus 3 points.
-
-Movement less than 5 percent either direction:
-
-  STABLE MARKET. No adjustment.
-
-PINNACLE DEVIG AND GAP CHECK:
-
-Devig Pinnacle odds same as Stake (Section 3 Step 2).
-
-pinnacle_true_prob = deviggged Pinnacle probability.
-
-PINNACLE GAP CHECK per market:
-
-If stake_odds are greater than pinnacle_odds:
-
-  gap_pct = (stake_odds divided by pinnacle_odds
-
-    minus 1) times 100
-
-  Flag: STAKE OFFERS VALUE vs PINNACLE
-
-If stake_odds are less than pinnacle_odds:
-
-  Flag: STAKE WORSE THAN PINNACLE on this market
 
 CALL 10 — BRACKET CONTEXT
 
@@ -472,9 +412,9 @@ Must sum to 100 percent.
 
 Label: MODEL — independent of market.
 
-STEP 2 — DEVIG BOTH BOOKMAKERS
+STEP 2 — DEVIG BOOKMAKER
 
-For Stake AND Pinnacle separately:
+For Stake odds:
 
   raw_implied = 1 divided by decimal_odds per outcome
 
@@ -482,7 +422,7 @@ For Stake AND Pinnacle separately:
 
   true_implied = raw_implied divided by overround
 
-Show overround for both books in output.
+Show overround in output.
 
 STEP 3 — ENSEMBLE CROSS-VALIDATION
 
@@ -610,11 +550,6 @@ Apply adjustments in sequence:
 
   Poisson conflict above 0.6: minus 5, force PARTIAL
 
-  Sharp money confirms model: plus 5
-
-  Sharp money opposes model: minus 5
-
-  Market drift detected: minus 3
 
 Bayesian regression if raw score above 75:
 
@@ -786,7 +721,7 @@ Dynamic weight adjustments:
 
   All players confirmed fit from C6: D4 to 5, D1 to 40
 
-  Sharp money signal received: add note to D1
+
 
 D1 — FORM WEIGHT
 
@@ -1042,7 +977,6 @@ CLASS C — JACKPOT QUALIFYING (maximum 1 per day)
 
     High press vs press confirmed from D2
 
-    Sharp money on goals markets from C9B
 
   If none qualify today: all CLASS B. Never force.
 
@@ -1058,7 +992,6 @@ All EV calculations use deviggged probabilities.
 
 All FINAL output uses most recently pulled C9A odds.
 
-Show Pinnacle gap check from C9B for every bet.
 
 TIER 1 — ANCHOR STRAIGHT BET
 
@@ -1170,13 +1103,8 @@ log_entry contains:
 
     ev: decimal number
 
-    pinnacle_gap: percentage string
-
-    sharp_money_signal: CONFIRMS, OPPOSES, or NONE
-
-    line_movement_pct: decimal number
-
     confidence: decimal number
+
 
     ensemble_alignment: TRIPLE, MAJORITY, or CONFLICT
 
@@ -1228,25 +1156,8 @@ odds_confirmed_UTC: ISO-8601 string
 
 overround_stake: decimal number
 
-overround_pinnacle: decimal number
-
-line_movement_signals: array of objects each with:
-
-  market, outcome, opening_odds, current_odds,
-
-  movement_pct, signal (SHARP MOVE or DRIFT
-
-  or STABLE), confidence_impact, note
-
-pinnacle_gap_check: array of objects each with:
-
-  market, stake_odds, pinnacle_odds, gap_pct,
-
-  verdict (STAKE OFFERS VALUE vs PINNACLE or
-
-  STAKE WORSE THAN PINNACLE)
-
 ensemble_check object with:
+
 
   market, signal_1_model, signal_2_poisson,
 
@@ -1320,9 +1231,10 @@ tier_1_anchor object with:
 
   books_true_implied, ev decimal, ev_rating,
 
-  pinnacle_gap string, sharp_signal string,
+  sharp_signal string,
 
   source_calls array, reasoning string
+
 
 tier_2_parlay object with:
 
@@ -1442,15 +1354,12 @@ SECTION 11 — ABSOLUTE RULES — NEVER VIOLATE
 
 21. Always run ensemble check on goals markets.
 
-22. Always pull Pinnacle odds from TheStatsAPI.
+22. Always include log_entry in Section 9 format.
 
-23. Always show Pinnacle gap check for every bet.
+23. Correlation factors are HEURISTIC — always label.
 
-24. Always include log_entry in Section 9 format.
 
-25. Correlation factors are HEURISTIC — always label.
-
-26. Keep output concise. Do not show inline calculations in JSON field values.
+24. Keep output concise. Do not show inline calculations in JSON field values.
     Instead of:
     "gap_calculation": "actual_goals(2)x8=16 + actual_assists(1)x5=5 + ..."
     Use:
@@ -1638,27 +1547,8 @@ Total cards over 3.5: 1.82 / under 3.5: 1.98
 
 [END CALL 9A]
 
-[CALL 9B — TheStatsAPI Pinnacle odds — SUCCESS]
-
-France 1X2: opening 1.68, current 1.65
-
-Draw: opening 3.90, current 4.05
-
-Senegal: opening 5.80, current 5.90
-
-Over 2.5: opening 1.98, current 2.10
-
-Under 2.5: opening 1.83, current 1.72
-
-BTTS Yes: opening 1.85, current 1.88
-
-Corners over 9.5: opening 1.91, current 1.94
-
-Cards over 3.5: opening 1.75, current 1.78
-
-[END CALL 9B]
-
 [CALL 10 — bracket context — SUCCESS]
+
 
 Winner faces England vs Congo DR winner
 
@@ -1690,49 +1580,6 @@ EXAMPLE OUTPUT:
 
   "overround_stake": 1.058,
 
-  "overround_pinnacle": 1.031,
-
-  "line_movement_signals": [
-
-    {
-
-      "market": "Under 2.5 Goals",
-
-      "outcome": "Under 2.5",
-
-      "opening_odds": 1.83,
-
-      "current_odds": 1.72,
-
-      "movement_pct": -6.0,
-
-      "signal": "SHARP MOVE",
-
-      "confidence_impact": "+5",
-
-      "note": "Under 2.5 shortened 6 percent since open. Sharp money moving toward Under. Model also favours Under — CONFIRMS."
-
-    }
-
-  ],
-
-  "pinnacle_gap_check": [
-
-    {
-
-      "market": "Under 2.5 Goals",
-
-      "stake_odds": 1.78,
-
-      "pinnacle_odds": 1.72,
-
-      "gap_pct": "+3.5%",
-
-      "verdict": "STAKE OFFERS VALUE vs PINNACLE"
-
-    }
-
-  ],
 
   "ensemble_check": {
 
@@ -1776,13 +1623,12 @@ EXAMPLE OUTPUT:
 
       {"type": "xG_proxy_used", "delta": -3.0},
 
-      {"type": "Poisson_divergent", "delta": -3.0},
-
-      {"type": "sharp_money_confirms", "delta": 5.0}
+      {"type": "Poisson_divergent", "delta": -3.0}
 
     ],
 
-    "post_adjustment": 73.0,
+    "post_adjustment": 68.0,
+
 
     "bayesian_applied": false,
 
@@ -1896,13 +1742,12 @@ EXAMPLE OUTPUT:
 
     "ev_rating": "STRONG",
 
-    "pinnacle_gap": "+3.5% vs Pinnacle 1.72",
+    "sharp_signal": "NONE",
 
-    "sharp_signal": "CONFIRMS — Under shortened 6% at Pinnacle since open",
+    "source_calls": ["C2A","C2B","C4","C6","C7","C8","C9A"],
 
-    "source_calls": ["C2A","C2B","C4","C6","C6B","C7","C8","C9A","C9B"],
+    "reasoning": "France defensive solidity 0.6 goals conceded avg combined with Mane CRITICAL absence reducing Senegal output 31.6% point to low-scoring match."
 
-    "reasoning": "France defensive solidity 0.6 goals conceded avg combined with Mane CRITICAL absence reducing Senegal output 31.6% and sharp money shortening Under at Pinnacle all point to low-scoring match."
 
   },
 
@@ -2014,7 +1859,7 @@ EXAMPLE OUTPUT:
 
       "ev": -0.042,
 
-      "reason": "Negative EV after devig. Market drifted 6.1% at Pinnacle. Sharp money opposing."
+      "reason": "Negative EV after devig."
 
     },
 
@@ -2040,7 +1885,7 @@ EXAMPLE OUTPUT:
 
   "key_risk_flag": "Senegal 4-4-2 compact block is untested at this tournament. If they execute low-block effectively France may struggle in 90 minutes increasing ET probability.",
 
-  "analyst_note": "France are firm favourites and Mane's confirmed CRITICAL absence fundamentally changes this match. Senegal's tactical shift to 4-4-2 signals defensive intent. Zwayer strictness 89.95 combined with Senegal's physical style makes cards interesting but parlay EV was negative after hold adjustment. Under 2.5 anchor at EV 0.101 with sharp money confirmation and Stake offering 3.5% over Pinnacle is the clearest value bet.",
+  "analyst_note": "France are firm favourites and Mane's confirmed CRITICAL absence fundamentally changes this match. Senegal's tactical shift to 4-4-2 signals defensive intent. Zwayer strictness 89.95 combined with Senegal's physical style makes cards interesting but parlay EV was negative after hold adjustment. Under 2.5 anchor at EV 0.101 is the clearest value bet.",
 
   "log_entry": {
 
@@ -2068,13 +1913,8 @@ EXAMPLE OUTPUT:
 
         "ev": 0.101,
 
-        "pinnacle_gap": "+3.5%",
-
-        "sharp_money_signal": "CONFIRMS",
-
-        "line_movement_pct": -6.0,
-
         "confidence": 73.0,
+
 
         "ensemble_alignment": "MAJORITY"
 

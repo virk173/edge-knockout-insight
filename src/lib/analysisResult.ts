@@ -4,24 +4,6 @@
  * so the UI must render defensively.
  */
 
-export interface LineMovementSignal {
-  market?: string;
-  outcome?: string;
-  opening_odds?: number;
-  current_odds?: number;
-  movement_pct?: number;
-  signal?: string; // "SHARP MOVE" | "DRIFT" | "STABLE"
-  confidence_impact?: string;
-  note?: string;
-}
-
-export interface PinnacleGap {
-  market?: string;
-  stake_odds?: number;
-  pinnacle_odds?: number;
-  gap_pct?: string; // e.g. "+3.5%"
-  verdict?: string; // "STAKE OFFERS VALUE vs PINNACLE" | "STAKE WORSE THAN PINNACLE"
-}
 
 export interface EnsembleCheck {
   market?: string;
@@ -108,7 +90,6 @@ export interface Tier1Anchor {
   books_true_implied?: number;
   ev?: number;
   ev_rating?: string;
-  pinnacle_gap?: string;
   sharp_signal?: string;
   reasoning?: string;
 }
@@ -164,8 +145,6 @@ export interface AnalysisResult {
   kickoff_local?: string;
   round?: string;
   classification?: string; // "COMPETITIVE" | "HEAVY MISMATCH" | "JACKPOT"
-  line_movement_signals?: LineMovementSignal[];
-  pinnacle_gap_check?: PinnacleGap[];
   ensemble_check?: EnsembleCheck;
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
