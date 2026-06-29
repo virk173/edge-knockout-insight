@@ -191,11 +191,16 @@ export function formatDataForClaude(
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
-    const hasData =
-      r && r.status === "SUCCESS" && r.data !== null && !isEmptyResponse(r.data);
+    // Validate the response shape before feeding it to Claude. validateCall
+    // returns null for structurally invalid responses.
+    const validated =
+      r && r.status === "SUCCESS" && r.data !== null
+        ? validateCall(n, r.data)
+        : null;
+    const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
       blocks.push(
-        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(r.data, null, 2)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}\n[END CALL ${n}]`,
       );
     } else {
       const note = r?.error ? `\n${r.error}` : "";
