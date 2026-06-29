@@ -1176,11 +1176,11 @@ export async function collectMatchData(
     afGet(`/injuries?fixture=${match.id}`, afKey),
   );
 
-  // 6: confirmed lineups (TheStatsAPI).
-  // Resolve TheStatsAPI's match_id by team name on the kickoff date, then fetch
-  // /football/matches/{match_id}/lineups. Lineups publish ~1h before kickoff;
-  // until then the endpoint 404s (saGet returns null). If null/empty, flag
-  // LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
+  // 6 (S3): confirmed lineups (TheStatsAPI).
+  // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
+  // TheStatsAPI publishes lineups at ~T-75min (earlier than API-Football's
+  // ~T-20min); until then the endpoint 404s (saGet returns null). If null/empty,
+  // flag LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
   await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
     const matchId = await ensureStatsApiMatchId();
     if (!matchId) {
