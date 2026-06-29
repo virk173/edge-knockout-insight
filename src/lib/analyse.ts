@@ -483,6 +483,57 @@ function buildPinnacleSummary(oddsJson: unknown): {
   return markets.length ? { markets, raw: pinnacle } : null;
 }
 
+// Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
+function extractStake1X2(stakeOdds: unknown): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  const responseArr = extractArray(stakeOdds);
+  for (const item of responseArr) {
+    const bookmakers = extractArray(getField(item, ["bookmakers"]));
+    for (const bk of bookmakers) {
+      const bets = extractArray(getField(bk, ["bets"]));
+      for (const bet of bets) {
+        const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+        if (!/match winner|1x2|full time result/.test(betName)) continue;
+        const values = extractArray(getField(bet, ["values"]));
+        for (const v of values) {
+          const vname = String(getField(v, ["value"]) ?? "").toLowerCase();
+          const odd = toNum(getField(v, ["odd", "odds", "price"]));
+          if (vname.includes("home") || vname === "1") out["Home"] = odd;
+          else if (vname.includes("draw") || vname === "x") out["Draw"] = odd;
+          else if (vname.includes("away") || vname === "2") out["Away"] = odd;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Step 4 — gap check: compare Stake odds vs Pinnacle current odds (1X2).
+// Higher decimal odds = better price for the bettor.
+function buildStakeGapCheck(
+  stakeOdds: unknown,
+  markets: PinnacleMarketSummary[],
+): Array<{ outcome: string; stake: number | null; pinnacle: number | null; verdict: string }> {
+  const stake1X2 = extractStake1X2(stakeOdds);
+  const pinnacle1X2 = markets.find((m) => m.market === "1X2 Full Time Result");
+  if (!pinnacle1X2) return [];
+  return pinnacle1X2.outcomes
+    .filter((o) => ["Home", "Draw", "Away"].includes(o.name))
+    .map((o) => {
+      const stakePrice = stake1X2[o.name] ?? null;
+      const pinPrice = o.current;
+      let verdict = "UNKNOWN";
+      if (stakePrice != null && pinPrice != null) {
+        if (stakePrice > pinPrice) verdict = "STAKE OFFERS VALUE";
+        else if (pinPrice > stakePrice) verdict = "STAKE WORSE";
+        else verdict = "EQUAL";
+      }
+      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, verdict };
+    });
+}
+
+
+
 
 
 function isEmptyResponse(response: unknown): boolean {
