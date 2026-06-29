@@ -446,9 +446,18 @@ export async function collectMatchData(
   let lookup: Record<string, string> = {};
   let statsApiResolved = false;
   let statsApiMatchId: string | null = null;
+  let wcCompetitionId: string | null = null;
+  let wcSeasonId: string | null = null;
   if (saKey) {
     try {
-      lookup = await buildStatsApiLookup(saKey);
+      const matchDate = match.kickoffUtc.slice(0, 10);
+      const out = await buildStatsApiLookup(saKey, {
+        dates: [matchDate],
+        bypassCache: opts.debug,
+      });
+      lookup = out.lookup;
+      wcCompetitionId = out.ids?.competitionId ?? null;
+      wcSeasonId = out.ids?.seasonId ?? null;
       statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
       statsApiResolved = statsApiMatchId !== null;
     } catch (e) {
