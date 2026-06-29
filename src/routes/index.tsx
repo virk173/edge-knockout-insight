@@ -320,6 +320,36 @@ Start your response with { and end with }.`;
                     {isActive && collection && (
                       <CollectionPanel result={collection} />
                     )}
+
+                    {isActive && analysing && (
+                      <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+                        <p className="font-mono text-sm text-accent-amber">
+                          {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+                        </p>
+                      </div>
+                    )}
+
+                    {isActive && analysisError && (
+                      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        {analysisError}
+                      </div>
+                    )}
+
+                    {isActive && (analysisResult !== null || analysisRaw) && (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-sm font-semibold text-foreground">
+                          {analysisResult !== null
+                            ? "Claude analysis output (raw JSON)"
+                            : "Claude raw response (unparsed)"}
+                        </p>
+                        <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
+                          {analysisResult !== null
+                            ? JSON.stringify(analysisResult, null, 2)
+                            : analysisRaw}
+                        </pre>
+                      </div>
+                    )}
                   </li>
                 );
               })}
