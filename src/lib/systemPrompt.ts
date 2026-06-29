@@ -721,7 +721,7 @@ Dynamic weight adjustments:
 
   All players confirmed fit from C6: D4 to 5, D1 to 40
 
-  Sharp money signal received: add note to D1
+
 
 D1 — FORM WEIGHT
 
