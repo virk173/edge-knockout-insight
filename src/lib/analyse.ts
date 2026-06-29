@@ -11,14 +11,10 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
-const OP_BASE = "https://api.oddspapi.io";
-// OddsPapi free tier: 0.88s cooldown between calls. We wait 900ms before a
-// second (or later) OddsPapi call within the same pipeline run.
-const ODDSPAPI_COOLDOWN_MS = 900;
-const ODDSPAPI_SPORT_ID = 10; // football/soccer
-// Hardcoded World Cup tournament ID on OddsPapi (sportId=10, category: international).
-// Confirmed active 2026 World Cup (tournament name "World Cup", upcomingFixtures > 0).
-const ODDSPAPI_WC_TOURNAMENT_ID = 16;
+const SA_BASE = "https://api.thestatsapi.com/api";
+// Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
+const STATSAPI_COMPETITION_ID = "comp_6107";
+const STATSAPI_SEASON_ID = "sn_118868";
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
