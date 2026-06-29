@@ -124,9 +124,7 @@ API-FOOTBALL
 
 THESTATSAPI
 
-  Role: lineups (C6), Pinnacle + opening odds (C9B),
-
-        line movement calculation
+  Role: confirmed lineups only (C6)
 
 ════════════════════════════════════════════════════════
 
