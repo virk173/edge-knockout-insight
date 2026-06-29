@@ -88,6 +88,11 @@ let debugSink: DebugEntry[] | null = null;
 // HTTP calls under their logical CALL number (e.g. "2A", "9B", "competitions").
 let currentDebugCall: string | null = null;
 
+// Captures the raw TheStatsAPI /competitions response from the most recent
+// resolveWcIds call so Debug Mode can show exactly what field/competition names
+// the API uses. Reset at the start of each collectMatchData run.
+let lastCompetitionsRaw: unknown = null;
+
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
