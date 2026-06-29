@@ -18,7 +18,7 @@ const ODDSPAPI_COOLDOWN_MS = 900;
 const ODDSPAPI_SPORT_ID = 10; // football/soccer
 
 
-export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
+export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
 
 export interface CallResult {
   key: string;
