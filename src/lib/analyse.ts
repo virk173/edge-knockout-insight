@@ -76,6 +76,10 @@ export interface CollectionResult {
   warning: string | null;
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
+  // Debug-only: raw TheStatsAPI /competitions response, for diagnosing the
+  // competition name/field search logic.
+  competitionsRawPreview?: string;
+  competitionsFirst5?: unknown[];
 }
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
