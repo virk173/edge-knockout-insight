@@ -128,45 +128,13 @@ function ensemblePill(alignment?: string) {
 function SignalStrip({ result }: { result: AnalysisResult }) {
   const ens = ensemblePill(result.ensemble_check?.alignment);
 
-  // Strongest sharp move (max |movement_pct|).
-  const sharp = (result.line_movement_signals ?? [])
-    .filter((s) => (s.signal ?? "").toUpperCase().includes("SHARP"))
-    .sort(
-      (a, b) => Math.abs(b.movement_pct ?? 0) - Math.abs(a.movement_pct ?? 0),
-    )[0];
-
-  // Best positive Pinnacle gap.
-  const bestGap = (result.pinnacle_gap_check ?? [])
-    .map((g) => ({ g, n: parseGapPct(g.gap_pct) }))
-    .filter((x) => Number.isFinite(x.n) && x.n > 0)
-    .sort((a, b) => b.n - a.n)[0];
-
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Pill className={ens.className}>{ens.text}</Pill>
-
-      {sharp ? (
-        <Pill className="border-signal-green/40 bg-signal-green/15 text-signal-green">
-          <Zap size={13} /> Sharp: {sharp.market} {sharp.movement_pct}%
-        </Pill>
-      ) : (
-        <Pill className="border-border bg-card text-slate">
-          No sharp moves detected
-        </Pill>
-      )}
-
-      {bestGap ? (
-        <Pill className="border-signal-green/40 bg-signal-green/15 text-signal-green">
-          💰 Best value: {bestGap.g.market} +{bestGap.n}%
-        </Pill>
-      ) : (
-        <Pill className="border-border bg-card text-slate">
-          No Stake value vs Pinnacle
-        </Pill>
-      )}
     </div>
   );
 }
+
 
 // ─────────────────────────────────────────────────────────────
 // Match header
