@@ -5,6 +5,55 @@
  */
 
 
+// ─────────────────────────────────────────────────────────────
+// Raw-variable inputs emitted by Claude (computed in app code).
+// See src/lib/calculate.ts — calculateResults() turns these into
+// the *_computed numbers the dashboard renders.
+// ─────────────────────────────────────────────────────────────
+export interface EvInputs {
+  model_probability?: number;
+  decimal_odds?: number;
+}
+
+export interface ParlayEvInputs {
+  p_final?: number;
+  effective_sgp_price?: number;
+}
+
+export interface JackpotEvInputs {
+  p_final?: number;
+  combined_odds?: number;
+}
+
+export interface GapScoreInputs {
+  actual_goals?: number;
+  actual_assists?: number;
+  shots_pg_delta?: number;
+  keypasses_pg_delta?: number;
+  set_piece_weight?: number;
+}
+
+export interface MultiplierInputs {
+  gap_multiplier?: number;
+  depth_multiplier?: number;
+}
+
+export interface ConfidenceInputs {
+  dimension_weighted_raw?: number;
+  adjustments?: ConfidenceAdjustment[];
+}
+
+export interface OverroundOutcome {
+  name?: string;
+  odds?: number;
+  raw_implied?: number;
+  true_implied?: number;
+}
+
+export interface OverroundInputs {
+  outcomes?: OverroundOutcome[];
+}
+
 export interface EnsembleCheck {
   market?: string;
   signal_1_model?: number;
