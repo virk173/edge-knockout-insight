@@ -1068,7 +1068,13 @@ EXAMPLE OUTPUT:
   "lineup_source": "API-Football C6",
   "odds_source": "Stake C9A",
   "odds_confirmed_UTC": "2026-07-01T20:30:00Z",
-  "overround_stake": 1.058,
+  "overround_inputs": {
+    "outcomes": [
+      {"name": "France", "odds": 1.72},
+      {"name": "Draw", "odds": 3.80},
+      {"name": "Senegal", "odds": 5.50}
+    ]
+  },
   "overround_pinnacle": 1.031,
   "data_quality": "PARTIAL",
   "pinnacle_available": true,
