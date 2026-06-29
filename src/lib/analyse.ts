@@ -10,7 +10,7 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
-const SA_BASE = "https://api.thestatsapi.com/api/football";
+
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
 
