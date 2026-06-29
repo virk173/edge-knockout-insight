@@ -236,7 +236,7 @@ function Index() {
     if (lineupRefetchedRef.current.has(match.id)) return;
     lineupRefetchedRef.current.add(match.id);
     (async () => {
-      const updated = await refetchLineups(match.id);
+      const updated = await refetchLineups(match);
       setCollection((prev) =>
         prev
           ? { ...prev, callResults: { ...prev.callResults, "6": updated } }
@@ -932,14 +932,14 @@ function CollectionPanel({ result }: { result: CollectionResult }) {
 
 function DebugReportView({ report }: { report: DebugReport }) {
   const afRows = report.rows.filter((r) => r.api === "API-Football");
-  const opRows = report.rows.filter((r) => r.api === "OddsPapi");
-  const opSucceeded = report.oddspapiSucceeded === report.oddspapiTotal;
+  const saRows = report.rows.filter((r) => r.api === "TheStatsAPI");
+  const saSucceeded = report.statsapiSucceeded === report.statsapiTotal;
 
   return (
     <div className="flex flex-col gap-4">
       <DebugCallGroup title="API-Football calls" rows={afRows} />
-      {opRows.length > 0 && (
-        <DebugCallGroup title="OddsPapi calls (Pinnacle)" rows={opRows} />
+      {saRows.length > 0 && (
+        <DebugCallGroup title="TheStatsAPI calls (lineups + Pinnacle)" rows={saRows} />
       )}
 
       {/* Summary */}
