@@ -5,6 +5,55 @@
  */
 
 
+// ─────────────────────────────────────────────────────────────
+// Raw-variable inputs emitted by Claude (computed in app code).
+// See src/lib/calculate.ts — calculateResults() turns these into
+// the *_computed numbers the dashboard renders.
+// ─────────────────────────────────────────────────────────────
+export interface EvInputs {
+  model_probability?: number;
+  decimal_odds?: number;
+}
+
+export interface ParlayEvInputs {
+  p_final?: number;
+  effective_sgp_price?: number;
+}
+
+export interface JackpotEvInputs {
+  p_final?: number;
+  combined_odds?: number;
+}
+
+export interface GapScoreInputs {
+  actual_goals?: number;
+  actual_assists?: number;
+  shots_pg_delta?: number;
+  keypasses_pg_delta?: number;
+  set_piece_weight?: number;
+}
+
+export interface MultiplierInputs {
+  gap_multiplier?: number;
+  depth_multiplier?: number;
+}
+
+export interface ConfidenceInputs {
+  dimension_weighted_raw?: number;
+  adjustments?: ConfidenceAdjustment[];
+}
+
+export interface OverroundOutcome {
+  name?: string;
+  odds?: number;
+  raw_implied?: number;
+  true_implied?: number;
+}
+
+export interface OverroundInputs {
+  outcomes?: OverroundOutcome[];
+}
+
 export interface EnsembleCheck {
   market?: string;
   signal_1_model?: number;
@@ -27,6 +76,8 @@ export interface DimensionBreakdownItem {
 }
 
 export interface ConfidenceScores {
+  // Raw variables from Claude (preferred source of truth).
+  confidence_inputs?: ConfidenceInputs;
   dimension_weighted_raw?: number;
   adjustments?: ConfidenceAdjustment[];
   post_adjustment?: number;
@@ -54,6 +105,9 @@ export interface TacticalAnalysis {
 export interface Absence {
   player?: string;
   team?: string;
+  // Raw variables from Claude (preferred source of truth).
+  gap_score_inputs?: GapScoreInputs;
+  multiplier_inputs?: MultiplierInputs;
   gap_score?: number;
   gap_calculation?: string;
   classification?: string; // "CRITICAL" | "SIGNIFICANT" | ...
@@ -87,10 +141,12 @@ export interface Tier1Anchor {
   stake?: string;
   odds?: number;
   model_probability?: number;
+  // Raw variables from Claude (preferred source of truth for EV).
+  ev_inputs?: EvInputs;
   books_true_implied?: number;
   ev?: number;
   ev_rating?: string;
-  
+
   reasoning?: string;
 }
 
@@ -116,6 +172,8 @@ export interface Tier2Parlay {
   sgp_validation?: SgpValidation;
   legs?: TierLeg[];
   returns?: TierReturns;
+  // Raw variables from Claude (preferred source of truth for EV).
+  parlay_ev_inputs?: ParlayEvInputs;
   parlay_ev?: number;
   ev_rating?: string;
   reasoning?: string;
@@ -129,6 +187,8 @@ export interface Tier3Jackpot {
   legs?: TierLeg[];
   combined_odds?: number;
   returns?: TierReturns;
+  // Raw variables from Claude (preferred source of truth for EV).
+  jackpot_ev_inputs?: JackpotEvInputs;
   jackpot_ev?: number;
   class_c_signals?: string[];
 }
@@ -148,6 +208,9 @@ export interface AnalysisResult {
   data_quality?: string; // "FULL" | "PARTIAL" | "THIN"
   pinnacle_available?: boolean;
   overround_pinnacle?: number | null;
+  // Raw variables from Claude (preferred source of truth for overround).
+  overround_inputs?: OverroundInputs;
+  overround_stake?: number;
   ensemble_check?: EnsembleCheck;
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;

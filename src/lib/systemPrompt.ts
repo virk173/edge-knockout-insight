@@ -179,12 +179,19 @@ formation, bench list, captain.
 CALL 6B — player intelligence
 Trigger only if Call 5 has absences.
 
-GAP SCORE FORMULA:
-gap = (actual_goals x 8)
-    + (actual_assists x 5)
-    + (shots_pg_delta x 7)
-    + (keypasses_pg_delta x 5)
-    + set_piece_weight
+GAP SCORE — RAW VARIABLES ONLY:
+Do NOT compute the gap score. For each
+absent player output gap_score_inputs:
+  gap_score_inputs: {
+    actual_goals, actual_assists,
+    shots_pg_delta, keypasses_pg_delta,
+    set_piece_weight }
+The app computes:
+  gap = (actual_goals x 8)
+      + (actual_assists x 5)
+      + (shots_pg_delta x 7)
+      + (keypasses_pg_delta x 5)
+      + set_piece_weight
 
 set_piece_weight by role:
   penalty_taker lost: +15
@@ -198,7 +205,7 @@ shots_pg_delta = absent shots pg
 minus replacement shots pg.
 If replacement UNTESTED use 0.0.
 
-Gap thresholds:
+Gap thresholds (apply to app-computed gap):
   40+: CRITICAL goals prob x0.72
     D4 to 18pct D2 to 17pct
   20-39: SIGNIFICANT x0.83
@@ -214,8 +221,19 @@ DEPTH RATING additional multiplier:
   THIN: 1 qualifying — x0.95
   CRITICAL SHORTAGE: 0 — x0.88
 
-STACKED MULTIPLIER CAP:
-Per player floor x0.65. Show calc.
+STACKED MULTIPLIER — RAW VARIABLES ONLY:
+Do NOT compute the stacked multiplier.
+Output multiplier_inputs:
+  multiplier_inputs: { gap_multiplier,
+    depth_multiplier }
+gap_multiplier is the goals-prob factor
+from the gap threshold (e.g. 0.72).
+depth_multiplier is the depth-rating
+factor (1.0, 0.95 or 0.88).
+The app computes:
+  stacked = gap_multiplier x depth_multiplier
+  if stacked < 0.65: stacked = 0.65
+
 
 CALL 7 — referee profile
 If UNKNOWN: use historical base rates.
@@ -298,6 +316,16 @@ Assess rotation risk or motivation.
 SECTION 2 — PROBABILITY AND EV
 ════════════════════════════════════════
 
+CRITICAL — RAW VARIABLES ONLY:
+The application computes all arithmetic.
+For EV, parlay EV, gap score, confidence,
+stacked multiplier and overround you must
+output the RAW INPUT VARIABLES only, never
+the computed result. The app derives the
+final numbers. Emit the *_inputs objects
+exactly as specified below. Do NOT perform
+the multiplication or addition yourself.
+
 STEP 1 — BUILD MODEL PROBABILITIES
 Before any bookmaker odds estimate:
 Home Win, Draw, Away Win from C2-C8.
@@ -305,10 +333,15 @@ Must sum to 100 percent.
 Label: MODEL independent of market.
 
 STEP 2 — DEVIG STAKE ODDS
-  raw_implied = 1 / decimal_odds
+Do NOT compute the overround yourself.
+Output overround_inputs.outcomes as an
+array of { name, odds } for every outcome
+in the market (one decimal odds each).
+The app computes:
+  raw_implied = 1 / odds
   overround = sum of all raw_implied
   true_implied = raw_implied / overround
-Show overround_stake in output.
+  overround_stake = overround
 
 STEP 3 — ENSEMBLE CHECK goals markets
 Three signals:
@@ -323,7 +356,11 @@ All diverge above 0.3: CONFLICT
   Tier 2 goals stake capped at $15
 
 STEP 4 — SINGLE BET EV
-  EV = (model_prob x decimal_odds) - 1
+Do NOT compute EV. Output ev_inputs:
+  ev_inputs: { model_probability,
+    decimal_odds }
+The app computes EV = (prob x odds) - 1.
+Apply the rating to the app-computed EV:
   0.08+: STRONG
   0.05-0.07: MARGINAL
   0-0.04: SKIP
@@ -353,14 +390,21 @@ Layer 2 — Joint probability:
   P_final = P_joint x (1 - hold_rate)
   effective_sgp = stake_sgp
     x (1 - hold_rate) x 1.05
-  parlay_EV = (P_final x effective_sgp) - 1
+Do NOT compute parlay EV. Output:
+  parlay_ev_inputs: { p_final,
+    effective_sgp_price }
+The app computes
+  parlay_EV = (p_final x price) - 1.
   Minimum parlay EV: 0.05
+For Tier 3 jackpot likewise output:
+  jackpot_ev_inputs: { p_final,
+    combined_odds }
 
 Show probability_derivation in output.
 
 STEP 6 — CONFIDENCE SCORE
 Base: weighted dimension average.
-Adjustments:
+Adjustments (each as type and delta):
   PARTIAL data: -7
   THIN data: -15
   xG proxy used: -3
@@ -376,10 +420,17 @@ Note: sharp money adjustments only
 apply when C9B returns SUCCESS.
 If C9B EMPTY: skip those adjustments.
 
-Bayesian regression if raw above 75:
-  adjusted = 75 + (raw - 75) x 0.40
-
-Show full derivation always.
+Do NOT compute the confidence score.
+Output confidence_inputs:
+  confidence_inputs: {
+    dimension_weighted_raw,
+    adjustments: [ { type, delta } ] }
+The app computes:
+  post_adj = raw + sum(deltas)
+  if post_adj > 75:
+    final = 75 + (post_adj - 75) x 0.40
+  else: final = post_adj
+This is the Bayesian regression above 75.
 
 ════════════════════════════════════════
 SECTION 3 — HISTORICAL BASE RATES
@@ -682,7 +733,10 @@ lineup_confirmed: boolean
 lineup_source: string
 odds_source: string
 odds_confirmed_UTC: ISO-8601
-overround_stake: decimal
+overround_inputs:
+  outcomes array each with name and odds
+  (app computes overround_stake and the
+   per-outcome true_implied)
 overround_pinnacle: decimal or null
   null when C9B EMPTY
 data_quality: FULL or PARTIAL or THIN
@@ -720,13 +774,12 @@ amnesty_status:
     player, team, yellows_this_block,
     role, market_impact
 confidence_scores:
-  dimension_weighted_raw,
-  adjustments array each with
-    type and delta,
-  post_adjustment,
-  bayesian_applied boolean,
-  bayesian_formula string,
-  final_confidence
+  confidence_inputs with:
+    dimension_weighted_raw,
+    adjustments array each with
+      type and delta
+  (app computes post_adjustment,
+   bayesian_applied and final_confidence)
 tactical_analysis:
   formation_home, formation_away,
   formation_home_assumed,
@@ -739,18 +792,19 @@ tactical_analysis:
   formation_change_impact
 player_intelligence:
   absences array each with:
-    player, team, gap_score,
-    gap_calculation, classification,
-    tournament_stats with
-      actual_goals and actual_assists,
+    player, team,
+    gap_score_inputs with:
+      actual_goals, actual_assists,
+      shots_pg_delta, keypasses_pg_delta,
+      set_piece_weight
+    multiplier_inputs with:
+      gap_multiplier, depth_multiplier
+    (app computes gap_score,
+     gap_calculation and stacked_multiplier)
+    classification,
     set_piece_roles array,
-    set_piece_weight, replacement,
+    replacement,
     replacement_profile, depth_rating,
-    goals_scored_multiplier,
-    goals_conceded_multiplier,
-    xg_proxy_multiplier,
-    stacked_multiplier,
-    stacked_floor_applied boolean,
     adjustment_note,
     source_calls array
   players_confirmed_fit array
@@ -758,10 +812,10 @@ player_intelligence:
 tier_1_anchor:
   active boolean, skip_reason,
   market, selection, stake string,
-  odds, model_probability,
-  books_true_implied, ev, ev_rating,
-  pinnacle_gap string or null,
-  sharp_signal string or null,
+  ev_inputs with:
+    model_probability, decimal_odds
+  (app computes ev and ev_rating;
+   odds mirrors decimal_odds)
   source_calls array, reasoning string
 tier_2_parlay:
   active boolean, skip_reason,
@@ -784,13 +838,18 @@ tier_2_parlay:
     potential_return_raw,
     potential_return_realistic,
     basis_note
-  parlay_ev, ev_rating, reasoning
+  parlay_ev_inputs with:
+    p_final, effective_sgp_price
+  (app computes parlay_ev and ev_rating)
+  reasoning
 tier_3_jackpot:
   active boolean, skip_reason,
   stake string, stake_boost_pct,
   legs array, combined_odds,
   returns with raw and realistic,
-  jackpot_ev,
+  jackpot_ev_inputs with:
+    p_final, combined_odds
+  (app computes jackpot_ev)
   class_c_signals array
 total_staked: string
 unallocated_stake: string
@@ -848,6 +907,15 @@ SECTION 10 — ABSOLUTE RULES
     Pinnacle gap affects market ranking.
 27. data_quality field required always.
     FULL PARTIAL or THIN per definitions.
+28. RAW VARIABLES ONLY. Never compute
+    ev, parlay_ev, jackpot_ev, gap_score,
+    stacked_multiplier, final_confidence
+    or overround. Output only the *_inputs
+    objects (ev_inputs, parlay_ev_inputs,
+    jackpot_ev_inputs, gap_score_inputs,
+    multiplier_inputs, confidence_inputs,
+    overround_inputs). The application does
+    all arithmetic for guaranteed accuracy.
 
 ════════════════════════════════════════
 FEW-SHOT EXAMPLE
@@ -1000,7 +1068,13 @@ EXAMPLE OUTPUT:
   "lineup_source": "API-Football C6",
   "odds_source": "Stake C9A",
   "odds_confirmed_UTC": "2026-07-01T20:30:00Z",
-  "overround_stake": 1.058,
+  "overround_inputs": {
+    "outcomes": [
+      {"name": "France", "odds": 1.72},
+      {"name": "Draw", "odds": 3.80},
+      {"name": "Senegal", "odds": 5.50}
+    ]
+  },
   "overround_pinnacle": 1.031,
   "data_quality": "PARTIAL",
   "pinnacle_available": true,
@@ -1068,18 +1142,16 @@ EXAMPLE OUTPUT:
     "players_on_notice": []
   },
   "confidence_scores": {
-    "dimension_weighted_raw": 72,
-    "adjustments": [
-      {"type": "xG_proxy_used", "delta": -3},
-      {"type": "3_signal_conflict", "delta": -5},
-      {"type": "data_quality_PARTIAL", "delta": -7},
-      {"type": "sharp_money_confirms_Under", "delta": 5},
-      {"type": "Over_2.5_drift", "delta": -3}
-    ],
-    "post_adjustment": 59,
-    "bayesian_applied": false,
-    "bayesian_formula": "N/A below 75",
-    "final_confidence": 59
+    "confidence_inputs": {
+      "dimension_weighted_raw": 72,
+      "adjustments": [
+        {"type": "xG_proxy_used", "delta": -3},
+        {"type": "3_signal_conflict", "delta": -5},
+        {"type": "data_quality_PARTIAL", "delta": -7},
+        {"type": "sharp_money_confirms_Under", "delta": 5},
+        {"type": "Over_2.5_drift", "delta": -3}
+      ]
+    }
   },
   "tactical_analysis": {
     "formation_home": "4-3-3",
@@ -1098,24 +1170,23 @@ EXAMPLE OUTPUT:
       {
         "player": "Sadio Mane",
         "team": "Senegal",
-        "gap_score": 50.8,
-        "gap_calculation": "Gap Score 50.8 CRITICAL above 40",
-        "classification": "CRITICAL",
-        "tournament_stats": {
+        "gap_score_inputs": {
           "actual_goals": 2,
-          "actual_assists": 1
+          "actual_assists": 1,
+          "shots_pg_delta": 1.9,
+          "keypasses_pg_delta": 1.3,
+          "set_piece_weight": 10
         },
+        "multiplier_inputs": {
+          "gap_multiplier": 0.72,
+          "depth_multiplier": 0.95
+        },
+        "classification": "CRITICAL",
         "set_piece_roles": ["free_kick_specialist"],
-        "set_piece_weight": 10,
         "replacement": "Boulaye Dia",
         "replacement_profile": "0G 0A THIN depth",
         "depth_rating": "THIN",
-        "goals_scored_multiplier": 0.72,
-        "goals_conceded_multiplier": 1.0,
-        "xg_proxy_multiplier": 0.72,
-        "stacked_multiplier": 0.684,
-        "stacked_floor_applied": false,
-        "adjustment_note": "CRITICAL 50.8. THIN x0.95. Combined 0.684 above 0.65 floor.",
+        "adjustment_note": "CRITICAL gap. THIN depth x0.95. App computes stacked above 0.65 floor.",
         "source_calls": ["C5","C6","C6B"]
       }
     ],
@@ -1128,15 +1199,12 @@ EXAMPLE OUTPUT:
     "market": "Under 2.5 Goals",
     "selection": "Under 2.5 Goals",
     "stake": "$20",
-    "odds": 1.78,
-    "model_probability": 0.618,
-    "books_true_implied": 0.534,
-    "ev": 0.101,
-    "ev_rating": "STRONG",
-    "pinnacle_gap": "+3.5% vs Pinnacle 1.72",
-    "sharp_signal": "CONFIRMS — Under shortened 6% at Pinnacle [C9B]",
+    "ev_inputs": {
+      "model_probability": 0.618,
+      "decimal_odds": 1.78
+    },
     "source_calls": ["C2A","C2B","C4","C5","C6","C6B","C7","C8","C9A","C9B"],
-    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. EV 0.101 STRONG."
+    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. App computes EV STRONG."
   },
   "tier_2_parlay": {
     "active": true,
@@ -1192,8 +1260,10 @@ EXAMPLE OUTPUT:
       "potential_return_realistic": "$86.00",
       "basis_note": "Realistic uses hold-adjusted 4.30. Use this figure."
     },
-    "parlay_ev": 0.075,
-    "ev_rating": "MARGINAL",
+    "parlay_ev_inputs": {
+      "p_final": 0.150,
+      "effective_sgp_price": 4.30
+    },
     "reasoning": "France Win + Over 3.5 Cards + Under 2.5 Goals. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]."
   },
   "tier_3_jackpot": {
@@ -1207,7 +1277,10 @@ EXAMPLE OUTPUT:
       "potential_return_raw": "$0",
       "potential_return_realistic": "$0"
     },
-    "jackpot_ev": 0,
+    "jackpot_ev_inputs": {
+      "p_final": 0,
+      "combined_odds": 0
+    },
     "class_c_signals": [
       "Referee strictness 89.95 [C7]",
       "Both teams form within 1 win last 5 [C2A C2B]"
