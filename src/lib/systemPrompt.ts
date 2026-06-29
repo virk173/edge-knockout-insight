@@ -257,21 +257,22 @@ Manager will likely substitute around 60 to 70
 
 minutes. Apply market adjustments per D5.
 
-CALL 6 — CONFIRMED LINEUPS (TheStatsAPI)
+CALL 6 — CONFIRMED LINEUPS (API-Football)
 
-Available approximately 75 minutes before kickoff.
+Endpoint: /fixtures/lineups?fixture={fixture_id}
+
+Typically available 20-40 minutes before kickoff;
+
+for World Cup 2026 may appear up to 75 minutes early.
 
 If empty: flag LINEUP PENDING.
 
 All player props remain PENDING until confirmed.
 
-If TheStatsAPI returned a fallback from API-Football:
-
-note the reduced timing window in output.
-
 Extract: confirmed 11 starters per team,
 
 formation, bench list, captain.
+
 
 CALL 6B — PLAYER INTELLIGENCE
 
