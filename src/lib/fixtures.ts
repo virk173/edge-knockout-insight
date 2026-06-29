@@ -69,19 +69,18 @@ function normaliseErrors(errors: unknown): string | null {
 
 async function fetchFixturesForDate(
   date: string,
-  apiKey: string,
   isTomorrow: boolean,
 ): Promise<Fixture[]> {
   const url = `${API_BASE}?league=1&season=2026&date=${date}`;
-  const res = await fetch(url, {
-    headers: { "x-apisports-key": apiKey },
-  });
+  const result = await apiFetch({ data: { provider: "apifootball", url } });
 
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status} ${res.statusText}`);
+  if (!result.ok) {
+    throw new Error(
+      `API returned ${result.status} ${result.statusText ?? ""}`.trim(),
+    );
   }
 
-  const json = (await res.json()) as ApiFixtureResponse;
+  const json = (result.json ?? {}) as ApiFixtureResponse;
   const apiError = normaliseErrors(json.errors);
   if (apiError) {
     throw new Error(apiError);
