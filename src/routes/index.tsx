@@ -257,6 +257,14 @@ Start your response with { and end with }.`;
         const parsed = tryParse();
         setAnalysisResult(parsed);
         toast.success("Analysis complete");
+
+        // Auto-save the log_entry (if present) to the backtesting log.
+        const logEntry = (parsed as AnalysisResult | null)?.log_entry;
+        if (logEntry && typeof logEntry === "object") {
+          const updated = appendLogEntry(logEntry);
+          setLogEntries(updated);
+          toast.success("Saved to backtesting log");
+        }
       } catch {
         // 3. Surface where the response cuts off: first + last 500 chars.
         const head = cleaned.slice(0, 500);
