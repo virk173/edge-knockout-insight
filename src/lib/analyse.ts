@@ -7,6 +7,7 @@ import {
   getApiCallCount,
   incrementApiCallCount,
   WARNING_THRESHOLD,
+  CRITICAL_THRESHOLD,
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
