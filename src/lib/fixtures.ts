@@ -84,8 +84,12 @@ async function fetchFixturesForDate(
     id: item.fixture.id,
     home: item.teams.home.name,
     away: item.teams.away.name,
+    homeId: item.teams.home.id,
+    awayId: item.teams.away.id,
     kickoffUtc: item.fixture.date,
     isTomorrow,
+    referee: item.fixture.referee ?? null,
+    round: item.league?.round ?? null,
   }));
 }
 
