@@ -696,6 +696,7 @@ export async function collectMatchData(
   };
 
   const counterWarning = getApiCallCount() >= WARNING_THRESHOLD;
+  const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
   // ---- STEP 1: data calls ----
   // 1 + 2: team statistics
