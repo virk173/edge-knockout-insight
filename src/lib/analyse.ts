@@ -95,13 +95,13 @@ let currentDebugCall: string | null = null;
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
-  { key: "2A", n: "2A", endpoint: "/teams/statistics (home)" },
-  { key: "2B", n: "2B", endpoint: "/teams/statistics (away)" },
+  { key: "2A", n: "2A", endpoint: "TheStatsAPI /teams/{id}/stats (home)" },
+  { key: "2B", n: "2B", endpoint: "TheStatsAPI /teams/{id}/stats (away)" },
   { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
   { key: "6", n: "6", endpoint: "TheStatsAPI /lineups" },
-  { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
+  { key: "6B", n: "6B", endpoint: "TheStatsAPI /players/{id}/stats" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
@@ -124,12 +124,14 @@ export function validateCall(callKey: string, data: unknown): unknown {
     Array.isArray(resp) && resp.length ? (resp[0] as Record<string, unknown>) : undefined;
 
   const checks: Record<string, () => boolean> = {
-    "2A": () => !!firstResp?.statistics,
-    "2B": () => !!firstResp?.statistics,
+    // TheStatsAPI team-stats shape: { teamId, extracted, raw }.
+    "2A": () => !!(d.extracted || d.stats || firstResp?.statistics),
+    "2B": () => !!(d.extracted || d.stats || firstResp?.statistics),
     "3": () => resp !== undefined,
     "4": () => resp !== undefined,
     "5": () => resp !== undefined,
     "6": () => !!(d.home || d.away || d.match_id) || resp !== undefined, // TheStatsAPI lineups shape
+    "6B": () => !!(d.playerStatistics || d.playerCount),
     "7": () => resp !== undefined,
     "8": () => !!firstResp?.predictions,
     "9A": () => resp !== undefined,
@@ -254,17 +256,20 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   }
 
   const specs: Spec[] = [
-    { callLabel: "CALL 2A", api: "API-Football", endpoint: "/teams/statistics (home)", entryKey: "2A", extracted: cr["2A"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 2B", api: "API-Football", endpoint: "/teams/statistics (away)", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
+    // ---- TheStatsAPI group (6 calls: S0, S2A, S2B, S3, S4, S5) ----
+    { callLabel: "S0", api: "TheStatsAPI", endpoint: "match lookup /football/matches", entryKey: "S0", extracted: cr["S0"]?.status === "SUCCESS", count: true },
+    { callLabel: "S2A", api: "TheStatsAPI", endpoint: "/teams/{home}/stats", entryKey: "2A", extracted: cr["2A"]?.status === "SUCCESS", count: true },
+    { callLabel: "S2B", api: "TheStatsAPI", endpoint: "/teams/{away}/stats", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
+    { callLabel: "S3", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "S4", api: "TheStatsAPI", endpoint: "/players/{id}/stats (if absences)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
+    { callLabel: "S5", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    // ---- API-Football group ----
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 6B", api: "API-Football", endpoint: "/players (player statistics)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "CALL 9B", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -308,7 +313,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
 
 
-const TOTAL_STEPS = 12;
+const TOTAL_STEPS = 13;
 
 function normalize(name: string): string {
   return name
@@ -376,8 +381,9 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
 }
 
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
-// On HTTP 429 (rate limit) we wait 2s and retry once; on 404 we return null
-// (used for lineups "not announced yet"). Other failures throw with detail.
+// On HTTP 429 (rate limit) we back off and retry up to 3 times with escalating
+// waits (3s, 6s, 9s); on 404 we return null (used for lineups "not announced
+// yet"). Other failures throw with detail.
 async function saGet(path: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
 
@@ -391,11 +397,12 @@ async function saGet(path: string): Promise<unknown> {
   };
 
   let result = await attempt();
-  // Retry once on rate-limit (429) after a 2s wait.
-  if (!result.ok && String(result.status) === "429") {
-    await sleep(2000);
+  // Retry on rate-limit (429) with escalating backoff.
+  for (let attemptNo = 1; attemptNo <= 3 && !result.ok && String(result.status) === "429"; attemptNo++) {
+    await sleep(attemptNo * 3000);
     result = await attempt();
   }
+
 
   // 404 = resource not yet available (e.g. lineups not announced). Treat as null.
   if (!result.ok && String(result.status) === "404") {
@@ -533,6 +540,20 @@ function buildPinnacleSummary(
   };
   flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]));
   flattenLines("Corners", getField(m, ["match_corners", "corners"]));
+
+  // Asian Handicap — home / away with opening + last_seen.
+  const ah = getField(m, ["asian_handicap", "handicap"]);
+  if (ah) {
+    const outcomes = (
+      [
+        ["Home", getField(ah, ["home"])],
+        ["Away", getField(ah, ["away"])],
+      ] as Array<[string, unknown]>
+    )
+      .filter(([, n]) => n != null)
+      .map(([name, n]) => summariseOutcome(name, n));
+    if (outcomes.length) markets.push({ market: "Asian Handicap", outcomes });
+  }
 
   return markets.length ? { markets, raw: pinnacle } : null;
 }
@@ -820,31 +841,83 @@ async function buildRefereeProfile(
   return profile;
 }
 
-// ---- TheStatsAPI match-id resolution ----
+// ---- TheStatsAPI match resolution (S0) ----
 //
-// Both CALL 6 (lineups) and CALL 9B (Pinnacle odds) need TheStatsAPI's own
-// match_id. We resolve it once per pipeline run by listing FIFA World Cup 2026
-// matches for the kickoff date (competition + season hardcoded) and matching by
-// team name. Cached per (date) for the session to avoid a second list call.
+// TheStatsAPI is now the primary source for team stats (S2A/S2B), confirmed
+// lineups (S3), player stats (S4) and Pinnacle odds (S5). All of those need
+// TheStatsAPI's own match_id AND the per-team ids, which both come from the
+// match-lookup response. We resolve it once per pipeline run by listing FIFA
+// World Cup 2026 matches for the kickoff date (competition + season hardcoded),
+// matching by team name. The match list is cached per-day in localStorage under
+// "statsapi_matches_{YYYY-MM-DD}". Lineups and Pinnacle odds are NEVER cached.
 const statsapiMatchListMem: Record<string, unknown[]> = {};
 
 async function getStatsApiMatches(date: string): Promise<unknown[]> {
   if (statsapiMatchListMem[date]) return statsapiMatchListMem[date];
-  const payload = await saGet(
-    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`,
-  );
-  const arr = extractArray(payload);
+
+  // Daily localStorage cache of the match list (not lineups/odds).
+  const lsKey = `statsapi_matches_${date}`;
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(lsKey);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw) as unknown[];
+        statsapiMatchListMem[date] = arr;
+        return arr;
+      } catch {
+        /* fall through and refetch */
+      }
+    }
+  }
+
+  // Correct endpoint: date_from + date_to (there is no ?date= param), and
+  // status=scheduled for upcoming fixtures.
+  const base =
+    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}` +
+    `&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`;
+  let payload = await saGet(`${base}&status=scheduled`);
+  let arr = extractArray(payload);
+
+  // Fallback: completed/in-play fixtures (e.g. Debug Mode uses a past match)
+  // do not appear under status=scheduled. Retry without the status filter.
+  if (arr.length === 0) {
+    payload = await saGet(base);
+    arr = extractArray(payload);
+  }
+
   statsapiMatchListMem[date] = arr;
+  if (typeof window !== "undefined" && arr.length) {
+    try {
+      window.localStorage.setItem(lsKey, JSON.stringify(arr));
+    } catch {
+      /* localStorage quota — keep the in-memory cache only */
+    }
+  }
   return arr;
 }
 
-// Resolve the TheStatsAPI match_id for a fixture by team name on its kickoff
-// date. Returns null when no match is found.
-async function resolveStatsApiMatchId(
+export interface StatsApiMatchRef {
+  id: string;
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  raw: unknown;
+}
+
+function idOrNull(v: unknown): string | null {
+  return v == null ? null : String(v);
+}
+
+// Resolve the TheStatsAPI match (id + team ids) for a fixture by team name on
+// its kickoff date. Case-insensitive "contains" check in both directions, since
+// API-Football and TheStatsAPI name teams slightly differently. Returns null
+// when no match is found.
+async function resolveStatsApiMatch(
   home: string,
   away: string,
   kickoffUtc: string,
-): Promise<string | null> {
+): Promise<StatsApiMatchRef | null> {
   const date = (kickoffUtc || "").slice(0, 10);
   if (!date) return null;
   const list = await getStatsApiMatches(date);
@@ -853,15 +926,103 @@ async function resolveStatsApiMatchId(
   const found = list.find((mt) => {
     const hn = normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""));
     const an = normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""));
-    if (!hn || !an) return false;
-    const direct =
-      (hn.includes(h) || h.includes(hn)) && (an.includes(a) || a.includes(an));
-    const swapped =
-      (hn.includes(a) || a.includes(hn)) && (an.includes(h) || h.includes(an));
-    return direct || swapped;
+    if (!hn && !an) return false;
+    return (
+      hn.includes(h) ||
+      an.includes(h) ||
+      hn.includes(a) ||
+      an.includes(a) ||
+      h.includes(hn) ||
+      a.includes(an)
+    );
   });
+  if (!found) return null;
   const id = getField(found, ["id", "match_id"]);
-  return id != null ? String(id) : null;
+  if (id == null) return null;
+  return {
+    id: String(id),
+    homeTeamId: idOrNull(getField(getField(found, ["home_team"]), ["id", "team_id"])),
+    awayTeamId: idOrNull(getField(getField(found, ["away_team"]), ["id", "team_id"])),
+    homeTeamName: (getField(getField(found, ["home_team"]), ["name"]) as string) ?? null,
+    awayTeamName: (getField(getField(found, ["away_team"]), ["name"]) as string) ?? null,
+    raw: found,
+  };
+}
+
+// Back-compat wrapper used by refetchLineups: resolve just the match_id.
+async function resolveStatsApiMatchId(
+  home: string,
+  away: string,
+  kickoffUtc: string,
+): Promise<string | null> {
+  const ref = await resolveStatsApiMatch(home, away, kickoffUtc);
+  return ref?.id ?? null;
+}
+
+// ---- TheStatsAPI extraction helpers ----
+
+// Extract the key season-stat fields from a TheStatsAPI /teams/{id}/stats
+// response. Keeps the raw payload too so Claude still sees everything.
+function extractTeamStats(raw: unknown): Record<string, unknown> {
+  const d = (getField(raw, ["stats", "statistics", "data"]) ?? raw) as unknown;
+  const goals = getField(d, ["goals"]);
+  return {
+    form: getField(d, ["form", "recent_form"]) ?? null,
+    goals_for:
+      getField(d, ["goals_for", "goalsFor"]) ??
+      getField(goals, ["for", "scored"]) ??
+      null,
+    goals_against:
+      getField(d, ["goals_against", "goalsAgainst"]) ??
+      getField(goals, ["against", "conceded"]) ??
+      null,
+    wins: getField(d, ["wins", "won"]) ?? null,
+    draws: getField(d, ["draws", "drawn"]) ?? null,
+    losses: getField(d, ["losses", "lost", "loses"]) ?? null,
+    matches_played:
+      getField(d, ["matches_played", "matchesPlayed", "played", "games_played"]) ?? null,
+    position: getField(d, ["position", "rank", "standing"]) ?? null,
+  };
+}
+
+// Pull the starting_xi player ids out of a TheStatsAPI lineups response.
+function extractLineupPlayerIds(lineup: unknown): string[] {
+  const ids = new Set<string>();
+  const collectSide = (side: unknown) => {
+    const xi = getField(side, ["starting_xi", "startingXi", "startingXI", "lineup"]);
+    for (const p of extractArray(xi)) {
+      const id =
+        getField(p, ["player_id", "id"]) ?? getField(getField(p, ["player"]), ["id"]);
+      if (id != null) ids.add(String(id));
+    }
+  };
+  collectSide(getField(lineup, ["home"]));
+  collectSide(getField(lineup, ["away"]));
+  // Array-shaped lineup responses (one entry per team).
+  for (const item of extractArray(lineup)) collectSide(item);
+  return [...ids];
+}
+
+// Extract the player-stat fields the GAP formula needs from a TheStatsAPI
+// /players/{id}/stats response.
+function extractPlayerStats(raw: unknown): Record<string, unknown> {
+  const d = (getField(raw, ["stats", "statistics", "data"]) ?? raw) as unknown;
+  const scoring = getField(d, ["scoring"]);
+  const shooting = getField(d, ["shooting"]);
+  const passing = getField(d, ["passing"]);
+  const discipline = getField(d, ["discipline"]);
+  return {
+    appearances: getField(d, ["appearances", "apps"]) ?? null,
+    starts: getField(d, ["starts"]) ?? null,
+    minutes_played: getField(d, ["minutes_played", "minutesPlayed", "minutes"]) ?? null,
+    "scoring.goals": getField(scoring, ["goals"]) ?? null,
+    "scoring.assists": getField(scoring, ["assists"]) ?? null,
+    "shooting.total_shots": getField(shooting, ["total_shots", "shots"]) ?? null,
+    "shooting.shots_on_target": getField(shooting, ["shots_on_target", "on_target"]) ?? null,
+    "passing.key_passes": getField(passing, ["key_passes", "keyPasses"]) ?? null,
+    "discipline.yellow_cards": getField(discipline, ["yellow_cards", "yellows"]) ?? null,
+    "discipline.red_cards": getField(discipline, ["red_cards", "reds"]) ?? null,
+  };
 }
 
 export async function collectMatchData(
@@ -877,25 +1038,28 @@ export async function collectMatchData(
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
-  // TheStatsAPI match_id, resolved lazily on first need (CALL 6) and reused by
-  // CALL 9B. null until resolved; "" sentinel meaning "tried, not found".
-  let statsApiMatchId: string | null = null;
+  // TheStatsAPI match reference (id + team ids), resolved once as step S0 and
+  // reused by S2A/S2B (team stats), S3 (lineups), S4 (player stats) and S5
+  // (Pinnacle odds). null until resolved.
+  let statsApiRef: StatsApiMatchRef | null = null;
   let statsApiResolved = false;
-  const ensureStatsApiMatchId = async (): Promise<string | null> => {
-    if (statsApiResolved) return statsApiMatchId;
+  const ensureStatsApiMatch = async (): Promise<StatsApiMatchRef | null> => {
+    if (statsApiResolved) return statsApiRef;
     statsApiResolved = true;
     try {
-      statsApiMatchId = await resolveStatsApiMatchId(
+      statsApiRef = await resolveStatsApiMatch(
         match.home,
         match.away,
         match.kickoffUtc,
       );
     } catch (e) {
       console.warn("[analyse] TheStatsAPI match resolution failed", e);
-      statsApiMatchId = null;
+      statsApiRef = null;
     }
-    return statsApiMatchId;
+    return statsApiRef;
   };
+  const ensureStatsApiMatchId = async (): Promise<string | null> =>
+    (await ensureStatsApiMatch())?.id ?? null;
 
 
 
@@ -946,28 +1110,48 @@ export async function collectMatchData(
   const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
   // ---- STEP 1: data calls ----
-  // 1 + 2: team statistics
-  await runStep("2A", "Fetching home team statistics... (1/11)", async () => {
-    const r = await afGet(
-      `/teams/statistics?league=1&season=2026&team=${match.homeId}`,
-      afKey,
-    );
-    const avg = getField(getField(getField(r, ["goals"]), ["for"]), ["average"]);
-    if (!avg || getField(avg, ["total"]) === undefined) {
-      console.warn("[analyse] 2A missing goals.for.average.total");
+
+  // S0: resolve the TheStatsAPI match (id + per-team ids). Everything sourced
+  // from TheStatsAPI (team stats, lineups, player stats, Pinnacle) depends on
+  // this. Recorded as its own debug row so the report shows S0 explicitly.
+  await runStep("S0", "Resolving TheStatsAPI match (lookup)... (S0)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref) {
+      throw new Error(
+        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date.",
+      );
     }
-    return r;
+    return {
+      match_id: ref.id,
+      home_team: { id: ref.homeTeamId, name: ref.homeTeamName },
+      away_team: { id: ref.awayTeamId, name: ref.awayTeamName },
+    };
   });
-  await runStep("2B", "Fetching away team statistics... (2/11)", async () => {
-    const r = await afGet(
-      `/teams/statistics?league=1&season=2026&team=${match.awayId}`,
-      afKey,
-    );
-    const avg = getField(getField(getField(r, ["goals"]), ["for"]), ["average"]);
-    if (!avg || getField(avg, ["total"]) === undefined) {
-      console.warn("[analyse] 2B missing goals.for.average.total");
+
+  // S2A / S2B: team season stats from TheStatsAPI (richer WC2026 data than
+  // API-Football for this tournament). Replaces the old API-Football
+  // /teams/statistics calls. Team ids come from the S0 lookup response.
+  await runStep("2A", "Fetching home team stats (TheStatsAPI)... (1/11)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref?.homeTeamId) {
+      throw new Error("No TheStatsAPI home_team.id available from match lookup.");
     }
-    return r;
+    const raw = await saGet(
+      `/football/teams/${ref.homeTeamId}/stats?season_id=${STATSAPI_SEASON_ID}`,
+    );
+    if (isEmptyResponse(raw)) throw new Error("No TheStatsAPI home team stats returned.");
+    return { teamId: ref.homeTeamId, extracted: extractTeamStats(raw), raw };
+  });
+  await runStep("2B", "Fetching away team stats (TheStatsAPI)... (2/11)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref?.awayTeamId) {
+      throw new Error("No TheStatsAPI away_team.id available from match lookup.");
+    }
+    const raw = await saGet(
+      `/football/teams/${ref.awayTeamId}/stats?season_id=${STATSAPI_SEASON_ID}`,
+    );
+    if (isEmptyResponse(raw)) throw new Error("No TheStatsAPI away team stats returned.");
+    return { teamId: ref.awayTeamId, extracted: extractTeamStats(raw), raw };
   });
 
   // 3: head-to-head
@@ -1013,11 +1197,11 @@ export async function collectMatchData(
     afGet(`/injuries?fixture=${match.id}`, afKey),
   );
 
-  // 6: confirmed lineups (TheStatsAPI).
-  // Resolve TheStatsAPI's match_id by team name on the kickoff date, then fetch
-  // /football/matches/{match_id}/lineups. Lineups publish ~1h before kickoff;
-  // until then the endpoint 404s (saGet returns null). If null/empty, flag
-  // LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
+  // 6 (S3): confirmed lineups (TheStatsAPI).
+  // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
+  // TheStatsAPI publishes lineups at ~T-75min (earlier than API-Football's
+  // ~T-20min); until then the endpoint 404s (saGet returns null). If null/empty,
+  // flag LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
   await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
     const matchId = await ensureStatsApiMatchId();
     if (!matchId) {
@@ -1037,67 +1221,9 @@ export async function collectMatchData(
   });
 
 
-  // CALL 6B: player intelligence (API-Football player statistics).
-  // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
-  // system prompt specifies. Fetches player statistics for each affected team
-  // so Claude can run the GAP score formula. Not part of the 11 numbered
-  // progress steps (like CALL 10); recorded directly into callResults.
-  {
-    currentDebugCall = "6B";
-    onProgress({
-      step: stepKeys.length,
-      total: TOTAL_STEPS,
-      label: "Fetching player intelligence...",
-    });
-    const injuries = callResults["5"];
-    const injuryItems =
-      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
-    const affectedTeamIds = Array.from(
-      new Set(
-        injuryItems
-          .map((it) => getField(getField(it, ["team"]), ["id"]))
-          .filter((id): id is number => typeof id === "number"),
-      ),
-    );
-    if (affectedTeamIds.length === 0) {
-      record(
-        "6B",
-        "Player intelligence",
-        "SKIPPED",
-        undefined,
-        "No absences in CALL 5 — player intelligence not triggered.",
-      );
-    } else {
-      try {
-        const perTeam: Record<string, unknown> = {};
-        for (const teamId of affectedTeamIds) {
-          perTeam[String(teamId)] = await afGet(
-            `/players?team=${teamId}&season=2026`,
-            afKey,
-          );
-        }
-        const anyData = Object.values(perTeam).some((v) => !isEmptyResponse(v));
-        record(
-          "6B",
-          "Player intelligence",
-          anyData ? "SUCCESS" : "EMPTY",
-          anyData ? { affectedTeamIds, playerStatistics: perTeam } : undefined,
-          anyData
-            ? undefined
-            : "No player statistics returned for the affected teams.",
-        );
-      } catch (e) {
-        record(
-          "6B",
-          "Player intelligence",
-          "FAILED",
-          undefined,
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-    }
-    currentDebugCall = null;
-  }
+  // NOTE: CALL 6B / S4 (player stats for absences) runs LAST, after the
+  // mandatory Pinnacle call (S5), because TheStatsAPI enforces a tight rate
+  // limit. Running the player-stat burst first would starve S5. See below.
 
 
   // 7: referee profile.
@@ -1214,6 +1340,9 @@ export async function collectMatchData(
       label: "Fetching Pinnacle odds (TheStatsAPI)...",
     });
     currentDebugCall = "9B";
+    // Cool-down so the (mandatory) Pinnacle call isn't starved by the preceding
+    // TheStatsAPI burst (team stats + player-stat loop) against the rate limit.
+    await sleep(3000);
     try {
       // Diagnostic: the real key lives server-side as the STATSAPI_KEY secret
       // (used by the api-proxy). VITE_STATSAPI_KEY is optional documentation only.
@@ -1269,6 +1398,84 @@ export async function collectMatchData(
       currentDebugCall = null;
     }
   }
+
+  // CALL 6B (S4): player stats for absences (TheStatsAPI). Runs AFTER S5 so the
+  // mandatory Pinnacle call gets rate-limit budget first. Triggers ONLY when
+  // CALL 5 (injuries) returned absences. Player ids come from the S3 lineup
+  // starting_xi. Best-effort: a per-call failure stops the loop but keeps any
+  // results already gathered. Recorded directly (not a numbered progress step).
+  {
+    currentDebugCall = "6B";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching player stats (TheStatsAPI)...",
+    });
+    const injuries = callResults["5"];
+    const injuryItems =
+      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
+    const hasAbsences = injuryItems.length > 0;
+
+    const lineupResult = callResults["6"];
+    const playerIds =
+      lineupResult?.status === "SUCCESS"
+        ? extractLineupPlayerIds(lineupResult.data)
+        : [];
+
+    if (!hasAbsences) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "SKIPPED",
+        undefined,
+        "No absences in CALL 5 — player stats not triggered.",
+      );
+    } else if (playerIds.length === 0) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "EMPTY",
+        undefined,
+        "Absences present but no starting_xi player ids available from lineups.",
+      );
+    } else {
+      // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces a
+      // tight rate limit, so we space player-stat calls out generously.
+      const ids = playerIds.slice(0, 8);
+      const perPlayer: Record<string, unknown> = {};
+      let lastError: string | undefined;
+      await sleep(3000);
+      for (const pid of ids) {
+        try {
+          const raw = await saGet(
+            `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
+          );
+          if (!isEmptyResponse(raw)) {
+            perPlayer[pid] = extractPlayerStats(raw);
+          }
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+          break; // stop on rate-limit / error; keep what we have
+        }
+        await sleep(1500);
+      }
+      const anyData = Object.keys(perPlayer).length > 0;
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        anyData ? "SUCCESS" : "EMPTY",
+        anyData
+          ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer }
+          : undefined,
+        anyData
+          ? undefined
+          : lastError ?? "No player statistics returned for the starting XI.",
+      );
+    }
+    currentDebugCall = null;
+  }
+
+
 
 
 
@@ -1330,7 +1537,7 @@ export async function collectMatchData(
     failedCalls,
     warning: lineupResolved
       ? null
-      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). Lineups publish 20-75 min before kickoff — analysis will proceed with reduced data.",
+      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). TheStatsAPI publishes lineups at ~T-75min before kickoff — analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
   };
