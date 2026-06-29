@@ -1524,7 +1524,7 @@ export async function collectMatchData(
     failedCalls,
     warning: lineupResolved
       ? null
-      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). Lineups publish 20-75 min before kickoff — analysis will proceed with reduced data.",
+      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). TheStatsAPI publishes lineups at ~T-75min before kickoff — analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
   };
