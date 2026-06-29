@@ -236,19 +236,35 @@ Start your response with { and end with }.`;
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRun}
-              disabled={loading}
-              className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? "Analysing…" : "Run Analysis"}
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={loading || analysing}
+                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? "Analysing…" : "Run Analysis"}
+              </button>
+              <button
+                type="button"
+                onClick={handleTestMode}
+                disabled={loading || analysing}
+                className="rounded-md border border-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Test Mode
+              </button>
+            </div>
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
               <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}
             </span>
           </div>
+
+          {testMode && (
+            <div className="w-full rounded-md border border-accent-amber bg-accent-amber/15 px-4 py-3 text-sm font-semibold text-accent-amber">
+              TEST MODE — Using mock data. Not real match analysis.
+            </div>
+          )}
 
           {counterWarning && (
             <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
