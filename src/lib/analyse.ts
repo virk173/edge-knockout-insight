@@ -820,23 +820,83 @@ async function buildRefereeProfile(
   return profile;
 }
 
+// ---- TheStatsAPI match-id resolution ----
+//
+// Both CALL 6 (lineups) and CALL 9B (Pinnacle odds) need TheStatsAPI's own
+// match_id. We resolve it once per pipeline run by listing FIFA World Cup 2026
+// matches for the kickoff date (competition + season hardcoded) and matching by
+// team name. Cached per (date) for the session to avoid a second list call.
+const statsapiMatchListMem: Record<string, unknown[]> = {};
 
+async function getStatsApiMatches(date: string): Promise<unknown[]> {
+  if (statsapiMatchListMem[date]) return statsapiMatchListMem[date];
+  const payload = await saGet(
+    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`,
+  );
+  const arr = extractArray(payload);
+  statsapiMatchListMem[date] = arr;
+  return arr;
+}
+
+// Resolve the TheStatsAPI match_id for a fixture by team name on its kickoff
+// date. Returns null when no match is found.
+async function resolveStatsApiMatchId(
+  home: string,
+  away: string,
+  kickoffUtc: string,
+): Promise<string | null> {
+  const date = (kickoffUtc || "").slice(0, 10);
+  if (!date) return null;
+  const list = await getStatsApiMatches(date);
+  const h = normalize(home);
+  const a = normalize(away);
+  const found = list.find((mt) => {
+    const hn = normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""));
+    const an = normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""));
+    if (!hn || !an) return false;
+    const direct =
+      (hn.includes(h) || h.includes(hn)) && (an.includes(a) || a.includes(an));
+    const swapped =
+      (hn.includes(a) || a.includes(hn)) && (an.includes(h) || h.includes(an));
+    return direct || swapped;
+  });
+  const id = getField(found, ["id", "match_id"]);
+  return id != null ? String(id) : null;
+}
 
 export async function collectMatchData(
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  // API keys live server-side (APIFOOTBALL_KEY) and are used by the api-proxy
-  // server function. This placeholder keeps the existing call-site signature.
+  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used by
+  // the api-proxy server function. This placeholder keeps the call-site signature.
   const afKey = "";
 
-  // When debugging, capture every raw HTTP call made by afGet.
+  // When debugging, capture every raw HTTP call made by afGet / saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
-  // Reset the OddsPapi cooldown counter for this run.
-  oddspapiCallsThisRun = 0;
+  // TheStatsAPI match_id, resolved lazily on first need (CALL 6) and reused by
+  // CALL 9B. null until resolved; "" sentinel meaning "tried, not found".
+  let statsApiMatchId: string | null = null;
+  let statsApiResolved = false;
+  const ensureStatsApiMatchId = async (): Promise<string | null> => {
+    if (statsApiResolved) return statsApiMatchId;
+    statsApiResolved = true;
+    try {
+      statsApiMatchId = await resolveStatsApiMatchId(
+        match.home,
+        match.away,
+        match.kickoffUtc,
+      );
+    } catch (e) {
+      console.warn("[analyse] TheStatsAPI match resolution failed", e);
+      statsApiMatchId = null;
+    }
+    return statsApiMatchId;
+  };
+
 
 
 
