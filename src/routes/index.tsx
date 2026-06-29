@@ -255,7 +255,8 @@ Start your response with { and end with }.`;
     setAnalysisError(null);
     setAnalysisRaw(null);
     setFormattedDebug(null);
-    setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
+    setProgress({ step: 0, total: 11, label: "Starting data collection…" });
+
     try {
       const result = await collectMatchData(match, (p) => setProgress(p), {
         debug: debugMode,
