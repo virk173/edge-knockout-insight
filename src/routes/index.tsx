@@ -287,7 +287,7 @@ Start your response with { and end with }.`;
       const match = await resolveDebugFixture();
       setMatches([match]);
       setActiveMatchId(match.id);
-      setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
+      setProgress({ step: 0, total: 11, label: "Starting data collection…" });
       const result = await collectMatchData(match, (p) => setProgress(p), {
         debug: true,
       });
