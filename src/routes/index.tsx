@@ -450,6 +450,18 @@ Start your response with { and end with }.`;
     }
   }
 
+  function handleResetBudget() {
+    const confirmed = window.confirm(
+      "Reset today's API call counter to 0? This does not affect actual API usage limits — it only resets the local counter.",
+    );
+    if (!confirmed) return;
+    const today = new Date().toISOString().slice(0, 10);
+    window.localStorage.removeItem(`apifootball_calls_${today}`);
+    setApiCalls(getApiCallCount());
+    toast.success("API budget counter reset to 0");
+  }
+
+
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
   const counterCritical = apiCalls >= CRITICAL_THRESHOLD;
