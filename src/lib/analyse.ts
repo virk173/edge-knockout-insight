@@ -1017,25 +1017,28 @@ export async function collectMatchData(
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
-  // TheStatsAPI match_id, resolved lazily on first need (CALL 6) and reused by
-  // CALL 9B. null until resolved; "" sentinel meaning "tried, not found".
-  let statsApiMatchId: string | null = null;
+  // TheStatsAPI match reference (id + team ids), resolved once as step S0 and
+  // reused by S2A/S2B (team stats), S3 (lineups), S4 (player stats) and S5
+  // (Pinnacle odds). null until resolved.
+  let statsApiRef: StatsApiMatchRef | null = null;
   let statsApiResolved = false;
-  const ensureStatsApiMatchId = async (): Promise<string | null> => {
-    if (statsApiResolved) return statsApiMatchId;
+  const ensureStatsApiMatch = async (): Promise<StatsApiMatchRef | null> => {
+    if (statsApiResolved) return statsApiRef;
     statsApiResolved = true;
     try {
-      statsApiMatchId = await resolveStatsApiMatchId(
+      statsApiRef = await resolveStatsApiMatch(
         match.home,
         match.away,
         match.kickoffUtc,
       );
     } catch (e) {
       console.warn("[analyse] TheStatsAPI match resolution failed", e);
-      statsApiMatchId = null;
+      statsApiRef = null;
     }
-    return statsApiMatchId;
+    return statsApiRef;
   };
+  const ensureStatsApiMatchId = async (): Promise<string | null> =>
+    (await ensureStatsApiMatch())?.id ?? null;
 
 
 
