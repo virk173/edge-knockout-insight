@@ -635,12 +635,13 @@ function nextRound(current: string | null): string | null {
 
   if (!current) return null;
   const c = current.toLowerCase();
-  if (c.includes("round of 32")) return "Round of 16";
-  if (c.includes("round of 16")) return "Quarter-finals";
+  if (c.includes("32")) return "Round of 16";
+  if (c.includes("16")) return "Quarter-finals";
   if (c.includes("quarter")) return "Semi-finals";
-  if (c.includes("semi")) return "Finals";
+  if (c.includes("semi")) return "Final";
   return null;
 }
+
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
