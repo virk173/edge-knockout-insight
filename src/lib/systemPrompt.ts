@@ -338,7 +338,11 @@ All diverge above 0.3: CONFLICT
   Tier 2 goals stake capped at $15
 
 STEP 4 — SINGLE BET EV
-  EV = (model_prob x decimal_odds) - 1
+Do NOT compute EV. Output ev_inputs:
+  ev_inputs: { model_probability,
+    decimal_odds }
+The app computes EV = (prob x odds) - 1.
+Apply the rating to the app-computed EV:
   0.08+: STRONG
   0.05-0.07: MARGINAL
   0-0.04: SKIP
@@ -368,14 +372,21 @@ Layer 2 — Joint probability:
   P_final = P_joint x (1 - hold_rate)
   effective_sgp = stake_sgp
     x (1 - hold_rate) x 1.05
-  parlay_EV = (P_final x effective_sgp) - 1
+Do NOT compute parlay EV. Output:
+  parlay_ev_inputs: { p_final,
+    effective_sgp_price }
+The app computes
+  parlay_EV = (p_final x price) - 1.
   Minimum parlay EV: 0.05
+For Tier 3 jackpot likewise output:
+  jackpot_ev_inputs: { p_final,
+    combined_odds }
 
 Show probability_derivation in output.
 
 STEP 6 — CONFIDENCE SCORE
 Base: weighted dimension average.
-Adjustments:
+Adjustments (each as type and delta):
   PARTIAL data: -7
   THIN data: -15
   xG proxy used: -3
@@ -391,10 +402,17 @@ Note: sharp money adjustments only
 apply when C9B returns SUCCESS.
 If C9B EMPTY: skip those adjustments.
 
-Bayesian regression if raw above 75:
-  adjusted = 75 + (raw - 75) x 0.40
-
-Show full derivation always.
+Do NOT compute the confidence score.
+Output confidence_inputs:
+  confidence_inputs: {
+    dimension_weighted_raw,
+    adjustments: [ { type, delta } ] }
+The app computes:
+  post_adj = raw + sum(deltas)
+  if post_adj > 75:
+    final = 75 + (post_adj - 75) x 0.40
+  else: final = post_adj
+This is the Bayesian regression above 75.
 
 ════════════════════════════════════════
 SECTION 3 — HISTORICAL BASE RATES
