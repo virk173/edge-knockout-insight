@@ -1547,27 +1547,8 @@ Total cards over 3.5: 1.82 / under 3.5: 1.98
 
 [END CALL 9A]
 
-[CALL 9B — TheStatsAPI Pinnacle odds — SUCCESS]
-
-France 1X2: opening 1.68, current 1.65
-
-Draw: opening 3.90, current 4.05
-
-Senegal: opening 5.80, current 5.90
-
-Over 2.5: opening 1.98, current 2.10
-
-Under 2.5: opening 1.83, current 1.72
-
-BTTS Yes: opening 1.85, current 1.88
-
-Corners over 9.5: opening 1.91, current 1.94
-
-Cards over 3.5: opening 1.75, current 1.78
-
-[END CALL 9B]
-
 [CALL 10 — bracket context — SUCCESS]
+
 
 Winner faces England vs Congo DR winner
 
