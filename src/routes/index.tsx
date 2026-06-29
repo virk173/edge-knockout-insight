@@ -116,6 +116,18 @@ function Index() {
     setApiCalls(getApiCallCount());
   }, []);
 
+  useEffect(() => {
+    setLogEntries(getLogEntries());
+  }, []);
+
+  function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
+    setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
+  }
+
+  function handleClearLog() {
+    setLogEntries(clearLog());
+  }
+
   // Cycle the Claude loading messages every 3 seconds while analysing.
   useEffect(() => {
     if (!analysing) {
