@@ -297,6 +297,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     oddspapiSucceeded,
     oddspapiTotal: opCount.length,
     readyForClaude,
+    call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
   };
 }
 
