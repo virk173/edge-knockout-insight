@@ -137,8 +137,8 @@ FIXTURE ID: ${match.id}
 ROUND: ${match.round ?? "NOT_AVAILABLE"}
 KICKOFF UTC: ${match.kickoffUtc}
 CURRENT TIME UTC: ${new Date().toISOString()}
-VENUE: NOT_AVAILABLE
-VENUE CITY: NOT_AVAILABLE
+VENUE: ${match.venueName ?? "NOT_AVAILABLE"}
+VENUE CITY: ${match.venueCity ?? "NOT_AVAILABLE"}
 
 INJECTED API DATA:
 
