@@ -431,6 +431,11 @@ async function resolveWcIds(
   } finally {
     currentDebugCall = prev;
   }
+  lastCompetitionsRaw = payload;
+  console.log(
+    "TheStatsAPI competitions raw:",
+    JSON.stringify(payload).slice(0, 2000),
+  );
   const comps = extractArray(payload);
   const wc = comps.find((c) => {
     const name = getField(c, ["name", "title", "competition_name"]);
