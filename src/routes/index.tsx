@@ -951,7 +951,14 @@ function DebugReportView({ report }: { report: DebugReport }) {
             {report.afSucceeded}/{report.afTotal}
           </span>{" "}
           calls succeeded
+          {report.call10ExpectedEmpty && (
+            <span className="text-slate">
+              {" "}
+              (Call 10 empty — expected, next round not yet scheduled)
+            </span>
+          )}
         </span>
+
 
         <span className="text-slate">
           OddsPapi:{" "}
