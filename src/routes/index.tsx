@@ -359,11 +359,14 @@ Start your response with { and end with }.`;
 
       try {
         const parsed = tryParse();
-        setAnalysisResult(parsed);
+        // Compute all EV / gap / confidence / multiplier / overround figures
+        // in application code from Claude's raw *_inputs variables.
+        const enriched = calculateResults(parsed);
+        setAnalysisResult(enriched);
         toast.success("Analysis complete");
 
         // Auto-save the log_entry (if present) to the backtesting log.
-        const logEntry = (parsed as AnalysisResult | null)?.log_entry;
+        const logEntry = enriched?.log_entry;
         if (logEntry && typeof logEntry === "object") {
           const updated = appendLogEntry(logEntry);
           setLogEntries(updated);
