@@ -1178,9 +1178,14 @@ export async function collectMatchData(
         import.meta.env.VITE_ODDSPAPI_KEY?.slice(0, 4) ?? "(not set — using server ODDSPAPI_KEY)",
       );
       const matchDate = (match.kickoffUtc ?? "").slice(0, 10) || DEBUG_FIXTURE_DATE;
-      // Step 1 — find fixture.
+      // OddsPapi treats `to` as an exclusive end, so a single-day from==to
+      // window returns 404. Use the day after the match date as the upper bound.
+      const toDate = new Date(`${matchDate}T00:00:00Z`);
+      toDate.setUTCDate(toDate.getUTCDate() + 1);
+      const matchDateEnd = toDate.toISOString().slice(0, 10);
+      // Step 1 — find fixture (World Cup tournament hardcoded).
       const fixturesJson = await opGet(
-        `/v4/fixtures?sportId=${ODDSPAPI_SPORT_ID}&tournamentId=${ODDSPAPI_WC_TOURNAMENT_ID}&from=${matchDate}&to=${matchDate}`,
+        `/v4/fixtures?sportId=${ODDSPAPI_SPORT_ID}&tournamentId=${ODDSPAPI_WC_TOURNAMENT_ID}&from=${matchDate}&to=${matchDateEnd}`,
       );
       const fixtureList = extractArray(
         getField(fixturesJson, ["data", "fixtures", "response"]) ?? fixturesJson,
