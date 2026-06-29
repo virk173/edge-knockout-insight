@@ -792,18 +792,19 @@ tactical_analysis:
   formation_change_impact
 player_intelligence:
   absences array each with:
-    player, team, gap_score,
-    gap_calculation, classification,
-    tournament_stats with
-      actual_goals and actual_assists,
+    player, team,
+    gap_score_inputs with:
+      actual_goals, actual_assists,
+      shots_pg_delta, keypasses_pg_delta,
+      set_piece_weight
+    multiplier_inputs with:
+      gap_multiplier, depth_multiplier
+    (app computes gap_score,
+     gap_calculation and stacked_multiplier)
+    classification,
     set_piece_roles array,
-    set_piece_weight, replacement,
+    replacement,
     replacement_profile, depth_rating,
-    goals_scored_multiplier,
-    goals_conceded_multiplier,
-    xg_proxy_multiplier,
-    stacked_multiplier,
-    stacked_floor_applied boolean,
     adjustment_note,
     source_calls array
   players_confirmed_fit array
@@ -811,10 +812,10 @@ player_intelligence:
 tier_1_anchor:
   active boolean, skip_reason,
   market, selection, stake string,
-  odds, model_probability,
-  books_true_implied, ev, ev_rating,
-  pinnacle_gap string or null,
-  sharp_signal string or null,
+  ev_inputs with:
+    model_probability, decimal_odds
+  (app computes ev and ev_rating;
+   odds mirrors decimal_odds)
   source_calls array, reasoning string
 tier_2_parlay:
   active boolean, skip_reason,
@@ -837,7 +838,10 @@ tier_2_parlay:
     potential_return_raw,
     potential_return_realistic,
     basis_note
-  parlay_ev, ev_rating, reasoning
+  parlay_ev_inputs with:
+    p_final, effective_sgp_price
+  (app computes parlay_ev and ev_rating)
+  reasoning
 tier_3_jackpot:
   active boolean, skip_reason,
   stake string, stake_boost_pct,
