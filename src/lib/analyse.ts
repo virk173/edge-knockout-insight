@@ -1158,6 +1158,13 @@ export async function collectMatchData(
     });
     currentDebugCall = "9B";
     try {
+      // Diagnostic: the real key lives server-side as the ODDSPAPI_KEY secret
+      // (used by the api-proxy). VITE_ODDSPAPI_KEY is optional documentation
+      // only; logging its prefix confirms whether a browser key was set.
+      console.log(
+        "OddsPapi key prefix (browser, optional):",
+        import.meta.env.VITE_ODDSPAPI_KEY?.slice(0, 4) ?? "(not set — using server ODDSPAPI_KEY)",
+      );
       const matchDate = (match.kickoffUtc ?? "").slice(0, 10) || DEBUG_FIXTURE_DATE;
       // Step 1 — find fixture.
       const fixturesJson = await opGet(
