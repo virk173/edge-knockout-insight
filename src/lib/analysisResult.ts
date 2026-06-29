@@ -172,6 +172,8 @@ export interface Tier2Parlay {
   sgp_validation?: SgpValidation;
   legs?: TierLeg[];
   returns?: TierReturns;
+  // Raw variables from Claude (preferred source of truth for EV).
+  parlay_ev_inputs?: ParlayEvInputs;
   parlay_ev?: number;
   ev_rating?: string;
   reasoning?: string;
@@ -185,6 +187,8 @@ export interface Tier3Jackpot {
   legs?: TierLeg[];
   combined_odds?: number;
   returns?: TierReturns;
+  // Raw variables from Claude (preferred source of truth for EV).
+  jackpot_ev_inputs?: JackpotEvInputs;
   jackpot_ev?: number;
   class_c_signals?: string[];
 }
