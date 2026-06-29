@@ -534,6 +534,20 @@ function buildPinnacleSummary(
   flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]));
   flattenLines("Corners", getField(m, ["match_corners", "corners"]));
 
+  // Asian Handicap — home / away with opening + last_seen.
+  const ah = getField(m, ["asian_handicap", "handicap"]);
+  if (ah) {
+    const outcomes = (
+      [
+        ["Home", getField(ah, ["home"])],
+        ["Away", getField(ah, ["away"])],
+      ] as Array<[string, unknown]>
+    )
+      .filter(([, n]) => n != null)
+      .map(([name, n]) => summariseOutcome(name, n));
+    if (outcomes.length) markets.push({ market: "Asian Handicap", outcomes });
+  }
+
   return markets.length ? { markets, raw: pinnacle } : null;
 }
 
