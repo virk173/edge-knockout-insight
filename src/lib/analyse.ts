@@ -259,12 +259,12 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 6B", api: "API-Football", endpoint: "/players (player statistics)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "CALL 9B", api: "OddsPapi", endpoint: "/v4/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 9B", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -287,8 +287,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
 
-  const opCount = specs.filter((s) => s.api === "OddsPapi" && s.count);
-  const oddspapiSucceeded = opCount.filter((s) => s.extracted).length;
+  const saCount = specs.filter((s) => s.api === "TheStatsAPI" && s.count);
+  const statsapiSucceeded = saCount.filter((s) => s.extracted).length;
 
   // Claude can run as long as the two mandatory team-statistics calls landed.
   // Optional calls (lineups/referee/bracket/Pinnacle) may be EMPTY without blocking.
@@ -299,8 +299,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     rows,
     afSucceeded,
     afTotal: afCount.length,
-    oddspapiSucceeded,
-    oddspapiTotal: opCount.length,
+    statsapiSucceeded,
+    statsapiTotal: saCount.length,
     readyForClaude,
     call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
   };
