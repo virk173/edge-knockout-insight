@@ -1,11 +1,17 @@
 // API-Football fixtures fetching + status logic (client-side, uses VITE key).
 
+import { incrementApiCallCount } from "./apiCounter";
+
 export interface Fixture {
   id: number;
   home: string;
   away: string;
+  homeId: number;
+  awayId: number;
   kickoffUtc: string; // ISO string
   isTomorrow: boolean;
+  referee: string | null;
+  round: string | null;
 }
 
 export type MatchStatus =
