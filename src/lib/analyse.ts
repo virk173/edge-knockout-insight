@@ -381,8 +381,9 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
 }
 
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
-// On HTTP 429 (rate limit) we wait 2s and retry once; on 404 we return null
-// (used for lineups "not announced yet"). Other failures throw with detail.
+// On HTTP 429 (rate limit) we back off and retry up to 3 times with escalating
+// waits (3s, 6s, 9s); on 404 we return null (used for lineups "not announced
+// yet"). Other failures throw with detail.
 async function saGet(path: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
 
@@ -396,11 +397,12 @@ async function saGet(path: string): Promise<unknown> {
   };
 
   let result = await attempt();
-  // Retry once on rate-limit (429) after a 2s wait.
-  if (!result.ok && String(result.status) === "429") {
-    await sleep(2000);
+  // Retry on rate-limit (429) with escalating backoff.
+  for (let attemptNo = 1; attemptNo <= 3 && !result.ok && String(result.status) === "429"; attemptNo++) {
+    await sleep(attemptNo * 3000);
     result = await attempt();
   }
+
 
   // 404 = resource not yet available (e.g. lineups not announced). Treat as null.
   if (!result.ok && String(result.status) === "404") {
