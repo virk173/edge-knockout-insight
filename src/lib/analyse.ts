@@ -1013,21 +1013,29 @@ export async function collectMatchData(
     afGet(`/injuries?fixture=${match.id}`, afKey),
   );
 
-  // 6: confirmed lineups (API-Football).
-  // Lineups are typically published 20-40 min before kickoff (earlier — up to
-  // ~75 min — for World Cup 2026). If the array is empty, flag LINEUP PENDING.
-  // Retry up to 3 times with 30s gaps when we are within 90 min of kickoff.
-  await runStep("6", "Fetching confirmed lineups... (8/11)", async () => {
+  // 6: confirmed lineups (TheStatsAPI).
+  // Resolve TheStatsAPI's match_id by team name on the kickoff date, then fetch
+  // /football/matches/{match_id}/lineups. Lineups publish ~1h before kickoff;
+  // until then the endpoint 404s (saGet returns null). If null/empty, flag
+  // LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
+  await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
+    const matchId = await ensureStatsApiMatchId();
+    if (!matchId) {
+      throw new Error(
+        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date. Lineups unavailable.",
+      );
+    }
     const withinWindow = match.minutesUntilKickoff <= 90;
     const maxAttempts = withinWindow ? 3 : 1;
     let payload: unknown = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      payload = await afGet(`/fixtures/lineups?fixture=${match.id}`, afKey);
+      payload = await saGet(`/football/matches/${matchId}/lineups`);
       if (!isEmptyResponse(payload)) return payload;
       if (attempt < maxAttempts - 1) await sleep(30000);
     }
-    throw new Error("LINEUP PENDING — lineups not yet published (empty array).");
+    throw new Error("LINEUP PENDING — lineups not yet announced (empty/404).");
   });
+
 
   // CALL 6B: player intelligence (API-Football player statistics).
   // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
