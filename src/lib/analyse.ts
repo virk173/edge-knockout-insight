@@ -124,12 +124,14 @@ export function validateCall(callKey: string, data: unknown): unknown {
     Array.isArray(resp) && resp.length ? (resp[0] as Record<string, unknown>) : undefined;
 
   const checks: Record<string, () => boolean> = {
-    "2A": () => !!firstResp?.statistics,
-    "2B": () => !!firstResp?.statistics,
+    // TheStatsAPI team-stats shape: { teamId, extracted, raw }.
+    "2A": () => !!(d.extracted || d.stats || firstResp?.statistics),
+    "2B": () => !!(d.extracted || d.stats || firstResp?.statistics),
     "3": () => resp !== undefined,
     "4": () => resp !== undefined,
     "5": () => resp !== undefined,
     "6": () => !!(d.home || d.away || d.match_id) || resp !== undefined, // TheStatsAPI lineups shape
+    "6B": () => !!(d.playerStatistics || d.playerCount),
     "7": () => resp !== undefined,
     "8": () => !!firstResp?.predictions,
     "9A": () => resp !== undefined,
