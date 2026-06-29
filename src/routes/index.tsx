@@ -260,7 +260,7 @@ function Index() {
       setMatches(result.matches);
       setApiCalls(getApiCallCount());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error occurred.");
+      setError(friendlyError(e instanceof Error ? e.message : "Unknown error occurred."));
     } finally {
       setLoading(false);
     }
