@@ -961,11 +961,11 @@ function DebugReportView({ report }: { report: DebugReport }) {
 
 
         <span className="text-slate">
-          OddsPapi:{" "}
+          TheStatsAPI:{" "}
           <span className="text-accent-amber">
-            {report.oddspapiSucceeded}/{report.oddspapiTotal}
+            {report.statsapiSucceeded}/{report.statsapiTotal}
           </span>{" "}
-          calls {opSucceeded ? "succeeded" : "failed"}
+          calls {saSucceeded ? "succeeded" : "failed"}
         </span>
 
         <span className="text-slate">
