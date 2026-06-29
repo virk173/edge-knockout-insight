@@ -1277,7 +1277,10 @@ EXAMPLE OUTPUT:
       "potential_return_raw": "$0",
       "potential_return_realistic": "$0"
     },
-    "jackpot_ev": 0,
+    "jackpot_ev_inputs": {
+      "p_final": 0,
+      "combined_odds": 0
+    },
     "class_c_signals": [
       "Referee strictness 89.95 [C7]",
       "Both teams form within 1 win last 5 [C2A C2B]"
