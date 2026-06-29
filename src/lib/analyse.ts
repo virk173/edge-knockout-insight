@@ -1221,80 +1221,9 @@ export async function collectMatchData(
   });
 
 
-  // CALL 6B (S4): player stats for absences (TheStatsAPI).
-  // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
-  // system prompt specifies. Player ids come from the S3 lineup starting_xi.
-  // Fetches /football/players/{id}/stats so Claude can run the GAP formula.
-  // Not part of the 11 numbered progress steps; recorded directly.
-  {
-    currentDebugCall = "6B";
-    onProgress({
-      step: stepKeys.length,
-      total: TOTAL_STEPS,
-      label: "Fetching player stats (TheStatsAPI)...",
-    });
-    const injuries = callResults["5"];
-    const injuryItems =
-      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
-    const hasAbsences = injuryItems.length > 0;
-
-    const lineupResult = callResults["6"];
-    const playerIds =
-      lineupResult?.status === "SUCCESS"
-        ? extractLineupPlayerIds(lineupResult.data)
-        : [];
-
-    if (!hasAbsences) {
-      record(
-        "6B",
-        "Player stats (TheStatsAPI)",
-        "SKIPPED",
-        undefined,
-        "No absences in CALL 5 — player stats not triggered.",
-      );
-    } else if (playerIds.length === 0) {
-      record(
-        "6B",
-        "Player stats (TheStatsAPI)",
-        "EMPTY",
-        undefined,
-        "Absences present but no starting_xi player ids available from lineups.",
-      );
-    } else {
-      try {
-        // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces
-        // a tight rate limit, so we space player-stat calls out generously.
-        const ids = playerIds.slice(0, 8);
-        const perPlayer: Record<string, unknown> = {};
-        for (const pid of ids) {
-          const raw = await saGet(
-            `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
-          );
-          if (!isEmptyResponse(raw)) {
-            perPlayer[pid] = extractPlayerStats(raw);
-          }
-          await sleep(1500);
-        }
-        const anyData = Object.keys(perPlayer).length > 0;
-        record(
-          "6B",
-          "Player stats (TheStatsAPI)",
-          anyData ? "SUCCESS" : "EMPTY",
-          anyData ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer } : undefined,
-          anyData ? undefined : "No player statistics returned for the starting XI.",
-        );
-      } catch (e) {
-        record(
-          "6B",
-          "Player stats (TheStatsAPI)",
-          "FAILED",
-          undefined,
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-    }
-    currentDebugCall = null;
-  }
+  // NOTE: CALL 6B / S4 (player stats for absences) runs LAST, after the
+  // mandatory Pinnacle call (S5), because TheStatsAPI enforces a tight rate
+  // limit. Running the player-stat burst first would starve S5. See below.
 
 
   // 7: referee profile.
