@@ -438,7 +438,7 @@ Start your response with { and end with }.`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error.";
       console.error("Debug run failed:", err);
-      setError(`Debug analysis failed: ${msg}`);
+      setError(`Debug analysis failed: ${friendlyError(msg)}`);
       setProgress(null);
       setApiCalls(getApiCallCount());
     } finally {
