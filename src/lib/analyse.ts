@@ -542,6 +542,11 @@ export async function collectMatchData(
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
+  // Reset the OddsPapi cooldown counter for this run.
+  oddspapiCallsThisRun = 0;
+
+
+
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
 
