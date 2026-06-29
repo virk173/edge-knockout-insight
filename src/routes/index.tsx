@@ -220,6 +220,34 @@ function Index() {
     };
   }, [analysing]);
 
+  // Auto re-fetch CALL 6 (lineups) once the lineup-drop time passes, if the
+  // analysis already ran and lineups came back PENDING (empty).
+  useEffect(() => {
+    if (!collection || activeMatchId == null || !matches) return;
+    const match = matches.find((m) => m.id === activeMatchId);
+    if (!match) return;
+    const c6 = collection.callResults["6"];
+    const pending = !c6 || c6.status !== "SUCCESS";
+    if (!pending) return;
+    const mins = minutesUntil(match.kickoffUtc, now);
+    // Lineups drop ~75 min out; only refetch inside that window, pre-kickoff.
+    if (mins > LINEUP_DROP_MIN || mins <= 0) return;
+    if (lineupRefetchedRef.current.has(match.id)) return;
+    lineupRefetchedRef.current.add(match.id);
+    (async () => {
+      const updated = await refetchLineups(match.id);
+      setCollection((prev) =>
+        prev
+          ? { ...prev, callResults: { ...prev.callResults, "6": updated } }
+          : prev,
+      );
+      setApiCalls(getApiCallCount());
+      if (updated.status === "SUCCESS") {
+        toast.success("Confirmed lineups now available — re-analyse for full data.");
+      }
+    })();
+  }, [now, collection, activeMatchId, matches]);
+
   async function handleRun() {
     if (debugMode) {
       await handleRunDebug();
