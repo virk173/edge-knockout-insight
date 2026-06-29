@@ -733,7 +733,10 @@ lineup_confirmed: boolean
 lineup_source: string
 odds_source: string
 odds_confirmed_UTC: ISO-8601
-overround_stake: decimal
+overround_inputs:
+  outcomes array each with name and odds
+  (app computes overround_stake and the
+   per-outcome true_implied)
 overround_pinnacle: decimal or null
   null when C9B EMPTY
 data_quality: FULL or PARTIAL or THIN
