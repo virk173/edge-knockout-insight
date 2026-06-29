@@ -81,6 +81,70 @@ function formatLocal(iso: string): string {
   });
 }
 
+// Lineups for WC2026 are expected to drop ~75 min before kickoff.
+const LINEUP_DROP_MIN = 75;
+
+// Minutes from now until kickoff for a fixture (can be negative).
+function minutesUntil(iso: string, now: Date): number {
+  return Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
+}
+
+// "Xh Ym" / "Y min" friendly minutes formatter.
+function fmtMinutes(mins: number): string {
+  if (mins <= 0) return "now";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// Maps a raw pipeline error into a clear, actionable message.
+function friendlyError(raw: string): string {
+  const m = raw.toLowerCase();
+  if (
+    m.includes("apifootball_key") ||
+    m.includes("vite_apifootball") ||
+    m.includes("api key") ||
+    m.includes("not configured") ||
+    m.includes("missing") && m.includes("key")
+  ) {
+    return "API key not configured.\nAdd VITE_APIFOOTBALL_KEY to your environment variables.";
+  }
+  return raw;
+}
+
+// Builds a short "next matches" string from the upcoming fixtures.
+function nextMatchesText(matches: AnalysedMatch[], now: Date): string {
+  const upcoming = matches
+    .filter((m) => minutesUntil(m.kickoffUtc, now) > 0)
+    .sort(
+      (a, b) =>
+        new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
+    );
+  if (upcoming.length === 0) return "None scheduled.";
+  return upcoming
+    .slice(0, 3)
+    .map((m) => `${m.home} vs ${m.away} (${formatLocal(m.kickoffUtc)})`)
+    .join(", ");
+}
+
+const HOW_TO_TEXT = `Best time to run: 60-90 minutes before kickoff when lineups are confirmed and odds are sharpest.
+
+This tool analyses:
+- Team form and statistics
+- Head-to-head history
+- Confirmed lineups and injuries
+- Referee profile
+- Stake odds with EV calculation
+- Pinnacle line movement
+
+Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C matches only)
+
+Total stake per match: $50
+Do not bet unallocated amounts.`;
+
+
+
 function Index() {
   const [now, setNow] = useState(() => new Date());
   const [loading, setLoading] = useState(false);
