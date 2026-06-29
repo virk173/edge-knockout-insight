@@ -305,32 +305,12 @@ function isEmptyResponse(response: unknown): boolean {
   return false;
 }
 
-async function saGet(path: string, _key?: string): Promise<unknown> {
-  const url = `${SA_BASE}${path}`;
-  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
-  try {
-    result = await apiFetch({ data: { provider: "statsapi", url } });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI network error: ${msg}`);
-  }
-  if (!result || !result.ok) {
-    const status = result?.status ?? "no response";
-    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI ${status} ${result?.statusText ?? ""}`.trim());
-  }
-  const json = result.json ?? null;
-  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
-  return json;
-}
-
-// Pull an array out of common TheStatsAPI envelope shapes.
+// Pull an array out of common API-Football envelope shapes.
 function extractArray(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>;
-    for (const field of ["data", "matches", "competitions", "results"]) {
+    for (const field of ["data", "response", "results"]) {
       if (Array.isArray(obj[field])) return obj[field] as unknown[];
     }
   }
@@ -346,63 +326,8 @@ function getField(obj: unknown, keys: string[]): unknown {
   return undefined;
 }
 
-function getTeamName(obj: unknown, side: "home" | "away"): string | null {
-  const rec = obj as Record<string, unknown>;
-  if (!rec) return null;
-  const direct = getField(obj, [`${side}_team_name`, `${side}_name`]);
-  if (typeof direct === "string") return direct;
-  const team = getField(obj, [`${side}_team`, side]);
-  if (team && typeof team === "object") {
-    const n = getField(team, ["name", "team_name", "title"]);
-    if (typeof n === "string") return n;
-  }
-  return null;
-}
-
-// TheStatsAPI is used ONLY for confirmed lineups. We find the match id by
-// listing all matches on the kickoff date and loosely matching team names
-// (lowercase, mutual substring) against the API-Football names.
-function looseTeamMatch(a: string, b: string): boolean {
-  const x = normalize(a);
-  const y = normalize(b);
-  if (!x || !y) return false;
-  return x.includes(y) || y.includes(x);
-}
-
-async function findStatsApiMatchId(
-  key: string,
-  matchDate: string,
-  home: string,
-  away: string,
-): Promise<string | null> {
-  const prev = currentDebugCall;
-  currentDebugCall = "matches";
-  let payload: unknown;
-  try {
-    payload = await saGet(`/matches?date=${matchDate}`, key);
-  } finally {
-    currentDebugCall = prev;
-  }
-
-  for (const m of extractArray(payload)) {
-    const mHome = getTeamName(m, "home");
-    const mAway = getTeamName(m, "away");
-    const matchId = getField(m, ["match_id", "id"]);
-    if (matchId === undefined || (!mHome && !mAway)) continue;
-    const direct =
-      (mHome && looseTeamMatch(mHome, home)) ||
-      (mAway && looseTeamMatch(mAway, away));
-    const swapped =
-      (mHome && looseTeamMatch(mHome, away)) ||
-      (mAway && looseTeamMatch(mAway, home));
-    if (direct || swapped) {
-      return String(matchId);
-    }
-  }
-  return null;
-}
-
 function nextRound(current: string | null): string | null {
+
   if (!current) return null;
   const c = current.toLowerCase();
   if (c.includes("round of 32")) return "Round of 16";
