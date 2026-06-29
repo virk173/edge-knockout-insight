@@ -412,9 +412,9 @@ Must sum to 100 percent.
 
 Label: MODEL — independent of market.
 
-STEP 2 — DEVIG BOTH BOOKMAKERS
+STEP 2 — DEVIG BOOKMAKER
 
-For Stake AND Pinnacle separately:
+For Stake odds:
 
   raw_implied = 1 divided by decimal_odds per outcome
 
@@ -422,7 +422,7 @@ For Stake AND Pinnacle separately:
 
   true_implied = raw_implied divided by overround
 
-Show overround for both books in output.
+Show overround in output.
 
 STEP 3 — ENSEMBLE CROSS-VALIDATION
 
