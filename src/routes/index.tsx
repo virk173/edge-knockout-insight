@@ -245,17 +245,23 @@ Start your response with { and end with }.`;
 
   async function handleTestMode() {
     // Bypass all API calls: inject the France vs Senegal mock data directly.
+    console.log("[TM] start");
     setTestMode(true);
     setError(null);
     const mockMatch = MOCK_TEST_MATCH;
+    console.log("[TM] mockMatch", mockMatch);
     const mockResult = buildMockCollectionResult();
+    console.log("[TM] mockResult built", Object.keys(mockResult.callResults));
     setMatches([mockMatch]);
+    console.log("[TM] setMatches called");
     setActiveMatchId(mockMatch.id);
     setCollectError(null);
     setProgress(null);
     setCollection(mockResult);
     toast.message("Test Mode", { description: "Using mock France vs Senegal data." });
+    console.log("[TM] before runClaudeAnalysis");
     await runClaudeAnalysis(mockMatch, mockResult);
+    console.log("[TM] after runClaudeAnalysis");
   }
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
