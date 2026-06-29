@@ -10,6 +10,11 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
+const OP_BASE = "https://api.oddspapi.io";
+// OddsPapi free tier: 0.88s cooldown between calls. We wait 900ms before a
+// second (or later) OddsPapi call within the same pipeline run.
+const ODDSPAPI_COOLDOWN_MS = 900;
+const ODDSPAPI_SPORT_ID = 10; // football/soccer
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
@@ -28,9 +33,11 @@ export interface ProgressUpdate {
   label: string;
 }
 
+type ApiName = "API-Football" | "OddsPapi";
+
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
-  api: "API-Football";
+  api: ApiName;
   url: string;
   status: number | string;
   ok: boolean;
@@ -42,7 +49,7 @@ export interface DebugEntry {
 // One logical call row for the structured Debug Mode report.
 export interface DebugCallRow {
   callLabel: string; // e.g. "CALL 2A"
-  api: "API-Football";
+  api: ApiName;
   endpoint: string;
   url: string;
   status: number | string;
@@ -56,6 +63,8 @@ export interface DebugReport {
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
+  oddspapiSucceeded: number;
+  oddspapiTotal: number;
   readyForClaude: boolean;
 }
 
