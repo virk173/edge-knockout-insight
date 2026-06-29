@@ -11,8 +11,6 @@ import {
 import { cn } from "@/lib/utils";
 import {
   type AnalysisResult,
-  type LineMovementSignal,
-  type PinnacleGap,
   type TierLeg,
   parseGapPct,
   formatEv,
