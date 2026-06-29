@@ -78,13 +78,13 @@ SECTION 0 — API ARCHITECTURE
 TWO APIs:
 
 API-FOOTBALL — statistics, H2H,
-injuries, lineups, predictions,
-referee data, Stake odds.
-Calls: C1 through C9A and C10.
+injuries, predictions, referee data,
+Stake odds.
+Calls: C1 through C5, C7, C8, C9A, C10.
 
-ODDSPAPI — Pinnacle odds and line
-movement only.
-Call: C9B only.
+THESTATSAPI — confirmed lineups and
+Pinnacle odds + line movement.
+Calls: C6 (lineups) and C9B (Pinnacle).
 
 If C9B returns EMPTY:
 Proceed without Pinnacle data.
