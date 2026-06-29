@@ -254,9 +254,10 @@ CALL 9A — Stake live odds
 Use for all EV calculations.
 Show overround.
 
-CALL 9B — OddsPapi Pinnacle odds
-Contains for each market:
-  opening_odds and current_odds
+CALL 9B — TheStatsAPI Pinnacle odds
+Contains for each market (1X2,
+over/under, BTTS, corners):
+  opening and last_seen odds
   from Pinnacle.
 
 If C9B SUCCESS:
