@@ -28,6 +28,17 @@ function classificationStyle(c?: string): { label: string; className: string } {
   return { label: c ?? "—", className: "border-border bg-card text-slate" };
 }
 
+function dataQualityStyle(q?: string): { label: string; className: string } {
+  const v = (q ?? "").toUpperCase();
+  if (v.includes("FULL"))
+    return { label: "DATA: FULL", className: "border-signal-green/50 bg-signal-green/15 text-signal-green" };
+  if (v.includes("PARTIAL"))
+    return { label: "DATA: PARTIAL", className: "border-accent-amber/50 bg-accent-amber/15 text-accent-amber" };
+  if (v.includes("THIN"))
+    return { label: "DATA: THIN", className: "border-signal-red/50 bg-signal-red/15 text-signal-red" };
+  return { label: "DATA: —", className: "border-border bg-card text-slate" };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Confidence meter
 // ─────────────────────────────────────────────────────────────
@@ -152,6 +163,7 @@ function SignalStrip({ result }: { result: AnalysisResult }) {
 // ─────────────────────────────────────────────────────────────
 function MatchHeader({ result }: { result: AnalysisResult }) {
   const cls = classificationStyle(result.classification);
+  const dq = dataQualityStyle(result.data_quality);
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
@@ -163,14 +175,25 @@ function MatchHeader({ result }: { result: AnalysisResult }) {
             {[result.round, result.kickoff_local].filter(Boolean).join(" · ") ||
               "—"}
           </p>
-          <span
-            className={cn(
-              "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
-              cls.className,
-            )}
-          >
-            {cls.label}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
+                cls.className,
+              )}
+            >
+              {cls.label}
+            </span>
+            <span
+              className={cn(
+                "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
+                dq.className,
+              )}
+              title="Data quality of the API inputs used for this analysis"
+            >
+              {dq.label}
+            </span>
+          </div>
         </div>
         <ConfidenceMeter value={result.confidence_scores?.final_confidence} />
       </div>

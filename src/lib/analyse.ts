@@ -101,6 +101,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
   { key: "6", n: "6", endpoint: "/fixtures/lineups" },
+  { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
@@ -253,6 +254,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6B", api: "API-Football", endpoint: "/players (player statistics)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
@@ -781,6 +783,68 @@ export async function collectMatchData(
     }
     throw new Error("LINEUP PENDING — lineups not yet published (empty array).");
   });
+
+  // CALL 6B: player intelligence (API-Football player statistics).
+  // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
+  // system prompt specifies. Fetches player statistics for each affected team
+  // so Claude can run the GAP score formula. Not part of the 11 numbered
+  // progress steps (like CALL 10); recorded directly into callResults.
+  {
+    currentDebugCall = "6B";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching player intelligence...",
+    });
+    const injuries = callResults["5"];
+    const injuryItems =
+      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
+    const affectedTeamIds = Array.from(
+      new Set(
+        injuryItems
+          .map((it) => getField(getField(it, ["team"]), ["id"]))
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    );
+    if (affectedTeamIds.length === 0) {
+      record(
+        "6B",
+        "Player intelligence",
+        "SKIPPED",
+        undefined,
+        "No absences in CALL 5 — player intelligence not triggered.",
+      );
+    } else {
+      try {
+        const perTeam: Record<string, unknown> = {};
+        for (const teamId of affectedTeamIds) {
+          perTeam[String(teamId)] = await afGet(
+            `/players?team=${teamId}&season=2026`,
+            afKey,
+          );
+        }
+        const anyData = Object.values(perTeam).some((v) => !isEmptyResponse(v));
+        record(
+          "6B",
+          "Player intelligence",
+          anyData ? "SUCCESS" : "EMPTY",
+          anyData ? { affectedTeamIds, playerStatistics: perTeam } : undefined,
+          anyData
+            ? undefined
+            : "No player statistics returned for the affected teams.",
+        );
+      } catch (e) {
+        record(
+          "6B",
+          "Player intelligence",
+          "FAILED",
+          undefined,
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+    currentDebugCall = null;
+  }
 
 
   // 7: referee profile.
