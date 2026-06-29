@@ -72,7 +72,7 @@ export const analyseMatch = createServerFn({ method: "POST" })
           model: data.model,
           max_tokens: data.maxTokens,
           system: data.systemPrompt,
-          messages: [{ role: "user", content: data.matchData }],
+          messages: [{ role: "user", content: data.userMessage }],
         }),
       });
     } catch (err) {
