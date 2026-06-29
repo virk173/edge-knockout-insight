@@ -99,9 +99,10 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
 
 /**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
- * that the v3.0 system prompt expects. Calls 9A/9B are split out of the
+ * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
  */
+
 export function formatDataForClaude(
   callResults: Record<string, CallResult> | null | undefined,
 ): string {
