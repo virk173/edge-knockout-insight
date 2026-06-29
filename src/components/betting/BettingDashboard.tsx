@@ -3,16 +3,13 @@ import {
   ChevronDown,
   ChevronUp,
   Lock,
-  Zap,
   Info,
-  TrendingDown,
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type AnalysisResult,
   type TierLeg,
-  parseGapPct,
   formatEv,
   normalizeDimensions,
 } from "@/lib/analysisResult";
