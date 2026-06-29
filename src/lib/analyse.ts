@@ -774,6 +774,100 @@ export async function collectMatchData(
     return { stakeOdds: afOdds };
   });
 
+  // CALL 9B: OddsPapi Pinnacle odds + line movement (separate provider).
+  // Step 1: find the World Cup fixture by date + loose team-name match.
+  // Step 2: fetch Pinnacle odds for that fixture.
+  // Step 3: compute line movement signals. Step 4: gap check vs Stake.
+  // On any failure or no fixture match -> EMPTY (Pinnacle data unavailable).
+  {
+    stepKeys.push("9B");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching Pinnacle odds (OddsPapi)...",
+    });
+    currentDebugCall = "9B";
+    try {
+      const matchDate = (match.kickoffUtc ?? "").slice(0, 10) || DEBUG_FIXTURE_DATE;
+      // Step 1 — find fixture.
+      const fixturesJson = await opGet(
+        `/v4/fixtures?sportId=${ODDSPAPI_SPORT_ID}&from=${matchDate}&to=${matchDate}&hasOdds=true`,
+      );
+      const fixtureList = extractArray(
+        getField(fixturesJson, ["data", "fixtures", "response"]) ?? fixturesJson,
+      );
+      const homeN = normalize(match.home);
+      const awayN = normalize(match.away);
+      const fxMatch = fixtureList.find((f) => {
+        const p1 = normalize(String(getField(f, ["participant1Name", "homeName", "home"]) ?? ""));
+        const p2 = normalize(String(getField(f, ["participant2Name", "awayName", "away"]) ?? ""));
+        const direct =
+          (p1.includes(homeN) || homeN.includes(p1)) &&
+          (p2.includes(awayN) || awayN.includes(p2));
+        const swapped =
+          (p1.includes(awayN) || awayN.includes(p1)) &&
+          (p2.includes(homeN) || homeN.includes(p2));
+        return Boolean(p1 && p2 && (direct || swapped));
+      });
+      const fixtureId = getField(fxMatch, ["fixtureId", "id"]);
+
+      if (fixtureId == null) {
+        record(
+          "9B",
+          "Pinnacle odds (OddsPapi)",
+          "EMPTY",
+          undefined,
+          "Pinnacle data unavailable — no OddsPapi fixture matched this match.",
+        );
+      } else {
+        // Step 2 — get Pinnacle odds.
+        const oddsJson = await opGet(
+          `/v4/odds?fixtureId=${encodeURIComponent(String(fixtureId))}&bookmakers=pinnacle`,
+        );
+        // Step 3 — line movement.
+        const summary = buildPinnacleSummary(oddsJson);
+
+        if (!summary) {
+          record(
+            "9B",
+            "Pinnacle odds (OddsPapi)",
+            "EMPTY",
+            { fixtureId },
+            "Pinnacle data unavailable — no Pinnacle markets returned for this fixture.",
+          );
+        } else {
+          // Step 4 — gap check vs Stake (best-effort on 1X2).
+          const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
+          const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
+
+          record("9B", "Pinnacle odds (OddsPapi)", "SUCCESS", {
+            fixtureId,
+            matched_fixture: {
+              participant1: getField(fxMatch, ["participant1Name", "homeName", "home"]) ?? null,
+              participant2: getField(fxMatch, ["participant2Name", "awayName", "away"]) ?? null,
+            },
+            markets: summary.markets,
+            gap_check: gapCheck,
+            note:
+              "movement_pct = (current - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact).",
+          });
+        }
+      }
+    } catch (e) {
+      record(
+        "9B",
+        "Pinnacle odds (OddsPapi)",
+        "EMPTY",
+        undefined,
+        `Pinnacle data unavailable — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      currentDebugCall = null;
+    }
+  }
+
+
+
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
   const nr = nextRound(match.round);
   if (counterWarning) {
