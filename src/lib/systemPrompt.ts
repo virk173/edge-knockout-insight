@@ -1148,9 +1148,8 @@ classification: HEAVY MISMATCH or COMPETITIVE
 
 lineup_confirmed: boolean
 
-lineup_source: TheStatsAPI or API-Football fallback
+lineup_source: API-Football or PENDING
 
-  or PENDING
 
 odds_source: string
 
