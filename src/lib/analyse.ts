@@ -504,9 +504,11 @@ export async function collectMatchData(
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  const saKey = import.meta.env.VITE_STATSAPI_KEY as string | undefined;
-  if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
+  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used
+  // by the api-proxy server function. These placeholders keep the existing
+  // call-site signatures unchanged.
+  const afKey = "";
+  const saKey = "";
 
   // When debugging, capture every raw HTTP call made by afGet/saGet.
   const localDebug: DebugEntry[] = [];
@@ -533,21 +535,19 @@ export async function collectMatchData(
   let statsApiMatchId: string | null = null;
   let wcCompetitionId: string | null = null;
   let wcSeasonId: string | null = null;
-  if (saKey) {
-    try {
-      const matchDate = match.kickoffUtc.slice(0, 10);
-      const out = await buildStatsApiLookup(saKey, {
-        dates: [matchDate],
-        bypassCache: opts.debug,
-      });
-      lookup = out.lookup;
-      wcCompetitionId = out.ids?.competitionId ?? null;
-      wcSeasonId = out.ids?.seasonId ?? null;
-      statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
-      statsApiResolved = statsApiMatchId !== null;
-    } catch (e) {
-      console.warn("[analyse] StatsAPI lookup failed", e);
-    }
+  try {
+    const matchDate = match.kickoffUtc.slice(0, 10);
+    const out = await buildStatsApiLookup(saKey, {
+      dates: [matchDate],
+      bypassCache: opts.debug,
+    });
+    lookup = out.lookup;
+    wcCompetitionId = out.ids?.competitionId ?? null;
+    wcSeasonId = out.ids?.seasonId ?? null;
+    statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
+    statsApiResolved = statsApiMatchId !== null;
+  } catch (e) {
+    console.warn("[analyse] StatsAPI lookup failed", e);
   }
 
   // Wrapper that runs one numbered step and records its result.
