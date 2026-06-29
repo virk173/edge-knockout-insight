@@ -30,7 +30,7 @@ export interface ProgressUpdate {
 
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
-  api: "API-Football" | "TheStatsAPI";
+  api: "API-Football";
   url: string;
   status: number | string;
   ok: boolean;
@@ -42,7 +42,7 @@ export interface DebugEntry {
 // One logical call row for the structured Debug Mode report.
 export interface DebugCallRow {
   callLabel: string; // e.g. "CALL 2A"
-  api: "API-Football" | "TheStatsAPI";
+  api: "API-Football";
   endpoint: string;
   url: string;
   status: number | string;
@@ -53,14 +53,12 @@ export interface DebugCallRow {
 }
 
 export interface DebugReport {
-  statsMatchId: string | null;
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
-  saSucceeded: number;
-  saTotal: number;
   readyForClaude: boolean;
 }
+
 
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
