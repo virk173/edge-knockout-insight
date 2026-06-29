@@ -162,8 +162,9 @@ export function formatDataForClaude(
         `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(r.data, null, 2)}\n[END CALL ${n}]`,
       );
     } else {
+      const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
-        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}\n[END CALL ${n}]`,
       );
     }
   }
