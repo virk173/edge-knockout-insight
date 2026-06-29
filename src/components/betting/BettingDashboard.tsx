@@ -63,7 +63,7 @@ function ConfidenceMeter({ value }: { value?: number }) {
             fill="none"
             stroke={color}
             strokeWidth="8"
-            strokelinecap="round"
+            strokeLinecap="round"
             strokeDasharray={c}
             strokeDashoffset={offset}
             style={{ transition: "stroke-dashoffset 0.6s ease" }}
