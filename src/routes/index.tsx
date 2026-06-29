@@ -639,6 +639,8 @@ Start your response with { and end with }.`;
           )}
 
       </main>
+      )}
+
 
       <footer className="border-t border-border px-6 py-3 text-center">
         <span className="font-mono text-sm text-slate" suppressHydrationWarning>
