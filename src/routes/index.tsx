@@ -11,9 +11,10 @@ import {
   collectMatchData,
   formatDataForClaude,
   resolveDebugFixture,
+  buildDebugReport,
   DEBUG_FIXTURE_DATE,
   type CollectionResult,
-  type DebugEntry,
+  type DebugReport,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
@@ -85,7 +86,6 @@ function Index() {
   const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
   // Debug-mode capture: raw HTTP calls + the formatted Claude input.
-  const [debugEntries, setDebugEntries] = useState<DebugEntry[] | null>(null);
   const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
@@ -254,7 +254,6 @@ Start your response with { and end with }.`;
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
-    setDebugEntries(null);
     setFormattedDebug(null);
     setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
     try {
@@ -262,7 +261,6 @@ Start your response with { and end with }.`;
         debug: debugMode,
       });
       setCollection(result);
-      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
@@ -281,7 +279,6 @@ Start your response with { and end with }.`;
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
-    setDebugEntries(null);
     setFormattedDebug(null);
     setCollection(null);
     setCollectError(null);
@@ -294,7 +291,6 @@ Start your response with { and end with }.`;
         debug: true,
       });
       setCollection(result);
-      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
@@ -371,8 +367,8 @@ Start your response with { and end with }.`;
 
           {debugMode && (
             <div className="w-full rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
-              DEBUG MODE — Testing with real API data from South Africa vs Canada
-              (June 28)
+              REAL API TEST — South Africa vs Canada June 28. Full pipeline
+              verification.
             </div>
           )}
 
@@ -516,7 +512,7 @@ Start your response with { and end with }.`;
         {/* Debug raw-response inspector */}
         {debugMode &&
           activeMatchId !== null &&
-          (debugEntries || formattedDebug || analysisRaw) && (
+          (collection || formattedDebug || analysisRaw) && (
             <div className="mt-8 flex w-full max-w-5xl flex-col gap-4">
               <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-xs text-slate">
                 <span className="font-semibold text-signal-blue">
@@ -538,39 +534,14 @@ Start your response with { and end with }.`;
                 )}
               </div>
 
-              {debugEntries && debugEntries.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-semibold text-foreground">
-                    Raw API responses ({debugEntries.length} calls)
-                  </p>
-                  {debugEntries.map((entry, i) => (
-                    <details
-                      key={i}
-                      className="rounded-md border border-border bg-background/60"
-                    >
-                      <summary className="cursor-pointer px-3 py-2 font-mono text-xs text-slate">
-                        <span
-                          className={
-                            entry.ok ? "text-signal-green" : "text-signal-red"
-                          }
-                        >
-                          [{entry.api}] {entry.status}
-                        </span>{" "}
-                        — {entry.url}
-                        {entry.error ? ` — ${entry.error}` : ""}
-                      </summary>
-                      <pre className="max-h-80 overflow-auto border-t border-border px-3 py-2 font-mono text-xs text-slate">
-                        {JSON.stringify(entry.json, null, 2)}
-                      </pre>
-                    </details>
-                  ))}
-                </div>
+              {collection && (
+                <DebugReportView report={buildDebugReport(collection)} />
               )}
 
               {formattedDebug && (
                 <details className="rounded-md border border-border bg-background/60">
                   <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    formatDataForClaude output ([CALL N … END CALL N])
+                    PART 4 — formatDataForClaude output ([CALL N … END CALL N])
                   </summary>
                   <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
                     {formattedDebug}
@@ -581,7 +552,7 @@ Start your response with { and end with }.`;
               {analysisRaw && (
                 <details className="rounded-md border border-border bg-background/60" open>
                   <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    Final Claude JSON output
+                    PART 4 — Final Claude JSON output
                   </summary>
                   <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
                     {analysisRaw}
@@ -651,6 +622,118 @@ function CollectionPanel({ result }: { result: CollectionResult }) {
           <span className="text-destructive">{result.failedCalls.join(", ")}</span>
         </p>
       )}
+    </div>
+  );
+}
+
+function DebugReportView({ report }: { report: DebugReport }) {
+  const afRows = report.rows.filter((r) => r.api === "API-Football");
+  const saRows = report.rows.filter((r) => r.api === "TheStatsAPI");
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Verified TheStatsAPI IDs */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs text-slate">
+        <span>
+          competition_id:{" "}
+          <span className="text-accent-amber">
+            {report.competitionId ?? "NOT RESOLVED"}
+          </span>
+        </span>
+        <span>
+          season_id:{" "}
+          <span className="text-accent-amber">
+            {report.seasonId ?? "NOT RESOLVED"}
+          </span>
+        </span>
+        <span>
+          statsapi match_id:{" "}
+          <span className="text-accent-amber">
+            {report.statsMatchId ?? "NOT RESOLVED"}
+          </span>
+        </span>
+      </div>
+
+      <DebugCallGroup title="PART 1 — API-Football calls" rows={afRows} />
+      <DebugCallGroup title="PART 2 — TheStatsAPI calls" rows={saRows} />
+
+      {/* PART 3 — Summary */}
+      <div className="flex flex-col gap-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-sm">
+        <span className="font-semibold text-signal-blue">SUMMARY</span>
+        <span className="text-slate">
+          API-Football:{" "}
+          <span className="text-accent-amber">
+            {report.afSucceeded}/{report.afTotal}
+          </span>{" "}
+          calls succeeded
+        </span>
+        <span className="text-slate">
+          TheStatsAPI:{" "}
+          <span className="text-accent-amber">
+            {report.saSucceeded}/{report.saTotal}
+          </span>{" "}
+          calls succeeded
+        </span>
+        <span className="text-slate">
+          Ready for Claude:{" "}
+          <span
+            className={
+              report.readyForClaude ? "text-signal-green" : "text-signal-red"
+            }
+          >
+            {report.readyForClaude ? "YES" : "NO"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DebugCallGroup({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ReturnType<typeof buildDebugReport>["rows"];
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-semibold text-foreground">{title}</p>
+      {rows.map((row, i) => (
+        <details
+          key={i}
+          className="rounded-md border border-border bg-background/60"
+        >
+          <summary className="cursor-pointer px-3 py-2 font-mono text-xs leading-relaxed">
+            <span className="font-semibold text-foreground">
+              {row.callLabel}
+            </span>{" "}
+            <span className="text-slate">— {row.api} {row.endpoint}</span>{" "}
+            <span className={row.ok ? "text-signal-green" : "text-signal-red"}>
+              — Status: {String(row.status)}
+            </span>{" "}
+            — Data extracted:{" "}
+            <span
+              className={
+                row.dataExtracted ? "text-signal-green" : "text-signal-red"
+              }
+            >
+              {row.dataExtracted ? "YES" : "NO"}
+            </span>
+            {row.error ? (
+              <span className="text-signal-red"> — {row.error}</span>
+            ) : null}
+          </summary>
+          <div className="border-t border-border px-3 py-2">
+            <p className="mb-1 break-all font-mono text-[11px] text-slate">
+              URL: {row.url}
+            </p>
+            <pre className="max-h-80 overflow-auto font-mono text-xs text-slate">
+              {JSON.stringify(row.json, null, 2)}
+            </pre>
+          </div>
+        </details>
+      ))}
     </div>
   );
 }
