@@ -163,6 +163,7 @@ function SignalStrip({ result }: { result: AnalysisResult }) {
 // ─────────────────────────────────────────────────────────────
 function MatchHeader({ result }: { result: AnalysisResult }) {
   const cls = classificationStyle(result.classification);
+  const dq = dataQualityStyle(result.data_quality);
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
@@ -174,14 +175,25 @@ function MatchHeader({ result }: { result: AnalysisResult }) {
             {[result.round, result.kickoff_local].filter(Boolean).join(" · ") ||
               "—"}
           </p>
-          <span
-            className={cn(
-              "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
-              cls.className,
-            )}
-          >
-            {cls.label}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
+                cls.className,
+              )}
+            >
+              {cls.label}
+            </span>
+            <span
+              className={cn(
+                "w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase",
+                dq.className,
+              )}
+              title="Data quality of the API inputs used for this analysis"
+            >
+              {dq.label}
+            </span>
+          </div>
         </div>
         <ConfidenceMeter value={result.confidence_scores?.final_confidence} />
       </div>
