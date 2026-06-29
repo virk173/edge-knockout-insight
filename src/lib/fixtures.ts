@@ -121,25 +121,14 @@ export interface AnalysisResult {
 }
 
 export async function runAnalysis(): Promise<AnalysisResult> {
-  const apiKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  if (!apiKey) {
-    throw new Error(
-      "Missing VITE_APIFOOTBALL_KEY. Add it to your environment to run analysis.",
-    );
-  }
-
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   let apiCallsUsed = 0;
-  const todayFixtures = await fetchFixturesForDate(isoDate(now), apiKey, false);
+  const todayFixtures = await fetchFixturesForDate(isoDate(now), false);
   apiCallsUsed += 1;
   incrementApiCallCount();
-  const tomorrowFixtures = await fetchFixturesForDate(
-    isoDate(tomorrow),
-    apiKey,
-    true,
-  );
+  const tomorrowFixtures = await fetchFixturesForDate(isoDate(tomorrow), true);
   apiCallsUsed += 1;
   incrementApiCallCount();
 
