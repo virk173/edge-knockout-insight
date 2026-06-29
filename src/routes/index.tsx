@@ -367,8 +367,8 @@ Start your response with { and end with }.`;
 
           {debugMode && (
             <div className="w-full rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
-              DEBUG MODE — Testing with real API data from South Africa vs Canada
-              (June 28)
+              REAL API TEST — South Africa vs Canada June 28. Full pipeline
+              verification.
             </div>
           )}
 
