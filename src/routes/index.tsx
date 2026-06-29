@@ -347,11 +347,38 @@ Start your response with { and end with }.`;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
         <div className="flex items-baseline gap-3">
           <span className="text-2xl font-bold tracking-tight text-foreground">EDGE</span>
           <span className="text-sm font-medium text-slate">WC2026 Knockout Intelligence</span>
         </div>
+
+        <nav className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTab("analysis")}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+              tab === "analysis"
+                ? "bg-accent-amber text-black"
+                : "text-slate hover:text-foreground"
+            }`}
+          >
+            Analysis
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("log")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+              tab === "log"
+                ? "bg-accent-amber text-black"
+                : "text-slate hover:text-foreground"
+            }`}
+          >
+            <BarChart3 size={14} />
+            Backtesting Log
+          </button>
+        </nav>
+
         <button
           type="button"
           role="switch"
@@ -380,6 +407,16 @@ Start your response with { and end with }.`;
           </span>
         </button>
       </header>
+
+      {tab === "log" ? (
+        <main className="flex flex-1 flex-col items-center px-6 py-10">
+          <BacktestLog
+            entries={logEntries}
+            onCycleOutcome={handleCycleOutcome}
+            onClear={handleClearLog}
+          />
+        </main>
+      ) : (
 
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
