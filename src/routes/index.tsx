@@ -642,6 +642,10 @@ Start your response with { and end with }.`;
               {matches.map((m) => {
                 const meta = STATUS_META[m.status];
                 const isActive = activeMatchId === m.id;
+                const showCountdown =
+                  m.status === "OPTIMAL" || m.status === "VALID";
+                const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+                const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
                 return (
                   <li
                     key={m.id}
@@ -655,6 +659,19 @@ Start your response with { and end with }.`;
                         <span className="font-mono text-xs text-slate">
                           {formatLocal(m.kickoffUtc)}
                         </span>
+                        {showCountdown && (
+                          <span className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs">
+                            <span className="text-accent-amber">
+                              Lineups drop in:{" "}
+                              {minsToLineups > 0
+                                ? fmtMinutes(minsToLineups)
+                                : "confirmed window"}
+                            </span>
+                            <span className="text-slate">
+                              Kickoff in: {fmtMinutes(minsToKickoff)}
+                            </span>
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span
