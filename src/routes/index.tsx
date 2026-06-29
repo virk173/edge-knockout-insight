@@ -286,7 +286,7 @@ Start your response with { and end with }.`;
                           <button
                             type="button"
                             onClick={() => handleAnalyseMatch(m)}
-                            disabled={progress !== null}
+                            disabled={progress !== null || analysing}
                             className="rounded-md border border-accent-amber px-3 py-1.5 text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Analyse this match
