@@ -19,6 +19,10 @@
  */
 
 @theme inline {
+  --font-sans: "Space Grotesk", sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --color-accent-amber: var(--accent-amber);
+  --color-slate: var(--slate);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
