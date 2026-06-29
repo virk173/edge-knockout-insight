@@ -199,13 +199,20 @@ function isEmptyResponse(response: unknown): boolean {
 }
 
 async function saGet(path: string, key: string): Promise<unknown> {
-  const res = await fetch(`${SA_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  if (!res.ok) {
-    throw new Error(`TheStatsAPI ${res.status} ${res.statusText}`);
+  let res: Response;
+  try {
+    res = await fetch(`${SA_BASE}${path}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+  } catch (err) {
+    throw new Error(
+      `TheStatsAPI network error: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  return res.json();
+  if (!res || !res.ok) {
+    throw new Error(`TheStatsAPI ${res?.status ?? "no response"} ${res?.statusText ?? ""}`.trim());
+  }
+  return res.json().catch(() => null);
 }
 
 // Pull an array out of common TheStatsAPI envelope shapes.
