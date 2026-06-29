@@ -263,7 +263,7 @@ over/under, BTTS, corners):
 If C9B SUCCESS:
 
 LINE MOVEMENT CALCULATION:
-  movement_pct = (current - opening)
+  movement_pct = (last_seen - opening)
     / opening x 100
 
 MOVEMENT SIGNAL RULES:
