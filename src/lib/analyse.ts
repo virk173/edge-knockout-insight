@@ -62,8 +62,7 @@ export interface DebugReport {
 
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
-  statsApiResolved: boolean;
-  statsApiMatchId: string | null;
+  lineupResolved: boolean;
   succeeded: number;
   emptyOrFailed: number;
   failedCalls: string[];
@@ -71,6 +70,7 @@ export interface CollectionResult {
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
 }
+
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
 // (url, status, parsed JSON) into it. collectMatchData wires this up for the
