@@ -254,7 +254,6 @@ Start your response with { and end with }.`;
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
-    setDebugEntries(null);
     setFormattedDebug(null);
     setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
     try {
@@ -280,7 +279,6 @@ Start your response with { and end with }.`;
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
-    setDebugEntries(null);
     setFormattedDebug(null);
     setCollection(null);
     setCollectError(null);
