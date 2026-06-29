@@ -76,6 +76,10 @@ export interface CollectionResult {
   warning: string | null;
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
+  // Debug-only: raw TheStatsAPI /competitions response, for diagnosing the
+  // competition name/field search logic.
+  competitionsRawPreview?: string;
+  competitionsFirst5?: unknown[];
 }
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
@@ -87,6 +91,11 @@ let debugSink: DebugEntry[] | null = null;
 // stamp every captured DebugEntry with it so the Debug report can group raw
 // HTTP calls under their logical CALL number (e.g. "2A", "9B", "competitions").
 let currentDebugCall: string | null = null;
+
+// Captures the raw TheStatsAPI /competitions response from the most recent
+// resolveWcIds call so Debug Mode can show exactly what field/competition names
+// the API uses. Reset at the start of each collectMatchData run.
+let lastCompetitionsRaw: unknown = null;
 
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
@@ -422,6 +431,11 @@ async function resolveWcIds(
   } finally {
     currentDebugCall = prev;
   }
+  lastCompetitionsRaw = payload;
+  console.log(
+    "TheStatsAPI competitions raw:",
+    JSON.stringify(payload).slice(0, 2000),
+  );
   const comps = extractArray(payload);
   const wc = comps.find((c) => {
     const name = getField(c, ["name", "title", "competition_name"]);
@@ -514,6 +528,7 @@ export async function collectMatchData(
   // When debugging, capture every raw HTTP call made by afGet/saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
+  lastCompetitionsRaw = null;
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
@@ -836,6 +851,12 @@ export async function collectMatchData(
       : "⚠️ TheStatsAPI match ID not resolved. Lineups and Pinnacle odds unavailable. Analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
+    competitionsRawPreview: opts.debug
+      ? JSON.stringify(lastCompetitionsRaw).slice(0, 2000)
+      : undefined,
+    competitionsFirst5: opts.debug
+      ? extractArray(lastCompetitionsRaw).slice(0, 5)
+      : undefined,
   };
 }
 
