@@ -851,6 +851,12 @@ export async function collectMatchData(
       : "⚠️ TheStatsAPI match ID not resolved. Lineups and Pinnacle odds unavailable. Analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
+    competitionsRawPreview: opts.debug
+      ? JSON.stringify(lastCompetitionsRaw).slice(0, 2000)
+      : undefined,
+    competitionsFirst5: opts.debug
+      ? extractArray(lastCompetitionsRaw).slice(0, 5)
+      : undefined,
   };
 }
 
