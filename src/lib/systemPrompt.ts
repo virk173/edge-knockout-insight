@@ -977,7 +977,6 @@ CLASS C — JACKPOT QUALIFYING (maximum 1 per day)
 
     High press vs press confirmed from D2
 
-    Sharp money on goals markets from C9B
 
   If none qualify today: all CLASS B. Never force.
 
