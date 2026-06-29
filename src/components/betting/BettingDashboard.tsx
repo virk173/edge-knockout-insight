@@ -211,13 +211,6 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
     );
   }
 
-  const sharp = (t.sharp_signal ?? "").toUpperCase();
-  const sharpBadge = sharp.includes("CONFIRM")
-    ? { text: "⚡ CONFIRMS", className: "bg-signal-green/15 text-signal-green border-signal-green/40" }
-    : sharp.includes("OPPOSE")
-      ? { text: "⚠️ OPPOSES", className: "bg-signal-red/15 text-signal-red border-signal-red/40" }
-      : { text: "—", className: "bg-card text-slate border-border" };
-
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
       <div className="flex items-center gap-2">
@@ -247,9 +240,7 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Pill className={sharpBadge.className}>{sharpBadge.text}</Pill>
-      </div>
+
 
 
       <ExpandableText text={t.reasoning} />
