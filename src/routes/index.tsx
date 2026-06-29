@@ -740,6 +740,16 @@ Start your response with { and end with }.`;
           )}
         </div>
 
+        {/* Loading skeletons (prevent layout shift while Claude generates) */}
+        {activeMatchId !== null &&
+          analysing &&
+          analysisResult === null &&
+          !analysisRaw && (
+            <div className="mt-8 w-full max-w-5xl">
+              <SkeletonDashboard />
+            </div>
+          )}
+
         {/* Wide analysis output area */}
         {activeMatchId !== null && (analysisResult !== null || analysisRaw) && (
           <div className="mt-8 w-full max-w-5xl">
