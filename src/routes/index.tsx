@@ -373,7 +373,7 @@ Start your response with { and end with }.`;
         const head = cleaned.slice(0, 500);
         const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
         setAnalysisError(
-          `Claude returned output that could not be parsed as JSON. The response may be truncated.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
+          `Analysis could not be parsed.\nCheck the Debug tab for raw output.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
         );
         toast.error("Could not parse analysis JSON");
       }
