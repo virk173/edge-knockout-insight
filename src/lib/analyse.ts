@@ -129,7 +129,7 @@ export function validateCall(callKey: string, data: unknown): unknown {
     "3": () => resp !== undefined,
     "4": () => resp !== undefined,
     "5": () => resp !== undefined,
-    "6": () => resp !== undefined,
+    "6": () => !!(d.home || d.away || d.match_id) || resp !== undefined, // TheStatsAPI lineups shape
     "7": () => resp !== undefined,
     "8": () => !!firstResp?.predictions,
     "9A": () => resp !== undefined,
