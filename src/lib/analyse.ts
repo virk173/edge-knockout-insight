@@ -560,6 +560,7 @@ export async function collectMatchData(
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
   lastCompetitionsRaw = null;
+  lastInternationalTournaments = [];
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
