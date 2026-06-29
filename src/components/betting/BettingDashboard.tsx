@@ -216,7 +216,6 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
     );
   }
 
-  const gapPositive = parseGapPct(t.pinnacle_gap) >= 0;
   const sharp = (t.sharp_signal ?? "").toUpperCase();
   const sharpBadge = sharp.includes("CONFIRM")
     ? { text: "⚡ CONFIRMS", className: "bg-signal-green/15 text-signal-green border-signal-green/40" }
@@ -254,17 +253,9 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Pill
-          className={
-            gapPositive
-              ? "border-signal-green/40 bg-signal-green/15 text-signal-green"
-              : "border-signal-red/40 bg-signal-red/15 text-signal-red"
-          }
-        >
-          {t.pinnacle_gap ?? "No Pinnacle gap"}
-        </Pill>
         <Pill className={sharpBadge.className}>{sharpBadge.text}</Pill>
       </div>
+
 
       <ExpandableText text={t.reasoning} />
 
