@@ -162,8 +162,9 @@ export function formatDataForClaude(
         `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(r.data, null, 2)}\n[END CALL ${n}]`,
       );
     } else {
+      const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
-        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}\n[END CALL ${n}]`,
       );
     }
   }
@@ -670,20 +671,64 @@ export async function collectMatchData(
     },
   );
 
-  // 7: referee profile
-  await runStep(
-    "7",
-    "Fetching referee profile... (9/11)",
-    () =>
-      afGet(
-        `/fixtures?referee=${encodeURIComponent(match.referee!)}&season=2026`,
-        afKey,
-      ),
-    {
-      skip: !match.referee,
-      skipReason: "No referee assigned in fixture data.",
-    },
-  );
+  // 7: referee profile.
+  // API-Football cannot filter fixtures by referee with referee+season alone;
+  // the referee filter must be combined with league. Try the 2026 World Cup
+  // first, then fall back to an older completed tournament (2022). If both come
+  // back empty or error, mark EMPTY, set referee strictness UNKNOWN, and add a
+  // note so Claude falls back to historical base rates for cards markets.
+  {
+    stepKeys.push("7");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching referee profile... (9/11)",
+    });
+    if (!match.referee) {
+      record(
+        "7",
+        "Referee profile",
+        "EMPTY",
+        undefined,
+        "Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.",
+      );
+    } else {
+      const refEnc = encodeURIComponent(match.referee);
+      const seasons = [2026, 2022];
+      let refData: unknown = null;
+      let lastError: string | null = null;
+      for (const season of seasons) {
+        currentDebugCall = "7";
+        try {
+          const r = await afGet(
+            `/fixtures?league=1&season=${season}&referee=${refEnc}`,
+            afKey,
+          );
+          if (!isEmptyResponse(r)) {
+            refData = r;
+            break;
+          }
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+        } finally {
+          currentDebugCall = null;
+        }
+      }
+      if (refData !== null) {
+        record("7", "Referee profile", "SUCCESS", refData);
+      } else {
+        record(
+          "7",
+          "Referee profile",
+          "EMPTY",
+          undefined,
+          `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.${
+            lastError ? ` (${lastError})` : ""
+          }`,
+        );
+      }
+    }
+  }
 
   // 8: predictions (skipped if near daily cap)
   await runStep(
