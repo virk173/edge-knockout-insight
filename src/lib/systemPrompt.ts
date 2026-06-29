@@ -1142,18 +1142,16 @@ EXAMPLE OUTPUT:
     "players_on_notice": []
   },
   "confidence_scores": {
-    "dimension_weighted_raw": 72,
-    "adjustments": [
-      {"type": "xG_proxy_used", "delta": -3},
-      {"type": "3_signal_conflict", "delta": -5},
-      {"type": "data_quality_PARTIAL", "delta": -7},
-      {"type": "sharp_money_confirms_Under", "delta": 5},
-      {"type": "Over_2.5_drift", "delta": -3}
-    ],
-    "post_adjustment": 59,
-    "bayesian_applied": false,
-    "bayesian_formula": "N/A below 75",
-    "final_confidence": 59
+    "confidence_inputs": {
+      "dimension_weighted_raw": 72,
+      "adjustments": [
+        {"type": "xG_proxy_used", "delta": -3},
+        {"type": "3_signal_conflict", "delta": -5},
+        {"type": "data_quality_PARTIAL", "delta": -7},
+        {"type": "sharp_money_confirms_Under", "delta": 5},
+        {"type": "Over_2.5_drift", "delta": -3}
+      ]
+    }
   },
   "tactical_analysis": {
     "formation_home": "4-3-3",
