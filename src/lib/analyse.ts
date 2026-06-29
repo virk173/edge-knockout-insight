@@ -665,6 +665,7 @@ export async function collectMatchData(
     record("10", "Next-round bracket", "SKIPPED", undefined,
       "Could not derive next round from current round.");
   } else {
+    currentDebugCall = "10";
     try {
       const r = await afGet(
         `/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`,
@@ -674,6 +675,8 @@ export async function collectMatchData(
     } catch (e) {
       record("10", "Next-round bracket", "FAILED", undefined,
         e instanceof Error ? e.message : String(e));
+    } finally {
+      currentDebugCall = null;
     }
   }
 
@@ -693,6 +696,8 @@ export async function collectMatchData(
     callResults,
     statsApiResolved,
     statsApiMatchId,
+    wcCompetitionId,
+    wcSeasonId,
     succeeded,
     emptyOrFailed,
     failedCalls,
