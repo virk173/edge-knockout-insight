@@ -19,6 +19,7 @@ import {
   type ProgressUpdate,
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
+import { calculateResults } from "@/lib/calculate";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
