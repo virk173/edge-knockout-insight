@@ -388,6 +388,7 @@ Start your response with { and end with }.`;
 
   async function handleAnalyseMatch(match: AnalysedMatch) {
     setActiveMatchId(match.id);
+    lineupRefetchedRef.current.delete(match.id);
     setCollection(null);
     setCollectError(null);
     setAnalysisResult(null);
