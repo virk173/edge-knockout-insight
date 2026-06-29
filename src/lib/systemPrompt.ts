@@ -1860,7 +1860,7 @@ EXAMPLE OUTPUT:
 
       "ev": -0.042,
 
-      "reason": "Negative EV after devig. Market drifted 6.1% at Pinnacle. Sharp money opposing."
+      "reason": "Negative EV after devig."
 
     },
 
