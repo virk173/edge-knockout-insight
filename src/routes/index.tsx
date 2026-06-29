@@ -696,6 +696,11 @@ Start your response with { and end with }.`;
                             </span>
                           </span>
                         )}
+                        {m.status === "OPTIMAL" && (
+                          <span className="rounded-md border border-accent-amber/40 bg-accent-amber/10 px-2 py-1 font-mono text-xs font-semibold text-accent-amber">
+                            ✅ Optimal window — Lineups drop at T-75min via TheStatsAPI
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span
@@ -860,7 +865,7 @@ Start your response with { and end with }.`;
 
       <footer className="flex flex-col items-center gap-1 border-t border-border px-6 py-4 text-center">
         <span className="text-xs font-semibold text-foreground">
-          Edge v3.2 — WC2026 Knockout Intelligence
+          Edge v3.3 — WC2026 Knockout Intelligence
         </span>
         <span className="text-xs text-slate">
           Not financial advice. Bet responsibly.
@@ -933,7 +938,7 @@ function CollectionPanel({ result }: { result: CollectionResult }) {
 function DebugReportView({ report }: { report: DebugReport }) {
   const afRows = report.rows.filter((r) => r.api === "API-Football");
   const saRows = report.rows.filter((r) => r.api === "TheStatsAPI");
-  const saSucceeded = report.statsapiSucceeded === report.statsapiTotal;
+  
 
   return (
     <div className="flex flex-col gap-4">
@@ -968,7 +973,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
           <span className="text-accent-amber">
             {report.statsapiSucceeded}/{report.statsapiTotal}
           </span>{" "}
-          calls {saSucceeded ? "succeeded" : "failed"}
+          calls succeeded
         </span>
 
         <span className="text-slate">

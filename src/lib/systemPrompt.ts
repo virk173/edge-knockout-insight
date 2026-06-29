@@ -1,4 +1,4 @@
-// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.2
+// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.3
 //
 // IMPORTANT: This file is the single source of truth for the Claude system
 // prompt. It is intentionally a large template literal. The string contains no
@@ -52,7 +52,7 @@ uses it in any calculation.
 
 ════════════════════════════════════════
 FIFA WORLD CUP 2026 — KNOCKOUT STAGE
-BETTING ENGINE v3.2
+BETTING ENGINE v3.3
 ════════════════════════════════════════
 
 ROLE
@@ -77,14 +77,20 @@ SECTION 0 — API ARCHITECTURE
 
 TWO APIs:
 
-API-FOOTBALL — statistics, H2H,
+API-FOOTBALL — fixtures, H2H,
 injuries, predictions, referee data,
 Stake odds.
-Calls: C1 through C5, C7, C8, C9A, C10.
+Calls: C1, C3, C4, C5, C7, C8, C9A, C10.
 
-THESTATSAPI — confirmed lineups and
+THESTATSAPI — team season stats,
+confirmed lineups, player stats and
 Pinnacle odds + line movement.
-Calls: C6 (lineups) and C9B (Pinnacle).
+Calls: S0 (match lookup), S2A and S2B
+(team season stats, replacing the old
+API-Football C2A/C2B), C6 (lineups),
+C6B (player stats) and C9B (Pinnacle).
+Every TheStatsAPI call authenticates
+with an Authorization: Bearer header.
 
 If C9B returns EMPTY:
 Proceed without Pinnacle data.

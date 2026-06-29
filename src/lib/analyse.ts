@@ -1201,7 +1201,7 @@ export async function collectMatchData(
   // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
   // TheStatsAPI publishes lineups at ~T-75min (earlier than API-Football's
   // ~T-20min); until then the endpoint 404s (saGet returns null). If null/empty,
-  // flag LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
+  // flag LINEUP PENDING. Retry up to 3 times with 60s gaps when within 90 min.
   await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
     const matchId = await ensureStatsApiMatchId();
     if (!matchId) {
@@ -1215,7 +1215,7 @@ export async function collectMatchData(
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       payload = await saGet(`/football/matches/${matchId}/lineups`);
       if (!isEmptyResponse(payload)) return payload;
-      if (attempt < maxAttempts - 1) await sleep(30000);
+      if (attempt < maxAttempts - 1) await sleep(60000);
     }
     throw new Error("LINEUP PENDING — lineups not yet announced (empty/404).");
   });
