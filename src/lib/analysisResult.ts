@@ -90,7 +90,6 @@ export interface Tier1Anchor {
   books_true_implied?: number;
   ev?: number;
   ev_rating?: string;
-  pinnacle_gap?: string;
   sharp_signal?: string;
   reasoning?: string;
 }
