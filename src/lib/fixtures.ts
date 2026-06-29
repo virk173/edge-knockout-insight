@@ -124,12 +124,14 @@ export async function runAnalysis(): Promise<AnalysisResult> {
   let apiCallsUsed = 0;
   const todayFixtures = await fetchFixturesForDate(isoDate(now), apiKey, false);
   apiCallsUsed += 1;
+  incrementApiCallCount();
   const tomorrowFixtures = await fetchFixturesForDate(
     isoDate(tomorrow),
     apiKey,
     true,
   );
   apiCallsUsed += 1;
+  incrementApiCallCount();
 
   const reference = new Date();
   const matches: AnalysedMatch[] = [...todayFixtures, ...tomorrowFixtures]
