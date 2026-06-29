@@ -33,7 +33,7 @@ export interface ProgressUpdate {
   label: string;
 }
 
-type ApiName = "API-Football" | "OddsPapi";
+type ApiName = "API-Football" | "TheStatsAPI";
 
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
@@ -63,8 +63,8 @@ export interface DebugReport {
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
-  oddspapiSucceeded: number;
-  oddspapiTotal: number;
+  statsapiSucceeded: number;
+  statsapiTotal: number;
   readyForClaude: boolean;
   call10ExpectedEmpty: boolean;
 }
@@ -100,12 +100,12 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
-  { key: "6", n: "6", endpoint: "/fixtures/lineups" },
+  { key: "6", n: "6", endpoint: "TheStatsAPI /lineups" },
   { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "OddsPapi Pinnacle odds" },
+  { key: "9B", n: "9B", endpoint: "TheStatsAPI Pinnacle odds" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
