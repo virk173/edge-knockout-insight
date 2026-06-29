@@ -141,10 +141,12 @@ export interface Tier1Anchor {
   stake?: string;
   odds?: number;
   model_probability?: number;
+  // Raw variables from Claude (preferred source of truth for EV).
+  ev_inputs?: EvInputs;
   books_true_implied?: number;
   ev?: number;
   ev_rating?: string;
-  
+
   reasoning?: string;
 }
 
