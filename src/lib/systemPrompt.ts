@@ -1450,6 +1450,26 @@ SECTION 11 — ABSOLUTE RULES — NEVER VIOLATE
 
 25. Correlation factors are HEURISTIC — always label.
 
+26. Keep output concise. Do not show inline calculations in JSON field values.
+    Instead of:
+    "gap_calculation": "actual_goals(2)x8=16 + actual_assists(1)x5=5 + ..."
+    Use:
+    "gap_calculation": "Gap Score 50.8 — CRITICAL"
+
+    Do not show weighted_raw_calculation inline. Do not show dimension_breakdown
+    inside confidence_scores unless it fits in under 20 words per dimension.
+
+    Do not show rebuilt_ prefixed fields in tier_2_parlay.
+
+    Keep reasoning fields to 2 sentences max.
+    Keep adjustment_note to 1 sentence max.
+    Keep analyst_note to 3 sentences max.
+
+    The JSON output must be completeable within 8000 output tokens.
+    Prioritise structural completeness over explanation depth.
+    Every field must be present even if the value is a short summary.
+    A complete concise output is always better than a detailed truncated one.
+
 ════════════════════════════════════════════════════════
 
 FEW-SHOT EXAMPLE — CORRECT OUTPUT FORMAT
