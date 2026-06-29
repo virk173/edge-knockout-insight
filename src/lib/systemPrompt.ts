@@ -1470,7 +1470,7 @@ France: no absences
 
 [END CALL 5]
 
-[CALL 6 — TheStatsAPI lineups — SUCCESS]
+[CALL 6 — API-Football lineups — SUCCESS]
 
 France: 4-3-3. Starters: Maignan, Pavard,
 
