@@ -158,9 +158,11 @@ No explanation outside the JSON.
 Start your response with { and end with }.`;
 
     try {
+      console.log("[RCA] before callAnalyseMatch", typeof callAnalyseMatch);
       const res = await callAnalyseMatch({
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
+      console.log("[RCA] got res", res);
 
       if (!res.ok) {
         setAnalysisError(res.error ?? "The analysis service returned an error.");
