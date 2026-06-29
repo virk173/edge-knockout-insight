@@ -94,6 +94,12 @@
   /* Brand tokens */
   --accent-amber: oklch(0.769 0.16 70);
   --slate: oklch(0.7 0.04 250);
+  /* Betting UI signal tokens */
+  --signal-blue: oklch(0.62 0.19 256);
+  --signal-green: oklch(0.72 0.19 150);
+  --signal-orange: oklch(0.7 0.18 50);
+  --signal-red: oklch(0.64 0.22 25);
+  --slate-deep: oklch(0.55 0.035 257);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
