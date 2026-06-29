@@ -1623,13 +1623,12 @@ EXAMPLE OUTPUT:
 
       {"type": "xG_proxy_used", "delta": -3.0},
 
-      {"type": "Poisson_divergent", "delta": -3.0},
-
-      {"type": "sharp_money_confirms", "delta": 5.0}
+      {"type": "Poisson_divergent", "delta": -3.0}
 
     ],
 
-    "post_adjustment": 73.0,
+    "post_adjustment": 68.0,
+
 
     "bayesian_applied": false,
 
