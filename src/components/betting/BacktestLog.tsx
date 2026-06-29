@@ -30,7 +30,7 @@ function num(value: number | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
-function signedAmber(value: number | null, suffix = "", digits = 1): JSX.Element {
+function signedAmber(value: number | null, suffix = "", digits = 1): React.ReactNode {
   if (value === null || !Number.isFinite(value)) {
     return <span className="text-slate">—</span>;
   }
