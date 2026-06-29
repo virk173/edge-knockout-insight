@@ -1263,7 +1263,18 @@ export async function collectMatchData(
         `/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`,
         afKey,
       );
-      record("10", "Next-round bracket", isEmptyResponse(r) ? "EMPTY" : "SUCCESS", r);
+      if (isEmptyResponse(r)) {
+        record(
+          "10",
+          "Next-round bracket",
+          "EXPECTED_EMPTY",
+          r,
+          `Next round (${nr}) fixtures not yet determined. Bracket context unavailable.`,
+        );
+      } else {
+        record("10", "Next-round bracket", "SUCCESS", r);
+      }
+
     } catch (e) {
       record("10", "Next-round bracket", "FAILED", undefined,
         e instanceof Error ? e.message : String(e));
