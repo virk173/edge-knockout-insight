@@ -444,9 +444,33 @@ async function resolveWcIds(
     JSON.stringify(payload).slice(0, 2000),
   );
   const comps = extractArray(payload);
+
+  // Capture all international tournaments (type === "tournament" with no
+  // country) for debug display so we can spot the exact World Cup entry/id.
+  lastInternationalTournaments = comps
+    .filter((c) => {
+      const rec = c as Record<string, unknown>;
+      return rec?.type === "tournament" && !rec?.country;
+    })
+    .map((c) => {
+      const rec = c as Record<string, unknown>;
+      return {
+        id: String(getField(c, ["id", "competition_id"]) ?? ""),
+        name: String(getField(c, ["name", "title", "competition_name"]) ?? ""),
+      };
+    });
+
   const wc = comps.find((c) => {
+    const rec = c as Record<string, unknown>;
     const name = getField(c, ["name", "title", "competition_name"]);
-    return typeof name === "string" && normalize(name).includes("fifa world cup 2026");
+    const lower = typeof name === "string" ? name.toLowerCase() : "";
+    return (
+      lower.includes("world cup") ||
+      lower.includes("fifa world") ||
+      (rec?.type === "tournament" &&
+        rec?.country === null &&
+        rec?.confederation === "FIFA")
+    );
   });
   if (!wc) return null;
 
