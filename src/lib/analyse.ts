@@ -796,7 +796,15 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching referee profile... (9/11)",
     });
-    if (!match.referee) {
+    if (counterCritical) {
+      record(
+        "7",
+        "Referee profile",
+        "SKIPPED",
+        undefined,
+        "Skipped — daily API budget critical (>=95). Referee strictness: UNKNOWN.",
+      );
+    } else if (!match.referee) {
       record(
         "7",
         "Referee profile",
