@@ -38,6 +38,75 @@ export interface CollectionResult {
   counterWarning: boolean;
 }
 
+// Maps internal call keys to the endpoint labels used in the Claude prompt.
+// Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
+const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
+  { key: "2A", n: "2A", endpoint: "/teams/statistics (home)" },
+  { key: "2B", n: "2B", endpoint: "/teams/statistics (away)" },
+  { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
+  { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
+  { key: "5", n: "5", endpoint: "/injuries" },
+  { key: "6", n: "6", endpoint: "TheStatsAPI/lineups" },
+  { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
+  { key: "8", n: "8", endpoint: "/predictions" },
+  { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
+  { key: "9B", n: "9B", endpoint: "TheStatsAPI/odds (Pinnacle)" },
+  { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
+];
+
+/**
+ * Formats the collected call results into the [CALL N ... END CALL N] blocks
+ * that the v3.0 system prompt expects. Calls 9A/9B are split out of the
+ * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
+ */
+export function formatDataForClaude(
+  callResults: Record<string, CallResult>,
+): string {
+  // The combined odds step stores its data under key "9".
+  const combinedOdds = callResults["9"];
+  const oddsData = (combinedOdds?.data ?? null) as {
+    stakeOdds?: unknown;
+    pinnacleOdds?: unknown;
+    pinnacleError?: string | null;
+  } | null;
+
+  const resolved: Record<string, { status: CallStatus; data: unknown; error?: string }> = {};
+  for (const [k, v] of Object.entries(callResults)) {
+    resolved[k] = { status: v.status, data: v.data ?? null, error: v.error };
+  }
+  // Synthesize 9A and 9B from the combined "9" call.
+  if (combinedOdds) {
+    const stake = oddsData?.stakeOdds ?? null;
+    resolved["9A"] = {
+      status: isEmptyResponse(stake) || combinedOdds.status !== "SUCCESS" ? "EMPTY" : "SUCCESS",
+      data: stake,
+    };
+    const pinnacle = oddsData?.pinnacleOdds ?? null;
+    resolved["9B"] = {
+      status: isEmptyResponse(pinnacle) ? "EMPTY" : "SUCCESS",
+      data: pinnacle,
+      error: oddsData?.pinnacleError ?? undefined,
+    };
+  }
+
+  const blocks: string[] = [];
+  for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
+    const r = resolved[key];
+    const hasData =
+      r && r.status === "SUCCESS" && r.data !== null && !isEmptyResponse(r.data);
+    if (hasData) {
+      blocks.push(
+        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(r.data, null, 2)}\n[END CALL ${n}]`,
+      );
+    } else {
+      blocks.push(
+        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.\n[END CALL ${n}]`,
+      );
+    }
+  }
+  return blocks.join("\n\n");
+}
+
 const TOTAL_STEPS = 11;
 
 function normalize(name: string): string {

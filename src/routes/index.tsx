@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   runAnalysis,
   STATUS_META,
@@ -7,10 +9,23 @@ import {
 } from "@/lib/fixtures";
 import {
   collectMatchData,
+  formatDataForClaude,
   type CollectionResult,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
+import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
+import { analyseMatch } from "@/lib/analyse-match.functions";
+
+const CLAUDE_LOADING_MESSAGES = [
+  "Analysing team form and statistics...",
+  "Evaluating tactical matchups...",
+  "Calculating expected value...",
+  "Checking Pinnacle line movement...",
+  "Building parlay recommendations...",
+  "Validating EV thresholds...",
+  "Generating betting cards...",
+];
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -55,6 +70,16 @@ function Index() {
   const [collection, setCollection] = useState<CollectionResult | null>(null);
   const [collectError, setCollectError] = useState<string | null>(null);
 
+  // Claude analysis state.
+  const [analysing, setAnalysing] = useState(false);
+  const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
+  const [analysisResult, setAnalysisResult] = useState<unknown>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
+
+  const callAnalyseMatch = useServerFn(analyseMatch);
+  const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
@@ -63,6 +88,23 @@ function Index() {
   useEffect(() => {
     setApiCalls(getApiCallCount());
   }, []);
+
+  // Cycle the Claude loading messages every 3 seconds while analysing.
+  useEffect(() => {
+    if (!analysing) {
+      if (msgTimer.current) clearInterval(msgTimer.current);
+      msgTimer.current = null;
+      return;
+    }
+    setAnalysisMsgIndex(0);
+    msgTimer.current = setInterval(() => {
+      setAnalysisMsgIndex((i) => (i + 1) % CLAUDE_LOADING_MESSAGES.length);
+    }, 3000);
+    return () => {
+      if (msgTimer.current) clearInterval(msgTimer.current);
+      msgTimer.current = null;
+    };
+  }, [analysing]);
 
   async function handleRun() {
     setLoading(true);
@@ -78,17 +120,87 @@ function Index() {
     }
   }
 
+  async function runClaudeAnalysis(
+    match: AnalysedMatch,
+    result: CollectionResult,
+  ) {
+    setAnalysing(true);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setAnalysisRaw(null);
+
+    const formattedData = formatDataForClaude(result.callResults);
+    const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
+
+MATCH: ${match.home} vs ${match.away}
+FIXTURE ID: ${match.id}
+ROUND: ${match.round ?? "NOT_AVAILABLE"}
+KICKOFF UTC: ${match.kickoffUtc}
+CURRENT TIME UTC: ${new Date().toISOString()}
+VENUE: NOT_AVAILABLE
+VENUE CITY: NOT_AVAILABLE
+
+INJECTED API DATA:
+
+${formattedData}
+
+Generate the complete JSON output exactly as specified in the system prompt.
+Return ONLY valid JSON.
+No markdown fences.
+No explanation outside the JSON.
+Start your response with { and end with }.`;
+
+    try {
+      const res = await callAnalyseMatch({
+        data: { systemPrompt: SYSTEM_PROMPT, userMessage },
+      });
+
+      if (!res.ok) {
+        setAnalysisError(res.error ?? "The analysis service returned an error.");
+        toast.error("Analysis failed", { description: res.error });
+        return;
+      }
+
+      const text: string =
+        res.data?.content?.[0]?.text ?? "";
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      setAnalysisRaw(cleaned);
+
+      try {
+        const parsed = JSON.parse(cleaned);
+        setAnalysisResult(parsed);
+        toast.success("Analysis complete");
+      } catch {
+        setAnalysisError(
+          "Claude returned output that could not be parsed as JSON. Raw text shown below for debugging.",
+        );
+        toast.error("Could not parse analysis JSON");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Claude analysis failed.";
+      setAnalysisError(msg);
+      toast.error("Analysis failed", { description: msg });
+    } finally {
+      setAnalysing(false);
+    }
+  }
+
   async function handleAnalyseMatch(match: AnalysedMatch) {
     setActiveMatchId(match.id);
     setCollection(null);
     setCollectError(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setAnalysisRaw(null);
     setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
     try {
       const result = await collectMatchData(match, (p) => setProgress(p));
       setCollection(result);
+      setProgress(null);
+      setApiCalls(getApiCallCount());
+      await runClaudeAnalysis(match, result);
     } catch (e) {
       setCollectError(e instanceof Error ? e.message : "Data collection failed.");
-    } finally {
       setProgress(null);
       setApiCalls(getApiCallCount());
     }
@@ -174,7 +286,7 @@ function Index() {
                           <button
                             type="button"
                             onClick={() => handleAnalyseMatch(m)}
-                            disabled={progress !== null}
+                            disabled={progress !== null || analysing}
                             className="rounded-md border border-accent-amber px-3 py-1.5 text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Analyse this match
@@ -207,6 +319,36 @@ function Index() {
 
                     {isActive && collection && (
                       <CollectionPanel result={collection} />
+                    )}
+
+                    {isActive && analysing && (
+                      <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+                        <p className="font-mono text-sm text-accent-amber">
+                          {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+                        </p>
+                      </div>
+                    )}
+
+                    {isActive && analysisError && (
+                      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        {analysisError}
+                      </div>
+                    )}
+
+                    {isActive && (analysisResult !== null || analysisRaw) && (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-sm font-semibold text-foreground">
+                          {analysisResult !== null
+                            ? "Claude analysis output (raw JSON)"
+                            : "Claude raw response (unparsed)"}
+                        </p>
+                        <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
+                          {analysisResult !== null
+                            ? JSON.stringify(analysisResult, null, 2)
+                            : analysisRaw}
+                        </pre>
+                      </div>
                     )}
                   </li>
                 );
