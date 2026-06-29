@@ -1354,13 +1354,10 @@ SECTION 11 — ABSOLUTE RULES — NEVER VIOLATE
 
 21. Always run ensemble check on goals markets.
 
-22. Always pull Pinnacle odds from TheStatsAPI.
+22. Always include log_entry in Section 9 format.
 
-23. Always show Pinnacle gap check for every bet.
+23. Correlation factors are HEURISTIC — always label.
 
-24. Always include log_entry in Section 9 format.
-
-25. Correlation factors are HEURISTIC — always label.
 
 26. Keep output concise. Do not show inline calculations in JSON field values.
     Instead of:
