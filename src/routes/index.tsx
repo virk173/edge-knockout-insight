@@ -406,7 +406,7 @@ Start your response with { and end with }.`;
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
     } catch (e) {
-      setCollectError(e instanceof Error ? e.message : "Data collection failed.");
+      setCollectError(friendlyError(e instanceof Error ? e.message : "Data collection failed."));
       setProgress(null);
       setApiCalls(getApiCallCount());
     }
