@@ -1035,9 +1035,40 @@ export async function collectMatchData(
   };
 }
 
+/**
+ * Re-fetch CALL 6 (confirmed lineups) for a single fixture. Used to
+ * auto-refresh lineups once the lineup-drop time passes when an earlier run
+ * came back LINEUP PENDING. Returns a CallResult that callers can merge into an
+ * existing callResults object. Increments the API counter via afGet.
+ */
+export async function refetchLineups(fixtureId: number): Promise<CallResult> {
+  try {
+    const payload = await afGet(`/fixtures/lineups?fixture=${fixtureId}`);
+    if (isEmptyResponse(payload)) {
+      return {
+        key: "6",
+        label: "Confirmed lineups",
+        status: "EMPTY",
+        error: "LINEUP PENDING — lineups not yet published (empty array).",
+      };
+    }
+    return {
+      key: "6",
+      label: "Confirmed lineups",
+      status: "SUCCESS",
+      data: replaceNulls(payload),
+    };
+  } catch (e) {
+    return {
+      key: "6",
+      label: "Confirmed lineups",
+      status: "FAILED",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
 
 
-// ============================================================================
 // DEBUG MODE — resolve a fixed real fixture for testing the full pipeline.
 // South Africa vs Canada (2026-06-28). Fetches the real fixture from
 // API-Football for that date so collectMatchData can run against live data.
