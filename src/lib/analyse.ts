@@ -60,18 +60,31 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
  */
 export function formatDataForClaude(
-  callResults: Record<string, CallResult>,
+  callResults: Record<string, CallResult> | null | undefined,
 ): string {
+  // Defensive: never assume callResults (or any individual entry) exists.
+  const safeResults: Record<string, CallResult> = callResults ?? {};
+
+  // Safely pull the validated data out of a single call result.
+  const getCallData = (key: string): unknown => {
+    const result = safeResults[key];
+    if (!result || result.status !== "SUCCESS" || result.data == null) {
+      return null;
+    }
+    return result.data;
+  };
+
   // The combined odds step stores its data under key "9".
-  const combinedOdds = callResults["9"];
-  const oddsData = (combinedOdds?.data ?? null) as {
+  const combinedOdds = safeResults["9"];
+  const oddsData = (getCallData("9") ?? null) as {
     stakeOdds?: unknown;
     pinnacleOdds?: unknown;
     pinnacleError?: string | null;
   } | null;
 
   const resolved: Record<string, { status: CallStatus; data: unknown; error?: string }> = {};
-  for (const [k, v] of Object.entries(callResults)) {
+  for (const [k, v] of Object.entries(safeResults)) {
+    if (!v) continue;
     resolved[k] = { status: v.status, data: v.data ?? null, error: v.error };
   }
   // Synthesize 9A and 9B from the combined "9" call.
