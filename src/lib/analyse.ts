@@ -35,12 +35,40 @@ export interface DebugEntry {
   ok: boolean;
   json: unknown;
   error?: string;
+  callLabel?: string;
+}
+
+// One logical call row for the structured Debug Mode report.
+export interface DebugCallRow {
+  callLabel: string; // e.g. "CALL 2A"
+  api: "API-Football" | "TheStatsAPI";
+  endpoint: string;
+  url: string;
+  status: number | string;
+  ok: boolean;
+  dataExtracted: boolean;
+  json: unknown;
+  error?: string;
+}
+
+export interface DebugReport {
+  competitionId: string | null;
+  seasonId: string | null;
+  statsMatchId: string | null;
+  rows: DebugCallRow[];
+  afSucceeded: number;
+  afTotal: number;
+  saSucceeded: number;
+  saTotal: number;
+  readyForClaude: boolean;
 }
 
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
   statsApiResolved: boolean;
   statsApiMatchId: string | null;
+  wcCompetitionId: string | null;
+  wcSeasonId: string | null;
   succeeded: number;
   emptyOrFailed: number;
   failedCalls: string[];
