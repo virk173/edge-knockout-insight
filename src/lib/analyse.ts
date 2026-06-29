@@ -11,14 +11,10 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
-const OP_BASE = "https://api.oddspapi.io";
-// OddsPapi free tier: 0.88s cooldown between calls. We wait 900ms before a
-// second (or later) OddsPapi call within the same pipeline run.
-const ODDSPAPI_COOLDOWN_MS = 900;
-const ODDSPAPI_SPORT_ID = 10; // football/soccer
-// Hardcoded World Cup tournament ID on OddsPapi (sportId=10, category: international).
-// Confirmed active 2026 World Cup (tournament name "World Cup", upcomingFixtures > 0).
-const ODDSPAPI_WC_TOURNAMENT_ID = 16;
+const SA_BASE = "https://api.thestatsapi.com/api";
+// Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
+const STATSAPI_COMPETITION_ID = "comp_6107";
+const STATSAPI_SEASON_ID = "sn_118868";
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
@@ -37,7 +33,7 @@ export interface ProgressUpdate {
   label: string;
 }
 
-type ApiName = "API-Football" | "OddsPapi";
+type ApiName = "API-Football" | "TheStatsAPI";
 
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
@@ -67,8 +63,8 @@ export interface DebugReport {
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
-  oddspapiSucceeded: number;
-  oddspapiTotal: number;
+  statsapiSucceeded: number;
+  statsapiTotal: number;
   readyForClaude: boolean;
   call10ExpectedEmpty: boolean;
 }
@@ -104,12 +100,12 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
-  { key: "6", n: "6", endpoint: "/fixtures/lineups" },
+  { key: "6", n: "6", endpoint: "TheStatsAPI /lineups" },
   { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "OddsPapi Pinnacle odds" },
+  { key: "9B", n: "9B", endpoint: "TheStatsAPI Pinnacle odds" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
@@ -263,12 +259,12 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 6B", api: "API-Football", endpoint: "/players (player statistics)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "CALL 9B", api: "OddsPapi", endpoint: "/v4/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 9B", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -291,8 +287,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
 
-  const opCount = specs.filter((s) => s.api === "OddsPapi" && s.count);
-  const oddspapiSucceeded = opCount.filter((s) => s.extracted).length;
+  const saCount = specs.filter((s) => s.api === "TheStatsAPI" && s.count);
+  const statsapiSucceeded = saCount.filter((s) => s.extracted).length;
 
   // Claude can run as long as the two mandatory team-statistics calls landed.
   // Optional calls (lineups/referee/bracket/Pinnacle) may be EMPTY without blocking.
@@ -303,8 +299,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     rows,
     afSucceeded,
     afTotal: afCount.length,
-    oddspapiSucceeded,
-    oddspapiTotal: opCount.length,
+    statsapiSucceeded,
+    statsapiTotal: saCount.length,
     readyForClaude,
     call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
   };
@@ -379,23 +375,15 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
   return json?.response ?? null;
 }
 
-// Counts OddsPapi calls within the current pipeline run, to honour the free
-// tier's 0.88s cooldown. Reset at the start of every collectMatchData run.
-let oddspapiCallsThisRun = 0;
-
-// OddsPapi GET (via server proxy). The server appends the apiKey query param.
-// Free tier enforces a ~0.88s cooldown between calls, so we always wait 900ms
-// before issuing a call. On HTTP 429 (rate limit) we wait 2s and retry once;
-// if the retry also fails we surface the error (the C9B caller swallows it).
-async function opGet(path: string): Promise<unknown> {
-  // 900ms cooldown before every OddsPapi call (including the first this run).
-  await sleep(ODDSPAPI_COOLDOWN_MS);
-  oddspapiCallsThisRun++;
-  const url = `${OP_BASE}${path}`;
+// TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
+// On HTTP 429 (rate limit) we wait 2s and retry once; on 404 we return null
+// (used for lineups "not announced yet"). Other failures throw with detail.
+async function saGet(path: string): Promise<unknown> {
+  const url = `${SA_BASE}${path}`;
 
   const attempt = async (): Promise<{ ok: boolean; status: number | string; statusText?: string; json: unknown }> => {
     try {
-      return await apiFetch({ data: { provider: "oddspapi", url } });
+      return await apiFetch({ data: { provider: "statsapi", url } });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: false, status: "network error", statusText: msg, json: null };
@@ -409,23 +397,31 @@ async function opGet(path: string): Promise<unknown> {
     result = await attempt();
   }
 
+  // 404 = resource not yet available (e.g. lineups not announced). Treat as null.
+  if (!result.ok && String(result.status) === "404") {
+    debugSink?.push({ api: "TheStatsAPI", url, status: 404, ok: true, json: null, callLabel: currentDebugCall ?? undefined });
+    return null;
+  }
+
   if (!result || !result.ok) {
     const status = result?.status ?? "no response";
-    // Surface the OddsPapi error body (e.g. {"error":{"message":"Invalid API
-    // key",...}}) so an invalid/expired key is obvious in debug + logs.
-    const bodyErr = getField(getField(result?.json, ["error"]), ["message"]);
+    // Surface the TheStatsAPI error body so an invalid/expired key is obvious.
+    const bodyErr =
+      getField(getField(result?.json, ["error"]), ["message"]) ??
+      getField(result?.json, ["message", "error"]);
     const detail =
       (typeof bodyErr === "string" && bodyErr) || result?.statusText || "";
     const hint =
-      String(status) === "401"
-        ? " — the ODDSPAPI_KEY secret is invalid or expired; update it with a valid key from oddspapi.io"
+      String(status) === "401" || String(status) === "403"
+        ? " — the STATSAPI_KEY secret is invalid or expired; update it with a valid key from thestatsapi.com"
         : "";
-    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: result?.json ?? null, error: `${detail}${hint}`, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`OddsPapi ${status} ${detail}${hint}`.trim());
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: result?.json ?? null, error: `${detail}${hint}`, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`TheStatsAPI ${status} ${detail}${hint}`.trim());
   }
   const json = result.json ?? null;
-  debugSink?.push({ api: "OddsPapi", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
-  return json;
+  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  // TheStatsAPI wraps payloads in { data: ... }. Return the inner data.
+  return getField(json, ["data"]) ?? json;
 }
 
 // --- Pinnacle line-movement helpers ---
@@ -456,117 +452,88 @@ function movementSignal(
   return { movement_pct: Math.round(movement_pct * 100) / 100, signal };
 }
 
-// Confirmed OddsPapi Pinnacle market structure: bookmakerOdds.pinnacle.markets
-// is an object keyed by market id; each market.outcomes is keyed by outcome id;
-// each outcome's price lives at outcome.players["0"].price.
-//   101  = Full Time Result 1X2  (101 Home, 102 Draw, 103 Away)
-//   1010 = Over/Under 2.5 Goals  (1010 Over, 1011 Under)
-//   104  = BTTS                  (104 Yes, 105 No)
-const PINNACLE_MARKET_MAP: Record<
-  string,
-  { bucket: string; outcomes: Record<string, string> }
-> = {
-  "101": {
-    bucket: "1X2 Full Time Result",
-    outcomes: { "101": "Home", "102": "Draw", "103": "Away" },
-  },
-  "1010": {
-    bucket: "Over/Under 2.5 Goals",
-    outcomes: { "1010": "Over 2.5", "1011": "Under 2.5" },
-  },
-  "104": {
-    bucket: "BTTS",
-    outcomes: { "104": "Yes", "105": "No" },
-  },
-};
-
-// Read a Pinnacle outcome's current price from outcome.players["0"].price,
-// tolerating minor field-name variation.
-function pinnaclePrice(outcome: unknown): number | null {
-  const players = getField(outcome, ["players"]);
-  if (players && typeof players === "object") {
-    const rec = players as Record<string, unknown>;
-    const first = rec["0"] ?? Object.values(rec)[0];
-    const p = toNum(getField(first, ["price", "currentPrice", "odds", "value"]));
-    if (p != null) return p;
-  }
-  return toNum(getField(outcome, ["price", "current", "odds", "value"]));
-}
-
-// Opening-price baseline cache. OddsPapi's /odds response returns only the
-// current price, so we persist the first-seen price per fixture/outcome and
-// treat it as the opening line to compute genuine line movement over time.
-function loadOpeningBaseline(fixtureId: string): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(`oddspapi_opening_${fixtureId}`);
-    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
-  } catch {
-    return {};
-  }
-}
-function saveOpeningBaseline(fixtureId: string, baseline: Record<string, number>): void {
-  try {
-    localStorage.setItem(`oddspapi_opening_${fixtureId}`, JSON.stringify(baseline));
-  } catch {
-    /* ignore quota / privacy-mode errors */
-  }
-}
-
 interface PinnacleMarketSummary {
   market: string;
   outcomes: Array<{
     name: string;
-    current: number | null;
+    current: number | null; // last_seen
     opening: number | null;
     movement_pct: number | null;
     signal: string;
   }>;
 }
 
-// Build a structured Pinnacle summary (markets + line movement) from a raw
-// /v4/odds response. Returns null if no Pinnacle markets are present.
+// Pull opening + last_seen prices out of a TheStatsAPI odds outcome node and
+// derive the line-movement signal. movement_pct = (last_seen - opening)/opening*100.
+function summariseOutcome(name: string, node: unknown) {
+  const opening = toNum(getField(node, ["opening"]));
+  const current = toNum(getField(node, ["last_seen", "last", "current"]));
+  const mv = movementSignal(opening, current);
+  return { name, opening, current, ...mv };
+}
+
+// Build a structured Pinnacle summary from a TheStatsAPI /matches/{id}/odds
+// response. Filters for the Pinnacle bookmaker and extracts 1X2, Over/Under
+// (total goals), BTTS, and corners markets with opening + last_seen prices and
+// line movement. Returns null if no Pinnacle data is present.
 function buildPinnacleSummary(
   oddsJson: unknown,
-  fixtureId: string,
 ): { markets: PinnacleMarketSummary[]; raw: unknown } | null {
-  // Locate bookmakerOdds.pinnacle.markets, tolerating nesting in data/response.
-  const root = getField(oddsJson, ["data", "response", "result"]) ?? oddsJson;
-  const bookmakerOdds =
-    getField(root, ["bookmakerOdds"]) ??
-    getField(extractArray(root)[0], ["bookmakerOdds"]);
-  const pinnacle = getField(bookmakerOdds, ["pinnacle", "Pinnacle"]);
-  const rawMarkets = getField(pinnacle, ["markets"]);
-  if (!rawMarkets || typeof rawMarkets !== "object") return null;
-  const marketsObj = rawMarkets as Record<string, unknown>;
+  const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
+  const pinnacle = bookmakers.find((b) => {
+    const name = getField(b, ["bookmaker", "name"]);
+    return typeof name === "string" && normalize(name).includes("pinnacle");
+  });
+  if (!pinnacle) return null;
+  const m = getField(pinnacle, ["markets"]);
+  if (!m || typeof m !== "object") return null;
 
-  const baseline = loadOpeningBaseline(fixtureId);
   const markets: PinnacleMarketSummary[] = [];
 
-  for (const [mid, conf] of Object.entries(PINNACLE_MARKET_MAP)) {
-    const m = marketsObj[mid];
-    if (!m) continue;
-    const outcomesObj = getField(m, ["outcomes"]);
-    if (!outcomesObj || typeof outcomesObj !== "object") continue;
-    const rec = outcomesObj as Record<string, unknown>;
-
-    const outcomes: PinnacleMarketSummary["outcomes"] = [];
-    for (const [oid, oname] of Object.entries(conf.outcomes)) {
-      const o = rec[oid];
-      if (!o) continue;
-      const current = pinnaclePrice(o);
-      const bkey = `${conf.bucket}|${oname}`;
-      let opening: number | null = baseline[bkey] ?? null;
-      if (opening == null && current != null) {
-        opening = current; // first observation becomes the opening baseline
-        baseline[bkey] = current;
-      }
-      const mv = movementSignal(opening, current);
-      outcomes.push({ name: oname, current, opening, ...mv });
-    }
-    if (outcomes.length) markets.push({ market: conf.bucket, outcomes });
+  // 1X2 — match_odds (home / draw / away).
+  const matchOdds = getField(m, ["match_odds", "match_result", "1x2"]);
+  if (matchOdds) {
+    const outcomes = (
+      [
+        ["Home", getField(matchOdds, ["home"])],
+        ["Draw", getField(matchOdds, ["draw"])],
+        ["Away", getField(matchOdds, ["away"])],
+      ] as Array<[string, unknown]>
+    )
+      .filter(([, n]) => n != null)
+      .map(([name, n]) => summariseOutcome(name, n));
+    if (outcomes.length) markets.push({ market: "1X2 Full Time Result", outcomes });
   }
 
-  saveOpeningBaseline(fixtureId, baseline);
+  // BTTS — yes / no.
+  const btts = getField(m, ["btts"]);
+  if (btts) {
+    const outcomes = (
+      [
+        ["Yes", getField(btts, ["yes"])],
+        ["No", getField(btts, ["no"])],
+      ] as Array<[string, unknown]>
+    )
+      .filter(([, n]) => n != null)
+      .map(([name, n]) => summariseOutcome(name, n));
+    if (outcomes.length) markets.push({ market: "BTTS", outcomes });
+  }
+
+  // Over/Under goals — total_goals, keyed by line (e.g. "2.5").
+  const flattenLines = (label: string, container: unknown) => {
+    if (!container || typeof container !== "object") return;
+    const outcomes: PinnacleMarketSummary["outcomes"] = [];
+    for (const [line, node] of Object.entries(container as Record<string, unknown>)) {
+      const over = getField(node, ["over"]);
+      const under = getField(node, ["under"]);
+      if (over) outcomes.push(summariseOutcome(`Over ${line}`, over));
+      if (under) outcomes.push(summariseOutcome(`Under ${line}`, under));
+    }
+    if (outcomes.length) markets.push({ market: label, outcomes });
+  };
+  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]));
+  flattenLines("Corners", getField(m, ["match_corners", "corners"]));
+
   return markets.length ? { markets, raw: pinnacle } : null;
 }
 
@@ -853,23 +820,83 @@ async function buildRefereeProfile(
   return profile;
 }
 
+// ---- TheStatsAPI match-id resolution ----
+//
+// Both CALL 6 (lineups) and CALL 9B (Pinnacle odds) need TheStatsAPI's own
+// match_id. We resolve it once per pipeline run by listing FIFA World Cup 2026
+// matches for the kickoff date (competition + season hardcoded) and matching by
+// team name. Cached per (date) for the session to avoid a second list call.
+const statsapiMatchListMem: Record<string, unknown[]> = {};
 
+async function getStatsApiMatches(date: string): Promise<unknown[]> {
+  if (statsapiMatchListMem[date]) return statsapiMatchListMem[date];
+  const payload = await saGet(
+    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`,
+  );
+  const arr = extractArray(payload);
+  statsapiMatchListMem[date] = arr;
+  return arr;
+}
+
+// Resolve the TheStatsAPI match_id for a fixture by team name on its kickoff
+// date. Returns null when no match is found.
+async function resolveStatsApiMatchId(
+  home: string,
+  away: string,
+  kickoffUtc: string,
+): Promise<string | null> {
+  const date = (kickoffUtc || "").slice(0, 10);
+  if (!date) return null;
+  const list = await getStatsApiMatches(date);
+  const h = normalize(home);
+  const a = normalize(away);
+  const found = list.find((mt) => {
+    const hn = normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""));
+    const an = normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""));
+    if (!hn || !an) return false;
+    const direct =
+      (hn.includes(h) || h.includes(hn)) && (an.includes(a) || a.includes(an));
+    const swapped =
+      (hn.includes(a) || a.includes(hn)) && (an.includes(h) || h.includes(an));
+    return direct || swapped;
+  });
+  const id = getField(found, ["id", "match_id"]);
+  return id != null ? String(id) : null;
+}
 
 export async function collectMatchData(
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  // API keys live server-side (APIFOOTBALL_KEY) and are used by the api-proxy
-  // server function. This placeholder keeps the existing call-site signature.
+  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used by
+  // the api-proxy server function. This placeholder keeps the call-site signature.
   const afKey = "";
 
-  // When debugging, capture every raw HTTP call made by afGet.
+  // When debugging, capture every raw HTTP call made by afGet / saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
-  // Reset the OddsPapi cooldown counter for this run.
-  oddspapiCallsThisRun = 0;
+  // TheStatsAPI match_id, resolved lazily on first need (CALL 6) and reused by
+  // CALL 9B. null until resolved; "" sentinel meaning "tried, not found".
+  let statsApiMatchId: string | null = null;
+  let statsApiResolved = false;
+  const ensureStatsApiMatchId = async (): Promise<string | null> => {
+    if (statsApiResolved) return statsApiMatchId;
+    statsApiResolved = true;
+    try {
+      statsApiMatchId = await resolveStatsApiMatchId(
+        match.home,
+        match.away,
+        match.kickoffUtc,
+      );
+    } catch (e) {
+      console.warn("[analyse] TheStatsAPI match resolution failed", e);
+      statsApiMatchId = null;
+    }
+    return statsApiMatchId;
+  };
+
 
 
 
@@ -986,21 +1013,29 @@ export async function collectMatchData(
     afGet(`/injuries?fixture=${match.id}`, afKey),
   );
 
-  // 6: confirmed lineups (API-Football).
-  // Lineups are typically published 20-40 min before kickoff (earlier — up to
-  // ~75 min — for World Cup 2026). If the array is empty, flag LINEUP PENDING.
-  // Retry up to 3 times with 30s gaps when we are within 90 min of kickoff.
-  await runStep("6", "Fetching confirmed lineups... (8/11)", async () => {
+  // 6: confirmed lineups (TheStatsAPI).
+  // Resolve TheStatsAPI's match_id by team name on the kickoff date, then fetch
+  // /football/matches/{match_id}/lineups. Lineups publish ~1h before kickoff;
+  // until then the endpoint 404s (saGet returns null). If null/empty, flag
+  // LINEUP PENDING. Retry up to 3 times with 30s gaps when within 90 min.
+  await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
+    const matchId = await ensureStatsApiMatchId();
+    if (!matchId) {
+      throw new Error(
+        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date. Lineups unavailable.",
+      );
+    }
     const withinWindow = match.minutesUntilKickoff <= 90;
     const maxAttempts = withinWindow ? 3 : 1;
     let payload: unknown = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      payload = await afGet(`/fixtures/lineups?fixture=${match.id}`, afKey);
+      payload = await saGet(`/football/matches/${matchId}/lineups`);
       if (!isEmptyResponse(payload)) return payload;
       if (attempt < maxAttempts - 1) await sleep(30000);
     }
-    throw new Error("LINEUP PENDING — lineups not yet published (empty array).");
+    throw new Error("LINEUP PENDING — lineups not yet announced (empty/404).");
   });
+
 
   // CALL 6B: player intelligence (API-Football player statistics).
   // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
@@ -1166,80 +1201,66 @@ export async function collectMatchData(
     return { stakeOdds: afOdds };
   });
 
-  // CALL 9B: OddsPapi Pinnacle odds + line movement (separate provider).
-  // Step 1: find the World Cup fixture by date + loose team-name match.
-  // Step 2: fetch Pinnacle odds for that fixture.
-  // Step 3: compute line movement signals. Step 4: gap check vs Stake.
-  // On any failure or no fixture match -> EMPTY (Pinnacle data unavailable).
+  // CALL 9B: TheStatsAPI Pinnacle odds + line movement.
+  // Reuses the TheStatsAPI match_id resolved for CALL 6. Fetches
+  // /football/matches/{match_id}/odds, filters for Pinnacle, and extracts
+  // opening + last_seen per market (1X2, over/under, BTTS, corners) with line
+  // movement. On any failure or no Pinnacle data -> EMPTY.
   {
     stepKeys.push("9B");
     onProgress({
       step: stepKeys.length,
       total: TOTAL_STEPS,
-      label: "Fetching Pinnacle odds (OddsPapi)...",
+      label: "Fetching Pinnacle odds (TheStatsAPI)...",
     });
     currentDebugCall = "9B";
     try {
-      // Diagnostic: the real key lives server-side as the ODDSPAPI_KEY secret
-      // (used by the api-proxy). VITE_ODDSPAPI_KEY is optional documentation
-      // only; logging its prefix confirms whether a browser key was set.
+      // Diagnostic: the real key lives server-side as the STATSAPI_KEY secret
+      // (used by the api-proxy). VITE_STATSAPI_KEY is optional documentation only.
       console.log(
-        "OddsPapi key prefix (browser, optional):",
-        import.meta.env.VITE_ODDSPAPI_KEY?.slice(0, 4) ?? "(not set — using server ODDSPAPI_KEY)",
+        "TheStatsAPI key prefix (browser, optional):",
+        import.meta.env.VITE_STATSAPI_KEY?.slice(0, 4) ?? "(not set — using server STATSAPI_KEY)",
       );
-      // Step 1 — find fixture from the daily-cached World Cup fixtures list
-      // (tournament hardcoded). No date filter — we match by team name.
-      const fixtureList = await getOddspapiFixtures();
-      const fxMatch = findOddspapiFixture(fixtureList, match.home, match.away);
-      const fixtureId = getField(fxMatch, ["fixtureId", "id"]);
+      const matchId = await ensureStatsApiMatchId();
 
-      if (fixtureId == null) {
+      if (!matchId) {
         record(
           "9B",
-          "Pinnacle odds (OddsPapi)",
+          "Pinnacle odds (TheStatsAPI)",
           "EMPTY",
           undefined,
-          "Pinnacle data unavailable — no OddsPapi fixture matched this match.",
+          "Pinnacle data unavailable — no TheStatsAPI match matched this fixture.",
         );
       } else {
-        // Step 2 — get fresh Pinnacle odds (never cached).
-        const oddsJson = await opGet(
-          `/v4/odds?fixtureId=${encodeURIComponent(String(fixtureId))}&bookmakers=pinnacle`,
-        );
-        // Step 3 — extract markets + line movement (opening vs current).
-        const summary = buildPinnacleSummary(oddsJson, String(fixtureId));
-
+        const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
+        const summary = buildPinnacleSummary(oddsJson);
 
         if (!summary) {
           record(
             "9B",
-            "Pinnacle odds (OddsPapi)",
+            "Pinnacle odds (TheStatsAPI)",
             "EMPTY",
-            { fixtureId },
-            "Pinnacle data unavailable — no Pinnacle markets returned for this fixture.",
+            { matchId },
+            "Pinnacle data unavailable — no Pinnacle markets returned for this match.",
           );
         } else {
-          // Step 4 — gap check vs Stake (best-effort on 1X2).
+          // Gap check vs Stake (best-effort on 1X2).
           const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
           const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
 
-          record("9B", "Pinnacle odds (OddsPapi)", "SUCCESS", {
-            fixtureId,
-            matched_fixture: {
-              participant1: getField(fxMatch, ["participant1Name", "homeName", "home"]) ?? null,
-              participant2: getField(fxMatch, ["participant2Name", "awayName", "away"]) ?? null,
-            },
+          record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
+            matchId,
             markets: summary.markets,
             gap_check: gapCheck,
             note:
-              "movement_pct = (current - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact).",
+              "movement_pct = (last_seen - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
           });
         }
       }
     } catch (e) {
       record(
         "9B",
-        "Pinnacle odds (OddsPapi)",
+        "Pinnacle odds (TheStatsAPI)",
         "EMPTY",
         undefined,
         `Pinnacle data unavailable — ${e instanceof Error ? e.message : String(e)}`,
@@ -1248,6 +1269,7 @@ export async function collectMatchData(
       currentDebugCall = null;
     }
   }
+
 
 
 
@@ -1317,18 +1339,33 @@ export async function collectMatchData(
 /**
  * Re-fetch CALL 6 (confirmed lineups) for a single fixture. Used to
  * auto-refresh lineups once the lineup-drop time passes when an earlier run
- * came back LINEUP PENDING. Returns a CallResult that callers can merge into an
- * existing callResults object. Increments the API counter via afGet.
+ * came back LINEUP PENDING. Resolves TheStatsAPI's match_id by team name on the
+ * kickoff date, then fetches /football/matches/{match_id}/lineups. Returns a
+ * CallResult that callers can merge into an existing callResults object.
  */
-export async function refetchLineups(fixtureId: number): Promise<CallResult> {
+export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> {
   try {
-    const payload = await afGet(`/fixtures/lineups?fixture=${fixtureId}`);
+    const matchId = await resolveStatsApiMatchId(
+      match.home,
+      match.away,
+      match.kickoffUtc,
+    );
+    if (!matchId) {
+      return {
+        key: "6",
+        label: "Confirmed lineups",
+        status: "EMPTY",
+        error:
+          "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date.",
+      };
+    }
+    const payload = await saGet(`/football/matches/${matchId}/lineups`);
     if (isEmptyResponse(payload)) {
       return {
         key: "6",
         label: "Confirmed lineups",
         status: "EMPTY",
-        error: "LINEUP PENDING — lineups not yet published (empty array).",
+        error: "LINEUP PENDING — lineups not yet announced (empty/404).",
       };
     }
     return {
