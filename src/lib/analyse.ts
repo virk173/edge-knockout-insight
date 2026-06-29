@@ -303,27 +303,27 @@ function afErrors(errors: unknown): string | null {
   return null;
 }
 
-// API-Football GET. Increments the daily counter on a successful HTTP response.
-async function afGet(path: string, key: string): Promise<unknown> {
+// API-Football GET (via server proxy). Increments the daily counter on a
+// successful HTTP response. The `_key` arg is retained for call-site
+// compatibility but is unused — the key lives server-side.
+async function afGet(path: string, _key?: string): Promise<unknown> {
   const url = `${AF_BASE}${path}`;
-  let res: Response;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
   try {
-    res = await fetch(url, {
-      headers: { "x-apisports-key": key },
-    });
+    result = await apiFetch({ data: { provider: "apifootball", url } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`API-Football network error: ${msg}`);
   }
-  if (!res || !res.ok) {
-    const status = res?.status ?? "no response";
-    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`API-Football ${status} ${res?.statusText ?? ""}`.trim());
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`API-Football ${status} ${result?.statusText ?? ""}`.trim());
   }
   incrementApiCallCount();
-  const json = (await res.json().catch(() => null)) as AfResponse | null;
-  debugSink?.push({ api: "API-Football", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  const json = (result.json ?? null) as AfResponse | null;
+  debugSink?.push({ api: "API-Football", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   const err = afErrors(json?.errors);
   if (err) throw new Error(err);
   return json?.response ?? null;
@@ -337,25 +337,23 @@ function isEmptyResponse(response: unknown): boolean {
   return false;
 }
 
-async function saGet(path: string, key: string): Promise<unknown> {
+async function saGet(path: string, _key?: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
-  let res: Response;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
+    result = await apiFetch({ data: { provider: "statsapi", url } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`TheStatsAPI network error: ${msg}`);
   }
-  if (!res || !res.ok) {
-    const status = res?.status ?? "no response";
-    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI ${status} ${res?.statusText ?? ""}`.trim());
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`TheStatsAPI ${status} ${result?.statusText ?? ""}`.trim());
   }
-  const json = await res.json().catch(() => null);
-  debugSink?.push({ api: "TheStatsAPI", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  const json = result.json ?? null;
+  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   return json;
 }
 
