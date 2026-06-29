@@ -386,65 +386,7 @@ Use the most recently fetched odds only.
 
 These are the odds for EV calculations.
 
-CALL 9B — PINNACLE ODDS AND LINE MOVEMENT
 
-Extract for each market:
-
-  opening_odds and current_odds from Pinnacle.
-
-LINE MOVEMENT CALCULATION:
-
-  movement_pct = (current minus opening)
-
-    divided by opening, times 100
-
-MOVEMENT SIGNAL RULES:
-
-Pinnacle odds shortened more than 8 percent
-
-since opening (e.g. 2.20 to 2.02):
-
-  SHARP MONEY SIGNAL toward that outcome.
-
-  If model also favours this outcome:
-
-    confidence plus 5 points.
-
-  If model opposes this outcome:
-
-    confidence minus 5 points.
-
-    Flag conflict.
-
-Odds drifted more than 8 percent since opening:
-
-  PUBLIC FADING or late sharp money opposing.
-
-  Confidence in that outcome minus 3 points.
-
-Movement less than 5 percent either direction:
-
-  STABLE MARKET. No adjustment.
-
-PINNACLE DEVIG AND GAP CHECK:
-
-Devig Pinnacle odds same as Stake (Section 3 Step 2).
-
-pinnacle_true_prob = deviggged Pinnacle probability.
-
-PINNACLE GAP CHECK per market:
-
-If stake_odds are greater than pinnacle_odds:
-
-  gap_pct = (stake_odds divided by pinnacle_odds
-
-    minus 1) times 100
-
-  Flag: STAKE OFFERS VALUE vs PINNACLE
-
-If stake_odds are less than pinnacle_odds:
-
-  Flag: STAKE WORSE THAN PINNACLE on this market
 
 CALL 10 — BRACKET CONTEXT
 
