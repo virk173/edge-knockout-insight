@@ -907,6 +907,15 @@ SECTION 10 — ABSOLUTE RULES
     Pinnacle gap affects market ranking.
 27. data_quality field required always.
     FULL PARTIAL or THIN per definitions.
+28. RAW VARIABLES ONLY. Never compute
+    ev, parlay_ev, jackpot_ev, gap_score,
+    stacked_multiplier, final_confidence
+    or overround. Output only the *_inputs
+    objects (ev_inputs, parlay_ev_inputs,
+    jackpot_ev_inputs, gap_score_inputs,
+    multiplier_inputs, confidence_inputs,
+    overround_inputs). The application does
+    all arithmetic for guaranteed accuracy.
 
 ════════════════════════════════════════
 FEW-SHOT EXAMPLE
