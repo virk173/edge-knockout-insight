@@ -406,13 +406,9 @@ function Tier2Card({ result }: { result: AnalysisResult }) {
         <div className="flex items-center justify-between text-sm">
           <span className="flex items-center gap-1 text-foreground">
             Raw return
-            <Info
-              size={12}
-              className="text-slate"
-              aria-label="Based on SGP face odds before hold rate"
-            >
-              <title>Based on SGP face odds before hold rate</title>
-            </Info>
+            <span title="Based on SGP face odds before hold rate">
+              <Info size={12} className="text-slate" />
+            </span>
           </span>
           <span className="font-semibold text-foreground">
             {t.returns?.potential_return_raw ?? "—"}
@@ -421,13 +417,9 @@ function Tier2Card({ result }: { result: AnalysisResult }) {
         <div className="flex items-center justify-between text-sm">
           <span className="flex items-center gap-1 text-foreground">
             Realistic return
-            <Info
-              size={12}
-              className="text-slate"
-              aria-label="Hold-adjusted. This is what to expect."
-            >
-              <title>Hold-adjusted. This is what to expect.</title>
-            </Info>
+            <span title="Hold-adjusted. This is what to expect.">
+              <Info size={12} className="text-slate" />
+            </span>
           </span>
           <span className="font-bold text-signal-green">
             {t.returns?.potential_return_realistic ?? "—"}
