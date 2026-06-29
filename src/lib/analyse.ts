@@ -109,6 +109,42 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
 ];
 
 /**
+ * Per-call schema validation. Returns the data unchanged when the call-specific
+ * required fields are present, or null when the response is structurally invalid
+ * (so formatDataForClaude renders it as an EMPTY block instead of feeding Claude
+ * malformed data). Validation is keyed by the logical CALL number.
+ */
+export function validateCall(callKey: string, data: unknown): unknown {
+  if (data == null) return null;
+
+  const d = data as Record<string, unknown>;
+  const resp = d.response as unknown;
+  const firstResp =
+    Array.isArray(resp) && resp.length ? (resp[0] as Record<string, unknown>) : undefined;
+
+  const checks: Record<string, () => boolean> = {
+    "2A": () => !!firstResp?.statistics,
+    "2B": () => !!firstResp?.statistics,
+    "3": () => resp !== undefined,
+    "4": () => resp !== undefined,
+    "5": () => resp !== undefined,
+    "6": () => resp !== undefined,
+    "7": () => resp !== undefined,
+    "8": () => !!firstResp?.predictions,
+    "9A": () => resp !== undefined,
+    "9B": () => d.bookmakerOdds !== undefined || d.data !== undefined || d.markets !== undefined,
+    "10": () => resp !== undefined,
+  };
+
+  const check = checks[callKey];
+  if (check && !check()) {
+    console.warn(`Call ${callKey} failed schema validation`, data);
+    return null;
+  }
+  return data;
+}
+
+/**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
@@ -120,13 +156,16 @@ export function formatDataForClaude(
   // Defensive: never assume callResults (or any individual entry) exists.
   const safeResults: Record<string, CallResult> = callResults ?? {};
 
-  // Safely pull the validated data out of a single call result.
-  const getCallData = (key: string): unknown => {
+  // Safely pull the validated data out of a single call result. Runs the
+  // per-call schema validator and drops the data if it fails.
+  const getCallData = (key: string, validationKey?: string): unknown => {
     const result = safeResults[key];
     if (!result || result.status !== "SUCCESS" || result.data == null) {
       return null;
     }
-    return result.data;
+    return validateCall(validationKey ?? key, result.data) === null && validationKey
+      ? null
+      : result.data;
   };
 
   // The odds step stores its data under key "9" (Stake only).
