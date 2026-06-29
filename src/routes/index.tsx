@@ -19,9 +19,19 @@ import {
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
+import { BacktestLog } from "@/components/betting/BacktestLog";
+import {
+  appendLogEntry,
+  getLogEntries,
+  setRecommendationOutcome,
+  clearLog,
+  type LogEntry,
+  type Outcome,
+} from "@/lib/backtestLog";
 import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
+import { BarChart3 } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
   "Analysing team form and statistics...",
@@ -71,6 +81,12 @@ function Index() {
   const [apiCalls, setApiCalls] = useState(0);
   const [debugMode, setDebugMode] = useState(false);
 
+  // Top-level view tab.
+  const [tab, setTab] = useState<"analysis" | "log">("analysis");
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+
+
+
   // Per-match data collection state.
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
@@ -99,6 +115,18 @@ function Index() {
   useEffect(() => {
     setApiCalls(getApiCallCount());
   }, []);
+
+  useEffect(() => {
+    setLogEntries(getLogEntries());
+  }, []);
+
+  function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
+    setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
+  }
+
+  function handleClearLog() {
+    setLogEntries(clearLog());
+  }
 
   // Cycle the Claude loading messages every 3 seconds while analysing.
   useEffect(() => {
@@ -229,6 +257,14 @@ Start your response with { and end with }.`;
         const parsed = tryParse();
         setAnalysisResult(parsed);
         toast.success("Analysis complete");
+
+        // Auto-save the log_entry (if present) to the backtesting log.
+        const logEntry = (parsed as AnalysisResult | null)?.log_entry;
+        if (logEntry && typeof logEntry === "object") {
+          const updated = appendLogEntry(logEntry);
+          setLogEntries(updated);
+          toast.success("Saved to backtesting log");
+        }
       } catch {
         // 3. Surface where the response cuts off: first + last 500 chars.
         const head = cleaned.slice(0, 500);
@@ -311,11 +347,38 @@ Start your response with { and end with }.`;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
         <div className="flex items-baseline gap-3">
           <span className="text-2xl font-bold tracking-tight text-foreground">EDGE</span>
           <span className="text-sm font-medium text-slate">WC2026 Knockout Intelligence</span>
         </div>
+
+        <nav className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTab("analysis")}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+              tab === "analysis"
+                ? "bg-accent-amber text-black"
+                : "text-slate hover:text-foreground"
+            }`}
+          >
+            Analysis
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("log")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+              tab === "log"
+                ? "bg-accent-amber text-black"
+                : "text-slate hover:text-foreground"
+            }`}
+          >
+            <BarChart3 size={14} />
+            Backtesting Log
+          </button>
+        </nav>
+
         <button
           type="button"
           role="switch"
@@ -344,6 +407,16 @@ Start your response with { and end with }.`;
           </span>
         </button>
       </header>
+
+      {tab === "log" ? (
+        <main className="flex flex-1 flex-col items-center px-6 py-10">
+          <BacktestLog
+            entries={logEntries}
+            onCycleOutcome={handleCycleOutcome}
+            onClear={handleClearLog}
+          />
+        </main>
+      ) : (
 
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
@@ -566,6 +639,8 @@ Start your response with { and end with }.`;
           )}
 
       </main>
+      )}
+
 
       <footer className="border-t border-border px-6 py-3 text-center">
         <span className="font-mono text-sm text-slate" suppressHydrationWarning>

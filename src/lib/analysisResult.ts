@@ -158,6 +158,7 @@ export interface AnalysisResult {
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
   analyst_note?: string;
+  log_entry?: import("@/lib/backtestLog").RawLogEntry;
 }
 
 /** Parse a gap percentage string like "+3.5%" into a number (3.5). */
