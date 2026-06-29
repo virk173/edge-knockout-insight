@@ -18,7 +18,7 @@ const ODDSPAPI_COOLDOWN_MS = 900;
 const ODDSPAPI_SPORT_ID = 10; // football/soccer
 
 
-export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
+export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
 
 export interface CallResult {
   key: string;
@@ -67,6 +67,7 @@ export interface DebugReport {
   oddspapiSucceeded: number;
   oddspapiTotal: number;
   readyForClaude: boolean;
+  call10ExpectedEmpty: boolean;
 }
 
 
@@ -203,12 +204,18 @@ export function formatDataForClaude(
       blocks.push(
         `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}\n[END CALL ${n}]`,
       );
+    } else if (r?.status === "EXPECTED_EMPTY") {
+      blocks.push(
+        `[CALL ${n} — bracket context — EXPECTED EMPTY]\nNext round fixtures not yet scheduled. Round of 32 still in progress. Bracket context unavailable.\n[END CALL ${n}]`,
+      );
+
     } else {
       const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
         `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}\n[END CALL ${n}]`,
       );
     }
+
   }
   return blocks.join("\n\n");
 }
@@ -296,6 +303,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     oddspapiSucceeded,
     oddspapiTotal: opCount.length,
     readyForClaude,
+    call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
   };
 }
 
@@ -635,12 +643,13 @@ function nextRound(current: string | null): string | null {
 
   if (!current) return null;
   const c = current.toLowerCase();
-  if (c.includes("round of 32")) return "Round of 16";
-  if (c.includes("round of 16")) return "Quarter-finals";
+  if (c.includes("32")) return "Round of 16";
+  if (c.includes("16")) return "Quarter-finals";
   if (c.includes("quarter")) return "Semi-finals";
-  if (c.includes("semi")) return "Finals";
+  if (c.includes("semi")) return "Final";
   return null;
 }
+
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -1260,7 +1269,18 @@ export async function collectMatchData(
         `/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`,
         afKey,
       );
-      record("10", "Next-round bracket", isEmptyResponse(r) ? "EMPTY" : "SUCCESS", r);
+      if (isEmptyResponse(r)) {
+        record(
+          "10",
+          "Next-round bracket",
+          "EXPECTED_EMPTY",
+          r,
+          `Next round (${nr}) fixtures not yet determined. Bracket context unavailable.`,
+        );
+      } else {
+        record("10", "Next-round bracket", "SUCCESS", r);
+      }
+
     } catch (e) {
       record("10", "Next-round bracket", "FAILED", undefined,
         e instanceof Error ? e.message : String(e));
