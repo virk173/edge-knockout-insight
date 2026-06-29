@@ -67,6 +67,7 @@ export interface DebugReport {
   oddspapiSucceeded: number;
   oddspapiTotal: number;
   readyForClaude: boolean;
+  call10ExpectedEmpty: boolean;
 }
 
 
