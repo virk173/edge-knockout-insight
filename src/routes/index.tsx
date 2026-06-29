@@ -557,6 +557,26 @@ Start your response with { and end with }.`;
                         </pre>
                       </>
                     )}
+                  {collection.internationalTournaments && (
+                    <>
+                      <div className="font-mono text-sm font-semibold text-signal-blue">
+                        International Tournaments found in TheStatsAPI:
+                      </div>
+                      {collection.internationalTournaments.length > 0 ? (
+                        <ul className="flex flex-col gap-1 rounded bg-black/40 p-3 font-mono text-xs text-slate">
+                          {collection.internationalTournaments.map((t) => (
+                            <li key={t.id}>
+                              <span className="text-amber">{t.id}</span> — {t.name}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <pre className="rounded bg-black/40 p-3 font-mono text-xs text-slate">
+                          (none found)
+                        </pre>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 

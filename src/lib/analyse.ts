@@ -80,6 +80,9 @@ export interface CollectionResult {
   // competition name/field search logic.
   competitionsRawPreview?: string;
   competitionsFirst5?: unknown[];
+  // Debug-only: all international tournaments (type === "tournament" with no
+  // country) found in TheStatsAPI, so we can locate the World Cup entry + id.
+  internationalTournaments?: { id: string; name: string }[];
 }
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
@@ -96,6 +99,10 @@ let currentDebugCall: string | null = null;
 // resolveWcIds call so Debug Mode can show exactly what field/competition names
 // the API uses. Reset at the start of each collectMatchData run.
 let lastCompetitionsRaw: unknown = null;
+
+// Captures the list of international tournaments (type === "tournament" with no
+// country) from the most recent /competitions response for Debug Mode display.
+let lastInternationalTournaments: { id: string; name: string }[] = [];
 
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
@@ -437,9 +444,33 @@ async function resolveWcIds(
     JSON.stringify(payload).slice(0, 2000),
   );
   const comps = extractArray(payload);
+
+  // Capture all international tournaments (type === "tournament" with no
+  // country) for debug display so we can spot the exact World Cup entry/id.
+  lastInternationalTournaments = comps
+    .filter((c) => {
+      const rec = c as Record<string, unknown>;
+      return rec?.type === "tournament" && !rec?.country;
+    })
+    .map((c) => {
+      const rec = c as Record<string, unknown>;
+      return {
+        id: String(getField(c, ["id", "competition_id"]) ?? ""),
+        name: String(getField(c, ["name", "title", "competition_name"]) ?? ""),
+      };
+    });
+
   const wc = comps.find((c) => {
+    const rec = c as Record<string, unknown>;
     const name = getField(c, ["name", "title", "competition_name"]);
-    return typeof name === "string" && normalize(name).includes("fifa world cup 2026");
+    const lower = typeof name === "string" ? name.toLowerCase() : "";
+    return (
+      lower.includes("world cup") ||
+      lower.includes("fifa world") ||
+      (rec?.type === "tournament" &&
+        rec?.country === null &&
+        rec?.confederation === "FIFA")
+    );
   });
   if (!wc) return null;
 
@@ -529,6 +560,7 @@ export async function collectMatchData(
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
   lastCompetitionsRaw = null;
+  lastInternationalTournaments = [];
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
@@ -856,6 +888,9 @@ export async function collectMatchData(
       : undefined,
     competitionsFirst5: opts.debug
       ? extractArray(lastCompetitionsRaw).slice(0, 5)
+      : undefined,
+    internationalTournaments: opts.debug
+      ? lastInternationalTournaments
       : undefined,
   };
 }
