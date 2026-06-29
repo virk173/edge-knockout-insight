@@ -168,16 +168,46 @@ Start your response with { and end with }.`;
 
       const text: string =
         res.data?.content?.[0]?.text ?? "";
+
+      // Capture token usage for the debug display.
+      const usage = res.data?.usage;
+      if (usage) {
+        setTokenUsage({
+          input: usage.input_tokens ?? 0,
+          output: usage.output_tokens ?? 0,
+        });
+      }
+
+      // 1. Strip markdown fences.
       const cleaned = text.replace(/```json|```/g, "").trim();
       setAnalysisRaw(cleaned);
 
+      const tryParse = (): unknown => {
+        // First attempt: parse the cleaned text directly.
+        try {
+          return JSON.parse(cleaned);
+        } catch {
+          // 2. Fall back to extracting the outermost { ... } block.
+          const start = cleaned.indexOf("{");
+          const end = cleaned.lastIndexOf("}");
+          if (start !== -1 && end !== -1 && end > start) {
+            const extracted = cleaned.slice(start, end + 1);
+            return JSON.parse(extracted);
+          }
+          throw new Error("No JSON object found in response.");
+        }
+      };
+
       try {
-        const parsed = JSON.parse(cleaned);
+        const parsed = tryParse();
         setAnalysisResult(parsed);
         toast.success("Analysis complete");
       } catch {
+        // 3. Surface where the response cuts off: first + last 500 chars.
+        const head = cleaned.slice(0, 500);
+        const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
         setAnalysisError(
-          "Claude returned output that could not be parsed as JSON. Raw text shown below for debugging.",
+          `Claude returned output that could not be parsed as JSON. The response may be truncated.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
         );
         toast.error("Could not parse analysis JSON");
       }
