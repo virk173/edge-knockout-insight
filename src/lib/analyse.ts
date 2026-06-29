@@ -1262,8 +1262,9 @@ export async function collectMatchData(
       );
     } else {
       try {
-        // Cap to keep the run bounded; small delay to respect rate limits.
-        const ids = playerIds.slice(0, 22);
+        // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces
+        // a tight rate limit, so we space player-stat calls out generously.
+        const ids = playerIds.slice(0, 8);
         const perPlayer: Record<string, unknown> = {};
         for (const pid of ids) {
           const raw = await saGet(
@@ -1272,7 +1273,7 @@ export async function collectMatchData(
           if (!isEmptyResponse(raw)) {
             perPlayer[pid] = extractPlayerStats(raw);
           }
-          await sleep(300);
+          await sleep(1500);
         }
         const anyData = Object.keys(perPlayer).length > 0;
         record(
