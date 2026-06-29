@@ -514,7 +514,7 @@ Start your response with { and end with }.`;
             </span>
             <span
               className={`relative inline-block h-6 w-11 rounded-full transition-colors duration-200 ${
-                debugMode ? "bg-accent-amber" : "bg-slate-deep"
+                debugMode ? "bg-[#F59E0B]" : "bg-[#334155]"
               }`}
             >
               <span
