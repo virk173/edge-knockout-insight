@@ -550,11 +550,6 @@ Apply adjustments in sequence:
 
   Poisson conflict above 0.6: minus 5, force PARTIAL
 
-  Sharp money confirms model: plus 5
-
-  Sharp money opposes model: minus 5
-
-  Market drift detected: minus 3
 
 Bayesian regression if raw score above 75:
 
