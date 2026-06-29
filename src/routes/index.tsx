@@ -14,7 +14,6 @@ import {
   buildDebugReport,
   DEBUG_FIXTURE_DATE,
   type CollectionResult,
-  type DebugEntry,
   type DebugReport,
   type ProgressUpdate,
 } from "@/lib/analyse";
@@ -87,7 +86,6 @@ function Index() {
   const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
   // Debug-mode capture: raw HTTP calls + the formatted Claude input.
-  const [debugEntries, setDebugEntries] = useState<DebugEntry[] | null>(null);
   const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
@@ -264,7 +262,6 @@ Start your response with { and end with }.`;
         debug: debugMode,
       });
       setCollection(result);
-      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
@@ -296,7 +293,6 @@ Start your response with { and end with }.`;
         debug: true,
       });
       setCollection(result);
-      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
