@@ -644,8 +644,9 @@ function DebugReportView({ report }: { report: DebugReport }) {
           <span className="text-accent-amber">
             {report.afSucceeded}/{report.afTotal}
           </span>{" "}
-          calls
+          calls succeeded
         </span>
+
         <span className="text-slate">
           Ready for Claude:{" "}
           <span
