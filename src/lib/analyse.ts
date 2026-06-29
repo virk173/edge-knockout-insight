@@ -479,11 +479,14 @@ export async function collectMatchData(
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
     }
+    currentDebugCall = key.startsWith("4") ? "4" : key;
     try {
       const response = await fn();
       record(key, label, isEmptyResponse(response) ? "EMPTY" : "SUCCESS", response);
     } catch (e) {
       record(key, label, "FAILED", undefined, e instanceof Error ? e.message : String(e));
+    } finally {
+      currentDebugCall = null;
     }
   };
 
