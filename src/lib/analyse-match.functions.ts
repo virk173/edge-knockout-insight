@@ -13,28 +13,36 @@ import { createServerFn } from "@tanstack/react-start";
 
 interface AnalyseMatchInput {
   systemPrompt: string;
-  matchData: string;
+  userMessage: string;
   model?: string;
   maxTokens?: number;
 }
 
-const DEFAULT_MODEL = "claude-sonnet-4-20250514";
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MAX_TOKENS = 4000;
 
 function validateInput(input: unknown): AnalyseMatchInput {
   if (typeof input !== "object" || input === null) {
     throw new Error("Request body must be an object.");
   }
-  const { systemPrompt, matchData, model, maxTokens } = input as Record<string, unknown>;
+  const { systemPrompt, userMessage, matchData, model, maxTokens } =
+    input as Record<string, unknown>;
+  // Accept either `userMessage` (preferred) or legacy `matchData`.
+  const message =
+    typeof userMessage === "string" && userMessage.trim()
+      ? userMessage
+      : typeof matchData === "string"
+        ? matchData
+        : "";
   if (typeof systemPrompt !== "string" || systemPrompt.trim().length === 0) {
     throw new Error("`systemPrompt` is required and must be a non-empty string.");
   }
-  if (typeof matchData !== "string" || matchData.trim().length === 0) {
-    throw new Error("`matchData` is required and must be a non-empty string.");
+  if (message.trim().length === 0) {
+    throw new Error("`userMessage` is required and must be a non-empty string.");
   }
   return {
     systemPrompt,
-    matchData,
+    userMessage: message,
     model: typeof model === "string" && model.trim() ? model : DEFAULT_MODEL,
     maxTokens: typeof maxTokens === "number" && maxTokens > 0 ? maxTokens : DEFAULT_MAX_TOKENS,
   };
