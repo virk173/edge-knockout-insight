@@ -15,6 +15,8 @@ import {
   type CollectionResult,
   type ProgressUpdate,
 } from "@/lib/analyse";
+import type { AnalysisResult } from "@/lib/analysisResult";
+import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
@@ -402,35 +404,37 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
-                    {isActive && (analysisResult !== null || analysisRaw) && (
-                      <div className="flex flex-col gap-2">
-                        <p className="text-sm font-semibold text-foreground">
-                          {analysisResult !== null
-                            ? "Claude analysis output (raw JSON)"
-                            : "Claude raw response (unparsed)"}
-                        </p>
-                        <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
-                          {analysisResult !== null
-                            ? JSON.stringify(analysisResult, null, 2)
-                            : analysisRaw}
-                        </pre>
-                        {tokenUsage && (
-                          <p className="font-mono text-xs text-slate">
-                            Tokens used:{" "}
-                            <span className="text-accent-amber">{tokenUsage.input}</span>{" "}
-                            in,{" "}
-                            <span className="text-accent-amber">{tokenUsage.output}</span>{" "}
-                            out
-                          </p>
-                        )}
-                      </div>
-                    )}
                   </li>
                 );
               })}
             </ul>
           )}
         </div>
+
+        {/* Wide analysis output area */}
+        {activeMatchId !== null && (analysisResult !== null || analysisRaw) && (
+          <div className="mt-8 w-full max-w-5xl">
+            {analysisResult !== null ? (
+              <BettingDashboard result={analysisResult as AnalysisResult} />
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-semibold text-foreground">
+                  Claude raw response (unparsed)
+                </p>
+                <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
+                  {analysisRaw}
+                </pre>
+              </div>
+            )}
+            {tokenUsage && (
+              <p className="mt-3 font-mono text-xs text-slate">
+                Tokens used:{" "}
+                <span className="text-accent-amber">{tokenUsage.input}</span> in,{" "}
+                <span className="text-accent-amber">{tokenUsage.output}</span> out
+              </p>
+            )}
+          </div>
+        )}
       </main>
 
       <footer className="border-t border-border px-6 py-3 text-center">
