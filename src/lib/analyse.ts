@@ -182,7 +182,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
   interface Spec {
     callLabel: string;
-    api: "API-Football" | "TheStatsAPI";
+    api: "API-Football";
     endpoint: string;
     entryKey: string;
     crKey?: string;
@@ -196,11 +196,10 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "STATSAPI matches", api: "TheStatsAPI", endpoint: "/football/matches (lineup match lookup)", entryKey: "matches", extracted: result.statsApiMatchId !== null, count: true },
-    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
   ];
 
   const rows: DebugCallRow[] = specs.map((sp) => {
@@ -220,21 +219,16 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   });
 
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
-  const saCount = specs.filter((s) => s.api === "TheStatsAPI" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
-  const saSucceeded = saCount.filter((s) => s.extracted).length;
 
   return {
-    statsMatchId: result.statsApiMatchId,
     rows,
     afSucceeded,
     afTotal: afCount.length,
-    saSucceeded,
-    saTotal: saCount.length,
-    readyForClaude:
-      afSucceeded === afCount.length && saSucceeded === saCount.length,
+    readyForClaude: afSucceeded === afCount.length,
   };
 }
+
 
 const TOTAL_STEPS = 11;
 
