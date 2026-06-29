@@ -321,6 +321,167 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
   return json?.response ?? null;
 }
 
+// Counts OddsPapi calls within the current pipeline run, to honour the free
+// tier's 0.88s cooldown. Reset at the start of every collectMatchData run.
+let oddspapiCallsThisRun = 0;
+
+// OddsPapi GET (via server proxy). The server appends the apiKey query param.
+// Waits 900ms before the second (or later) OddsPapi call in the same run.
+async function opGet(path: string): Promise<unknown> {
+  if (oddspapiCallsThisRun > 0) {
+    await sleep(ODDSPAPI_COOLDOWN_MS);
+  }
+  oddspapiCallsThisRun++;
+  const url = `${OP_BASE}${path}`;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
+  try {
+    result = await apiFetch({ data: { provider: "oddspapi", url } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    debugSink?.push({ api: "OddsPapi", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`OddsPapi network error: ${msg}`);
+  }
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`OddsPapi ${status} ${result?.statusText ?? ""}`.trim());
+  }
+  const json = result.json ?? null;
+  debugSink?.push({ api: "OddsPapi", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  return json;
+}
+
+// --- Pinnacle line-movement helpers ---
+
+function toNum(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = parseFloat(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// Movement signal from opening -> current price (lower price = shortened).
+function movementSignal(
+  opening: number | null,
+  current: number | null,
+): { movement_pct: number | null; signal: string } {
+  if (opening == null || current == null || opening === 0) {
+    return { movement_pct: null, signal: "UNKNOWN" };
+  }
+  const movement_pct = ((current - opening) / opening) * 100;
+  let signal: string;
+  if (movement_pct <= -8) signal = "SHARP MOVE"; // shortened > 8%
+  else if (movement_pct >= 8) signal = "DRIFT"; // drifted > 8%
+  else if (Math.abs(movement_pct) < 5) signal = "STABLE";
+  else signal = "MINOR";
+  return { movement_pct: Math.round(movement_pct * 100) / 100, signal };
+}
+
+// Loosely classify a market by id and/or name into our target buckets.
+function classifyMarket(id: unknown, name: unknown): string | null {
+  const idStr = id != null ? String(id) : "";
+  const n = typeof name === "string" ? name.toLowerCase() : "";
+  if (idStr === "101" || /\b1x2\b|full[- ]?time result|match result|moneyline/.test(n))
+    return "1X2 Full Time Result";
+  if (/over\/?under|total goals|o\/u|totals/.test(n) && /2\.?5/.test(n + idStr))
+    return "Over/Under 2.5 Goals";
+  if (/over\/?under|total goals|o\/u|totals/.test(n) && !/corner|card/.test(n))
+    return "Over/Under Goals";
+  if (/both teams to score|btts|gg\/ng/.test(n)) return "BTTS";
+  if (/asian handicap|handicap|spread/.test(n) && !/corner|card/.test(n))
+    return "Asian Handicap";
+  if (/corner/.test(n)) return "Corners Over/Under";
+  if (/card|booking/.test(n)) return "Cards Over/Under";
+  return null;
+}
+
+// Extract { current, opening } prices from an outcome object, trying common
+// OddsPapi field names defensively.
+function extractPrices(outcome: unknown): { current: number | null; opening: number | null } {
+  const current = toNum(
+    getField(outcome, ["current", "currentOdds", "price", "latest", "latestPrice", "odds", "value"]),
+  );
+  const opening = toNum(
+    getField(outcome, ["opening", "openingOdds", "openPrice", "open", "openingPrice", "first"]),
+  );
+  return { current, opening };
+}
+
+interface PinnacleMarketSummary {
+  market: string;
+  outcomes: Array<{
+    name: string;
+    current: number | null;
+    opening: number | null;
+    movement_pct: number | null;
+    signal: string;
+  }>;
+}
+
+// Build a structured Pinnacle summary (markets + line movement) from a raw
+// /v4/odds response. Returns null if no Pinnacle markets are present.
+function buildPinnacleSummary(oddsJson: unknown): {
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
+  // Locate bookmakerOdds.pinnacle.markets, tolerating nesting in data/response.
+  const root =
+    getField(oddsJson, ["data", "response", "result"]) ?? oddsJson;
+  const bookmakerOdds =
+    getField(root, ["bookmakerOdds"]) ??
+    getField(extractArray(root)[0], ["bookmakerOdds"]);
+  const pinnacle = getField(bookmakerOdds, ["pinnacle", "Pinnacle"]);
+  const rawMarkets = getField(pinnacle, ["markets"]);
+  if (!rawMarkets) return null;
+
+  const marketList: unknown[] = Array.isArray(rawMarkets)
+    ? rawMarkets
+    : typeof rawMarkets === "object"
+      ? Object.entries(rawMarkets as Record<string, unknown>).map(([k, v]) =>
+          v && typeof v === "object" && !Array.isArray(v)
+            ? { id: k, ...(v as Record<string, unknown>) }
+            : { id: k, value: v },
+        )
+      : [];
+
+  const markets: PinnacleMarketSummary[] = [];
+  for (const m of marketList) {
+    const id = getField(m, ["id", "marketId", "key"]);
+    const name = getField(m, ["name", "marketName", "label", "title"]);
+    const bucket = classifyMarket(id, name);
+    if (!bucket) continue;
+
+    const rawOutcomes =
+      getField(m, ["outcomes", "selections", "runners", "lines", "odds"]) ?? [];
+    const outcomesArr: unknown[] = Array.isArray(rawOutcomes)
+      ? rawOutcomes
+      : typeof rawOutcomes === "object"
+        ? Object.entries(rawOutcomes as Record<string, unknown>).map(([k, v]) =>
+            v && typeof v === "object" ? { name: k, ...(v as Record<string, unknown>) } : { name: k, value: v },
+          )
+        : [];
+
+    const outcomes = outcomesArr.map((o) => {
+      const oid = getField(o, ["id", "outcomeId", "key"]);
+      let oname =
+        (getField(o, ["name", "outcomeName", "label", "selection"]) as string | undefined) ??
+        (oid != null ? String(oid) : "outcome");
+      // Map known 1X2 outcome ids.
+      if (String(oid) === "101") oname = "Home";
+      else if (String(oid) === "102") oname = "Draw";
+      else if (String(oid) === "103") oname = "Away";
+      const { current, opening } = extractPrices(o);
+      const mv = movementSignal(opening, current);
+      return { name: String(oname), current, opening, ...mv };
+    });
+
+    markets.push({ market: bucket, outcomes });
+  }
+
+  return markets.length ? { markets, raw: pinnacle } : null;
+
 function isEmptyResponse(response: unknown): boolean {
   if (response === null || response === undefined) return true;
   if (Array.isArray(response)) return response.length === 0;
