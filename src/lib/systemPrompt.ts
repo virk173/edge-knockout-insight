@@ -1103,13 +1103,8 @@ log_entry contains:
 
     ev: decimal number
 
-    pinnacle_gap: percentage string
-
-    sharp_money_signal: CONFIRMS, OPPOSES, or NONE
-
-    line_movement_pct: decimal number
-
     confidence: decimal number
+
 
     ensemble_alignment: TRIPLE, MAJORITY, or CONFLICT
 
