@@ -1411,6 +1411,9 @@ export async function collectMatchData(
       label: "Fetching Pinnacle odds (TheStatsAPI)...",
     });
     currentDebugCall = "9B";
+    // Cool-down so the (mandatory) Pinnacle call isn't starved by the preceding
+    // TheStatsAPI burst (team stats + player-stat loop) against the rate limit.
+    await sleep(3000);
     try {
       // Diagnostic: the real key lives server-side as the STATSAPI_KEY secret
       // (used by the api-proxy). VITE_STATSAPI_KEY is optional documentation only.
