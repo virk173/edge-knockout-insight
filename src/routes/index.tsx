@@ -491,33 +491,42 @@ Start your response with { and end with }.`;
           </button>
         </nav>
 
-        <button
-          type="button"
-          role="switch"
-          aria-checked={debugMode}
-          aria-label="Toggle Debug Mode"
-          onClick={() => setDebugMode((v) => !v)}
-          className="flex items-center gap-2"
-        >
+        <div className="flex items-center gap-4">
           <span
-            className={`text-xs font-semibold uppercase tracking-wide ${
-              debugMode ? "text-signal-blue" : "text-slate"
-            }`}
+            className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
+            title="API-Football calls used today (resets at midnight UTC)"
           >
-            Debug
+            API: {apiCalls}/{DAILY_LIMIT}
           </span>
-          <span
-            className={`relative h-5 w-9 rounded-full transition-colors ${
-              debugMode ? "bg-signal-blue" : "bg-border"
-            }`}
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={debugMode}
+            aria-label="Toggle Debug Mode"
+            onClick={() => setDebugMode((v) => !v)}
+            className="flex items-center gap-2"
           >
             <span
-              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                debugMode ? "translate-x-4" : "translate-x-0.5"
+              className={`text-xs font-semibold uppercase tracking-wide ${
+                debugMode ? "text-signal-blue" : "text-slate"
               }`}
-            />
-          </span>
-        </button>
+            >
+              Debug
+            </span>
+            <span
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                debugMode ? "bg-signal-blue" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                  debugMode ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
+        </div>
       </header>
 
       {tab === "log" ? (
