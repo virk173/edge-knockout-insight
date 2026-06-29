@@ -1199,15 +1199,12 @@ EXAMPLE OUTPUT:
     "market": "Under 2.5 Goals",
     "selection": "Under 2.5 Goals",
     "stake": "$20",
-    "odds": 1.78,
-    "model_probability": 0.618,
-    "books_true_implied": 0.534,
-    "ev": 0.101,
-    "ev_rating": "STRONG",
-    "pinnacle_gap": "+3.5% vs Pinnacle 1.72",
-    "sharp_signal": "CONFIRMS — Under shortened 6% at Pinnacle [C9B]",
+    "ev_inputs": {
+      "model_probability": 0.618,
+      "decimal_odds": 1.78
+    },
     "source_calls": ["C2A","C2B","C4","C5","C6","C6B","C7","C8","C9A","C9B"],
-    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. EV 0.101 STRONG."
+    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. App computes EV STRONG."
   },
   "tier_2_parlay": {
     "active": true,
