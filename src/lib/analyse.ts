@@ -16,6 +16,9 @@ const OP_BASE = "https://api.oddspapi.io";
 // second (or later) OddsPapi call within the same pipeline run.
 const ODDSPAPI_COOLDOWN_MS = 900;
 const ODDSPAPI_SPORT_ID = 10; // football/soccer
+// Hardcoded World Cup tournament ID on OddsPapi (sportId=10, category: international).
+// Confirmed active 2026 World Cup (tournament name "World Cup", upcomingFixtures > 0).
+const ODDSPAPI_WC_TOURNAMENT_ID = 16;
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
