@@ -1232,9 +1232,8 @@ tier_1_anchor object with:
 
   books_true_implied, ev decimal, ev_rating,
 
-  sharp_signal string,
-
   source_calls array, reasoning string
+
 
 
 tier_2_parlay object with:
@@ -1743,9 +1742,8 @@ EXAMPLE OUTPUT:
 
     "ev_rating": "STRONG",
 
-    "sharp_signal": "NONE",
-
     "source_calls": ["C2A","C2B","C4","C6","C7","C8","C9A"],
+
 
     "reasoning": "France defensive solidity 0.6 goals conceded avg combined with Mane CRITICAL absence reducing Senegal output 31.6% point to low-scoring match."
 

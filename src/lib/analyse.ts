@@ -99,9 +99,10 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
 
 /**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
- * that the v3.0 system prompt expects. Calls 9A/9B are split out of the
+ * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
  */
+
 export function formatDataForClaude(
   callResults: Record<string, CallResult> | null | undefined,
 ): string {
@@ -191,8 +192,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   }
 
   const specs: Spec[] = [
-    { callLabel: "CALL 2A", api: "API-Football", endpoint: "/teams/statistics (South Africa)", entryKey: "2A", extracted: cr["2A"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 2B", api: "API-Football", endpoint: "/teams/statistics (Canada)", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 2A", api: "API-Football", endpoint: "/teams/statistics (home)", entryKey: "2A", extracted: cr["2A"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 2B", api: "API-Football", endpoint: "/teams/statistics (away)", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
@@ -200,6 +201,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
+    { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
   const rows: DebugCallRow[] = specs.map((sp) => {
@@ -221,13 +223,19 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
 
+  // Claude can run as long as the two mandatory team-statistics calls landed.
+  // Optional calls (lineups/referee/bracket) may be EMPTY without blocking.
+  const readyForClaude =
+    cr["2A"]?.status === "SUCCESS" && cr["2B"]?.status === "SUCCESS";
+
   return {
     rows,
     afSucceeded,
     afTotal: afCount.length,
-    readyForClaude: afSucceeded === afCount.length,
+    readyForClaude,
   };
 }
+
 
 
 const TOTAL_STEPS = 11;
