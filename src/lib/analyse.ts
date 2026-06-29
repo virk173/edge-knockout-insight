@@ -1399,6 +1399,84 @@ export async function collectMatchData(
     }
   }
 
+  // CALL 6B (S4): player stats for absences (TheStatsAPI). Runs AFTER S5 so the
+  // mandatory Pinnacle call gets rate-limit budget first. Triggers ONLY when
+  // CALL 5 (injuries) returned absences. Player ids come from the S3 lineup
+  // starting_xi. Best-effort: a per-call failure stops the loop but keeps any
+  // results already gathered. Recorded directly (not a numbered progress step).
+  {
+    currentDebugCall = "6B";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching player stats (TheStatsAPI)...",
+    });
+    const injuries = callResults["5"];
+    const injuryItems =
+      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
+    const hasAbsences = injuryItems.length > 0;
+
+    const lineupResult = callResults["6"];
+    const playerIds =
+      lineupResult?.status === "SUCCESS"
+        ? extractLineupPlayerIds(lineupResult.data)
+        : [];
+
+    if (!hasAbsences) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "SKIPPED",
+        undefined,
+        "No absences in CALL 5 — player stats not triggered.",
+      );
+    } else if (playerIds.length === 0) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "EMPTY",
+        undefined,
+        "Absences present but no starting_xi player ids available from lineups.",
+      );
+    } else {
+      // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces a
+      // tight rate limit, so we space player-stat calls out generously.
+      const ids = playerIds.slice(0, 8);
+      const perPlayer: Record<string, unknown> = {};
+      let lastError: string | undefined;
+      await sleep(3000);
+      for (const pid of ids) {
+        try {
+          const raw = await saGet(
+            `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
+          );
+          if (!isEmptyResponse(raw)) {
+            perPlayer[pid] = extractPlayerStats(raw);
+          }
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+          break; // stop on rate-limit / error; keep what we have
+        }
+        await sleep(1500);
+      }
+      const anyData = Object.keys(perPlayer).length > 0;
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        anyData ? "SUCCESS" : "EMPTY",
+        anyData
+          ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer }
+          : undefined,
+        anyData
+          ? undefined
+          : lastError ?? "No player statistics returned for the starting XI.",
+      );
+    }
+    currentDebugCall = null;
+  }
+
+
+
 
 
 
