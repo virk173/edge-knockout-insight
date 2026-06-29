@@ -2,6 +2,7 @@
 // Runs entirely client-side. Does NOT call Claude.
 
 import { computeStatus, type AnalysedMatch } from "./fixtures";
+import { apiFetch } from "./api-proxy.functions";
 import {
   getApiCallCount,
   incrementApiCallCount,
@@ -303,27 +304,27 @@ function afErrors(errors: unknown): string | null {
   return null;
 }
 
-// API-Football GET. Increments the daily counter on a successful HTTP response.
-async function afGet(path: string, key: string): Promise<unknown> {
+// API-Football GET (via server proxy). Increments the daily counter on a
+// successful HTTP response. The `_key` arg is retained for call-site
+// compatibility but is unused — the key lives server-side.
+async function afGet(path: string, _key?: string): Promise<unknown> {
   const url = `${AF_BASE}${path}`;
-  let res: Response;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
   try {
-    res = await fetch(url, {
-      headers: { "x-apisports-key": key },
-    });
+    result = await apiFetch({ data: { provider: "apifootball", url } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`API-Football network error: ${msg}`);
   }
-  if (!res || !res.ok) {
-    const status = res?.status ?? "no response";
-    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`API-Football ${status} ${res?.statusText ?? ""}`.trim());
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`API-Football ${status} ${result?.statusText ?? ""}`.trim());
   }
   incrementApiCallCount();
-  const json = (await res.json().catch(() => null)) as AfResponse | null;
-  debugSink?.push({ api: "API-Football", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  const json = (result.json ?? null) as AfResponse | null;
+  debugSink?.push({ api: "API-Football", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   const err = afErrors(json?.errors);
   if (err) throw new Error(err);
   return json?.response ?? null;
@@ -337,25 +338,23 @@ function isEmptyResponse(response: unknown): boolean {
   return false;
 }
 
-async function saGet(path: string, key: string): Promise<unknown> {
+async function saGet(path: string, _key?: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
-  let res: Response;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
+    result = await apiFetch({ data: { provider: "statsapi", url } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`TheStatsAPI network error: ${msg}`);
   }
-  if (!res || !res.ok) {
-    const status = res?.status ?? "no response";
-    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI ${status} ${res?.statusText ?? ""}`.trim());
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`TheStatsAPI ${status} ${result?.statusText ?? ""}`.trim());
   }
-  const json = await res.json().catch(() => null);
-  debugSink?.push({ api: "TheStatsAPI", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  const json = result.json ?? null;
+  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   return json;
 }
 
@@ -505,9 +504,11 @@ export async function collectMatchData(
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  const saKey = import.meta.env.VITE_STATSAPI_KEY as string | undefined;
-  if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
+  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used
+  // by the api-proxy server function. These placeholders keep the existing
+  // call-site signatures unchanged.
+  const afKey = "";
+  const saKey = "";
 
   // When debugging, capture every raw HTTP call made by afGet/saGet.
   const localDebug: DebugEntry[] = [];
@@ -534,21 +535,19 @@ export async function collectMatchData(
   let statsApiMatchId: string | null = null;
   let wcCompetitionId: string | null = null;
   let wcSeasonId: string | null = null;
-  if (saKey) {
-    try {
-      const matchDate = match.kickoffUtc.slice(0, 10);
-      const out = await buildStatsApiLookup(saKey, {
-        dates: [matchDate],
-        bypassCache: opts.debug,
-      });
-      lookup = out.lookup;
-      wcCompetitionId = out.ids?.competitionId ?? null;
-      wcSeasonId = out.ids?.seasonId ?? null;
-      statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
-      statsApiResolved = statsApiMatchId !== null;
-    } catch (e) {
-      console.warn("[analyse] StatsAPI lookup failed", e);
-    }
+  try {
+    const matchDate = match.kickoffUtc.slice(0, 10);
+    const out = await buildStatsApiLookup(saKey, {
+      dates: [matchDate],
+      bypassCache: opts.debug,
+    });
+    lookup = out.lookup;
+    wcCompetitionId = out.ids?.competitionId ?? null;
+    wcSeasonId = out.ids?.seasonId ?? null;
+    statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
+    statsApiResolved = statsApiMatchId !== null;
+  } catch (e) {
+    console.warn("[analyse] StatsAPI lookup failed", e);
   }
 
   // Wrapper that runs one numbered step and records its result.
@@ -821,12 +820,8 @@ interface AfFixtureItem {
 }
 
 export async function resolveDebugFixture(): Promise<AnalysedMatch> {
-  const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
-
   const response = await afGet(
     `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
-    afKey,
   );
   const items = extractArray(response) as AfFixtureItem[];
 

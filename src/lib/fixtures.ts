@@ -1,6 +1,8 @@
-// API-Football fixtures fetching + status logic (client-side, uses VITE key).
+// API-Football fixtures fetching + status logic. API key lives server-side
+// (APIFOOTBALL_KEY) and is used by the api-proxy server function.
 
 import { incrementApiCallCount } from "./apiCounter";
+import { apiFetch } from "./api-proxy.functions";
 
 export interface Fixture {
   id: number;
@@ -69,19 +71,18 @@ function normaliseErrors(errors: unknown): string | null {
 
 async function fetchFixturesForDate(
   date: string,
-  apiKey: string,
   isTomorrow: boolean,
 ): Promise<Fixture[]> {
   const url = `${API_BASE}?league=1&season=2026&date=${date}`;
-  const res = await fetch(url, {
-    headers: { "x-apisports-key": apiKey },
-  });
+  const result = await apiFetch({ data: { provider: "apifootball", url } });
 
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status} ${res.statusText}`);
+  if (!result.ok) {
+    throw new Error(
+      `API returned ${result.status} ${result.statusText ?? ""}`.trim(),
+    );
   }
 
-  const json = (await res.json()) as ApiFixtureResponse;
+  const json = (result.json ?? {}) as ApiFixtureResponse;
   const apiError = normaliseErrors(json.errors);
   if (apiError) {
     throw new Error(apiError);
@@ -120,25 +121,14 @@ export interface AnalysisResult {
 }
 
 export async function runAnalysis(): Promise<AnalysisResult> {
-  const apiKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  if (!apiKey) {
-    throw new Error(
-      "Missing VITE_APIFOOTBALL_KEY. Add it to your environment to run analysis.",
-    );
-  }
-
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   let apiCallsUsed = 0;
-  const todayFixtures = await fetchFixturesForDate(isoDate(now), apiKey, false);
+  const todayFixtures = await fetchFixturesForDate(isoDate(now), false);
   apiCallsUsed += 1;
   incrementApiCallCount();
-  const tomorrowFixtures = await fetchFixturesForDate(
-    isoDate(tomorrow),
-    apiKey,
-    true,
-  );
+  const tomorrowFixtures = await fetchFixturesForDate(isoDate(tomorrow), true);
   apiCallsUsed += 1;
   incrementApiCallCount();
 
