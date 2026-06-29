@@ -631,10 +631,15 @@ function CollectionPanel({ result }: { result: CollectionResult }) {
 
 function DebugReportView({ report }: { report: DebugReport }) {
   const afRows = report.rows.filter((r) => r.api === "API-Football");
+  const opRows = report.rows.filter((r) => r.api === "OddsPapi");
+  const opSucceeded = report.oddspapiSucceeded === report.oddspapiTotal;
 
   return (
     <div className="flex flex-col gap-4">
       <DebugCallGroup title="API-Football calls" rows={afRows} />
+      {opRows.length > 0 && (
+        <DebugCallGroup title="OddsPapi calls (Pinnacle)" rows={opRows} />
+      )}
 
       {/* Summary */}
       <div className="flex flex-col gap-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-sm">
@@ -645,6 +650,14 @@ function DebugReportView({ report }: { report: DebugReport }) {
             {report.afSucceeded}/{report.afTotal}
           </span>{" "}
           calls succeeded
+        </span>
+
+        <span className="text-slate">
+          OddsPapi:{" "}
+          <span className="text-accent-amber">
+            {report.oddspapiSucceeded}/{report.oddspapiTotal}
+          </span>{" "}
+          calls {opSucceeded ? "succeeded" : "failed"}
         </span>
 
         <span className="text-slate">
