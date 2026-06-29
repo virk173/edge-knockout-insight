@@ -1,7 +1,7 @@
 // Per-match data collection pipeline (Step 0 lookup + Step 1 sequential calls).
 // Runs entirely client-side. Does NOT call Claude.
 
-import type { AnalysedMatch } from "./fixtures";
+import { computeStatus, type AnalysedMatch } from "./fixtures";
 import {
   getApiCallCount,
   incrementApiCallCount,
@@ -27,6 +27,16 @@ export interface ProgressUpdate {
   label: string;
 }
 
+// A single raw HTTP call captured during a debug run.
+export interface DebugEntry {
+  api: "API-Football" | "TheStatsAPI";
+  url: string;
+  status: number | string;
+  ok: boolean;
+  json: unknown;
+  error?: string;
+}
+
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
   statsApiResolved: boolean;
@@ -36,7 +46,13 @@ export interface CollectionResult {
   failedCalls: string[];
   warning: string | null;
   counterWarning: boolean;
+  debugEntries?: DebugEntry[];
 }
+
+// Module-level sink. When non-null, afGet/saGet record every raw HTTP call
+// (url, status, parsed JSON) into it. collectMatchData wires this up for the
+// duration of a single debug run, since the pipeline runs sequentially.
+let debugSink: DebugEntry[] | null = null;
 
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
@@ -170,21 +186,25 @@ function afErrors(errors: unknown): string | null {
 
 // API-Football GET. Increments the daily counter on a successful HTTP response.
 async function afGet(path: string, key: string): Promise<unknown> {
+  const url = `${AF_BASE}${path}`;
   let res: Response;
   try {
-    res = await fetch(`${AF_BASE}${path}`, {
+    res = await fetch(url, {
       headers: { "x-apisports-key": key },
     });
   } catch (err) {
-    throw new Error(
-      `API-Football network error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const msg = err instanceof Error ? err.message : String(err);
+    debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg });
+    throw new Error(`API-Football network error: ${msg}`);
   }
   if (!res || !res.ok) {
-    throw new Error(`API-Football ${res?.status ?? "no response"} ${res?.statusText ?? ""}`.trim());
+    const status = res?.status ?? "no response";
+    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: res?.statusText });
+    throw new Error(`API-Football ${status} ${res?.statusText ?? ""}`.trim());
   }
   incrementApiCallCount();
   const json = (await res.json().catch(() => null)) as AfResponse | null;
+  debugSink?.push({ api: "API-Football", url, status: res.status, ok: true, json });
   const err = afErrors(json?.errors);
   if (err) throw new Error(err);
   return json?.response ?? null;
@@ -199,20 +219,25 @@ function isEmptyResponse(response: unknown): boolean {
 }
 
 async function saGet(path: string, key: string): Promise<unknown> {
+  const url = `${SA_BASE}${path}`;
   let res: Response;
   try {
-    res = await fetch(`${SA_BASE}${path}`, {
+    res = await fetch(url, {
       headers: { Authorization: `Bearer ${key}` },
     });
   } catch (err) {
-    throw new Error(
-      `TheStatsAPI network error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const msg = err instanceof Error ? err.message : String(err);
+    debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg });
+    throw new Error(`TheStatsAPI network error: ${msg}`);
   }
   if (!res || !res.ok) {
-    throw new Error(`TheStatsAPI ${res?.status ?? "no response"} ${res?.statusText ?? ""}`.trim());
+    const status = res?.status ?? "no response";
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: res?.statusText });
+    throw new Error(`TheStatsAPI ${status} ${res?.statusText ?? ""}`.trim());
   }
-  return res.json().catch(() => null);
+  const json = await res.json().catch(() => null);
+  debugSink?.push({ api: "TheStatsAPI", url, status: res.status, ok: true, json });
+  return json;
 }
 
 // Pull an array out of common TheStatsAPI envelope shapes.
@@ -340,10 +365,15 @@ function sleep(ms: number): Promise<void> {
 export async function collectMatchData(
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
+  opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
   const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
   const saKey = import.meta.env.VITE_STATSAPI_KEY as string | undefined;
   if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
+
+  // When debugging, capture every raw HTTP call made by afGet/saGet.
+  const localDebug: DebugEntry[] = [];
+  debugSink = opts.debug ? localDebug : null;
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
@@ -590,6 +620,9 @@ export async function collectMatchData(
   );
   const emptyOrFailed = failedCalls.length;
 
+  // Detach the debug sink so later non-debug runs are not recorded into it.
+  debugSink = null;
+
   return {
     callResults,
     statsApiResolved,
@@ -601,188 +634,82 @@ export async function collectMatchData(
       ? null
       : "⚠️ TheStatsAPI match ID not resolved. Lineups and Pinnacle odds unavailable. Analysis will proceed with reduced data.",
     counterWarning,
+    debugEntries: opts.debug ? localDebug : undefined,
   };
 }
 
+
 // ============================================================================
-// TEST MODE — France vs Senegal mock data
-// Mirrors the few-shot example injected data from the v3.0 system prompt so the
-// full Claude pipeline (formatDataForClaude -> server fn -> JSON parse -> render)
-// can be exercised without any live API calls.
+// DEBUG MODE — resolve a fixed real fixture for testing the full pipeline.
+// South Africa vs Canada (2026-06-28). Fetches the real fixture from
+// API-Football for that date so collectMatchData can run against live data.
 // ============================================================================
 
-export const MOCK_TEST_MATCH: AnalysedMatch = {
-  id: 998234,
-  home: "France",
-  away: "Senegal",
-  homeId: 2,
-  awayId: 47,
-  kickoffUtc: "2026-07-01T21:00:00Z",
-  isTomorrow: false,
-  referee: "Felix Zwayer",
-  round: "Round of 32",
-  venueName: "MetLife Stadium",
-  venueCity: "East Rutherford, NJ",
-  minutesUntilKickoff: 80,
-  status: "OPTIMAL",
-};
+export const DEBUG_FIXTURE_DATE = "2026-06-28";
+const DEBUG_TEAM_A = "south africa";
+const DEBUG_TEAM_B = "canada";
 
-// callResults keyed exactly as collectMatchData produces them. formatDataForClaude
-// synthesizes 9A/9B from the combined "9" entry, so mock odds live under key "9".
-export function buildMockCollectionResult(): CollectionResult {
-  const mk = (
-    key: string,
-    label: string,
-    data: unknown,
-  ): CallResult => ({ key, label, status: "SUCCESS", data });
+interface AfFixtureItem {
+  fixture?: {
+    id?: number;
+    date?: string;
+    referee?: string | null;
+    venue?: { name?: string | null; city?: string | null } | null;
+  };
+  league?: { round?: string | null };
+  teams?: {
+    home?: { id?: number; name?: string };
+    away?: { id?: number; name?: string };
+  };
+}
 
-  const callResults: Record<string, CallResult> = {
-    "2A": mk("2A", "Fetching home team statistics... (1/11)", {
-      team: "France",
-      form: "WWWDW",
-      goals_scored_avg: 2.1,
-      goals_conceded_avg: 0.6,
-      clean_sheets: "3 of 5",
-      xG_proxy_avg: 2.2,
-      possession_avg: "62%",
-      corners_avg: 6.8,
-      yellows_avg: 1.8,
-      failed_to_score: "0 of 5",
-    }),
-    "2B": mk("2B", "Fetching away team statistics... (2/11)", {
-      team: "Senegal",
-      form: "WLDWW",
-      goals_scored_avg: 1.2,
-      goals_conceded_avg: 1.0,
-      clean_sheets: "1 of 5",
-      xG_proxy_avg: 1.1,
-      possession_avg: "44%",
-      corners_avg: 4.1,
-      yellows_avg: 2.6,
-      failed_to_score: "1 of 5",
-    }),
-    "3": mk("3", "Fetching head-to-head data... (3/11)", {
-      meetings: "Last 5 competitive: 3 matches",
-      france_won: 2,
-      senegal_won: 1,
-      goals_per_game: 2.33,
-      btts: "2 of 3 = 67%",
-    }),
-    "4-1": mk("4-1", "Fetching recent form step 1... (4/11)", {
-      team: "France",
-      note: "home recent form fixtures",
-    }),
-    "4-2": mk("4-2", "Fetching recent form step 2... (5/11)", {
-      team: "Senegal",
-      note: "away recent form fixtures",
-    }),
-    "4-3": mk("4-3", "Fetching recent form batch... (6/11)", {
-      France_last_5: {
-        shots_on_target: [7, 6, 8, 5, 7],
-        shots_on_target_avg: 6.6,
-        corners: [7, 8, 6, 7, 8],
-        corners_avg: 7.2,
-        yellows: [2, 1, 2, 1, 3],
-        yellows_avg: 1.8,
-        fouls: [11, 10, 12, 9, 11],
-        fouls_avg: 10.6,
-      },
-      Senegal_last_5: {
-        shots_on_target: [4, 3, 5, 3, 4],
-        shots_on_target_avg: 3.8,
-        corners: [4, 3, 5, 4, 4],
-        corners_avg: 4.0,
-        yellows: [3, 2, 3, 3, 2],
-        yellows_avg: 2.6,
-        fouls: [14, 13, 15, 12, 14],
-        fouls_avg: 13.6,
-      },
-    }),
-    "5": mk("5", "Fetching injuries... (7/11)", {
-      Senegal: [{ player: "Sadio Mane", status: "DOUBTFUL", reason: "hamstring" }],
-      France: "no absences",
-    }),
-    "6": mk("6", "Fetching confirmed lineups... (8/11)", {
-      France: {
-        formation: "4-3-3",
-        starters: [
-          "Maignan", "Pavard", "Upamecano", "Saliba", "Hernandez",
-          "Tchouameni", "Camavinga", "Rabiot", "Dembele", "Giroud", "Mbappe",
-        ],
-        bench: "15 listed",
-      },
-      Senegal: {
-        formation: "4-4-2",
-        mane: "NOT in starting 11 — confirmed absent",
-        replacement: "Dia starting",
-      },
-    }),
-    "7": mk("7", "Fetching referee profile... (9/11)", {
-      referee: "Felix Zwayer",
-      matches_officiated: 4,
-      avg_yellows: 3.8,
-      avg_fouls: 24.1,
-      penalties_awarded: "1 in 4 games",
-      strictness: 89.95,
-      result: "HIGH strictness (above 50)",
-    }),
-    "8": mk("8", "Fetching predictions... (10/11)", {
-      france_win: "68%",
-      draw: "19%",
-      senegal_win: "13%",
-      goals_line: "Over 2.5",
-      poisson_goals_estimate: 2.3,
-    }),
-    "9": mk("9", "Fetching odds and Pinnacle data... (11/11)", {
-      stakeOdds: {
-        "1X2": { France: 1.72, Draw: 3.8, Senegal: 5.5 },
-        asian_handicap_france_minus1: 2.1,
-        over_2_5: 2.05,
-        under_2_5: 1.78,
-        btts_yes: 1.9,
-        btts_no: 1.85,
-        corners_over_9_5: 1.88,
-        corners_under_9_5: 1.92,
-        cards_over_3_5: 1.82,
-        cards_under_3_5: 1.98,
-      },
-      pinnacleOdds: {
-        france_1x2: { opening: 1.68, current: 1.65 },
-        draw: { opening: 3.9, current: 4.05 },
-        senegal: { opening: 5.8, current: 5.9 },
-        over_2_5: { opening: 1.98, current: 2.1 },
-        under_2_5: { opening: 1.83, current: 1.72 },
-        btts_yes: { opening: 1.85, current: 1.88 },
-        corners_over_9_5: { opening: 1.91, current: 1.94 },
-        cards_over_3_5: { opening: 1.75, current: 1.78 },
-      },
-      pinnacleError: null,
-    }),
-    "10": mk("10", "Next-round bracket", {
-      next_round: "Round of 16",
-      opponent: "Winner faces England vs Congo DR winner",
-      rotation_motivation: "none detected",
-    }),
+export async function resolveDebugFixture(): Promise<AnalysedMatch> {
+  const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
+  if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
+
+  const response = await afGet(
+    `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
+    afKey,
+  );
+  const items = extractArray(response) as AfFixtureItem[];
+
+  const matches = (a: string, b: string) => {
+    const x = normalize(a);
+    const y = normalize(b);
+    return (
+      (x.includes(DEBUG_TEAM_A) && y.includes(DEBUG_TEAM_B)) ||
+      (x.includes(DEBUG_TEAM_B) && y.includes(DEBUG_TEAM_A))
+    );
   };
 
-  const stepKeys = [
-    "2A", "2B", "3", "4-1", "4-2", "4-3", "5", "6", "7", "8", "9",
-  ];
-  const succeeded = stepKeys.filter(
-    (k) => callResults[k]?.status === "SUCCESS",
-  ).length;
-  const failedCalls = stepKeys.filter(
-    (k) => callResults[k] && callResults[k].status !== "SUCCESS",
+  const item = items.find((it) =>
+    matches(it.teams?.home?.name ?? "", it.teams?.away?.name ?? ""),
+  );
+
+  if (!item || !item.fixture?.id || !item.teams?.home?.id || !item.teams?.away?.id) {
+    throw new Error(
+      `Debug fixture "South Africa vs Canada" not found in API-Football for ${DEBUG_FIXTURE_DATE}.`,
+    );
+  }
+
+  const kickoffUtc = item.fixture.date ?? `${DEBUG_FIXTURE_DATE}T00:00:00Z`;
+  const minutesUntilKickoff = Math.round(
+    (new Date(kickoffUtc).getTime() - Date.now()) / 60000,
   );
 
   return {
-    callResults,
-    statsApiResolved: true,
-    statsApiMatchId: "mock-998234",
-    succeeded,
-    emptyOrFailed: failedCalls.length,
-    failedCalls,
-    warning: null,
-    counterWarning: false,
+    id: item.fixture.id,
+    home: item.teams.home.name ?? "South Africa",
+    away: item.teams.away.name ?? "Canada",
+    homeId: item.teams.home.id,
+    awayId: item.teams.away.id,
+    kickoffUtc,
+    isTomorrow: false,
+    referee: item.fixture.referee ?? null,
+    round: item.league?.round ?? null,
+    venueName: item.fixture.venue?.name ?? null,
+    venueCity: item.fixture.venue?.city ?? null,
+    minutesUntilKickoff,
+    status: computeStatus(minutesUntilKickoff, false),
   };
 }

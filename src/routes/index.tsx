@@ -10,9 +10,10 @@ import {
 import {
   collectMatchData,
   formatDataForClaude,
-  buildMockCollectionResult,
-  MOCK_TEST_MATCH,
+  resolveDebugFixture,
+  DEBUG_FIXTURE_DATE,
   type CollectionResult,
+  type DebugEntry,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
@@ -67,7 +68,7 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
-  const [testMode, setTestMode] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
 
   // Per-match data collection state.
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
@@ -82,6 +83,10 @@ function Index() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
   const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
+
+  // Debug-mode capture: raw HTTP calls + the formatted Claude input.
+  const [debugEntries, setDebugEntries] = useState<DebugEntry[] | null>(null);
+  const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -113,6 +118,10 @@ function Index() {
   }, [analysing]);
 
   async function handleRun() {
+    if (debugMode) {
+      await handleRunDebug();
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -143,6 +152,7 @@ function Index() {
       console.error("formatDataForClaude failed:", e);
       formattedData = "No usable API data could be formatted for analysis.";
     }
+    setFormattedDebug(formattedData);
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
 
 MATCH: ${match.home} vs ${match.away}
@@ -244,10 +254,15 @@ Start your response with { and end with }.`;
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
+    setDebugEntries(null);
+    setFormattedDebug(null);
     setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
     try {
-      const result = await collectMatchData(match, (p) => setProgress(p));
+      const result = await collectMatchData(match, (p) => setProgress(p), {
+        debug: debugMode,
+      });
       setCollection(result);
+      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
@@ -258,69 +273,109 @@ Start your response with { and end with }.`;
     }
   }
 
-  async function handleTestMode() {
-    // Bypass all API calls: inject the France vs Senegal mock data directly.
+  // Debug Mode: run the full pipeline against a fixed real fixture
+  // (South Africa vs Canada, June 28) instead of today's timing-gated matches.
+  async function handleRunDebug() {
+    setLoading(true);
+    setError(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setAnalysisRaw(null);
+    setDebugEntries(null);
+    setFormattedDebug(null);
+    setCollection(null);
+    setCollectError(null);
     try {
-      setTestMode(true);
-      setError(null);
-      const mockMatch = MOCK_TEST_MATCH;
-      const mockResult = buildMockCollectionResult();
-      setMatches([mockMatch]);
-      setActiveMatchId(mockMatch.id);
-      setCollectError(null);
+      const match = await resolveDebugFixture();
+      setMatches([match]);
+      setActiveMatchId(match.id);
+      setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
+      const result = await collectMatchData(match, (p) => setProgress(p), {
+        debug: true,
+      });
+      setCollection(result);
+      setDebugEntries(result.debugEntries ?? null);
       setProgress(null);
-      setCollection(mockResult);
-      toast.message("Test Mode", { description: "Using mock France vs Senegal data." });
-      await runClaudeAnalysis(mockMatch, mockResult);
+      setApiCalls(getApiCallCount());
+      await runClaudeAnalysis(match, result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error.";
-      console.error("Full error:", err);
-      setError(`Analysis failed: ${msg}`);
-      setAnalysing(false);
+      console.error("Debug run failed:", err);
+      setError(`Debug analysis failed: ${msg}`);
+      setProgress(null);
+      setApiCalls(getApiCallCount());
+    } finally {
+      setLoading(false);
     }
   }
+
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex items-baseline gap-3 border-b border-border px-6 py-4">
-        <span className="text-2xl font-bold tracking-tight text-foreground">EDGE</span>
-        <span className="text-sm font-medium text-slate">WC2026 Knockout Intelligence</span>
+      <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-4">
+        <div className="flex items-baseline gap-3">
+          <span className="text-2xl font-bold tracking-tight text-foreground">EDGE</span>
+          <span className="text-sm font-medium text-slate">WC2026 Knockout Intelligence</span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={debugMode}
+          aria-label="Toggle Debug Mode"
+          onClick={() => setDebugMode((v) => !v)}
+          className="flex items-center gap-2"
+        >
+          <span
+            className={`text-xs font-semibold uppercase tracking-wide ${
+              debugMode ? "text-signal-blue" : "text-slate"
+            }`}
+          >
+            Debug
+          </span>
+          <span
+            className={`relative h-5 w-9 rounded-full transition-colors ${
+              debugMode ? "bg-signal-blue" : "bg-border"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                debugMode ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
       </header>
 
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={handleRun}
-                disabled={loading || analysing}
-                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? "Analysing…" : "Run Analysis"}
-              </button>
-              <button
-                type="button"
-                onClick={handleTestMode}
-                disabled={loading || analysing}
-                className="rounded-md border border-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Test Mode
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleRun}
+              disabled={loading || analysing}
+              className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading
+                ? "Analysing…"
+                : debugMode
+                  ? "Run Debug Analysis"
+                  : "Run Analysis"}
+            </button>
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
               <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}
             </span>
           </div>
 
-          {testMode && (
-            <div className="w-full rounded-md border border-accent-amber bg-accent-amber/15 px-4 py-3 text-sm font-semibold text-accent-amber">
-              TEST MODE — Using mock data. Not real match analysis.
+          {debugMode && (
+            <div className="w-full rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
+              DEBUG MODE — Testing with real API data from South Africa vs Canada
+              (June 28)
             </div>
           )}
+
 
           {counterWarning && (
             <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
@@ -457,6 +512,85 @@ Start your response with { and end with }.`;
             )}
           </div>
         )}
+
+        {/* Debug raw-response inspector */}
+        {debugMode &&
+          activeMatchId !== null &&
+          (debugEntries || formattedDebug || analysisRaw) && (
+            <div className="mt-8 flex w-full max-w-5xl flex-col gap-4">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-xs text-slate">
+                <span className="font-semibold text-signal-blue">
+                  DEBUG OUTPUT
+                </span>
+                <span>
+                  API calls used:{" "}
+                  <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}{" "}
+                  today
+                </span>
+                {tokenUsage && (
+                  <span>
+                    Tokens:{" "}
+                    <span className="text-accent-amber">{tokenUsage.input}</span> in{" "}
+                    /{" "}
+                    <span className="text-accent-amber">{tokenUsage.output}</span>{" "}
+                    out
+                  </span>
+                )}
+              </div>
+
+              {debugEntries && debugEntries.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-semibold text-foreground">
+                    Raw API responses ({debugEntries.length} calls)
+                  </p>
+                  {debugEntries.map((entry, i) => (
+                    <details
+                      key={i}
+                      className="rounded-md border border-border bg-background/60"
+                    >
+                      <summary className="cursor-pointer px-3 py-2 font-mono text-xs text-slate">
+                        <span
+                          className={
+                            entry.ok ? "text-signal-green" : "text-signal-red"
+                          }
+                        >
+                          [{entry.api}] {entry.status}
+                        </span>{" "}
+                        — {entry.url}
+                        {entry.error ? ` — ${entry.error}` : ""}
+                      </summary>
+                      <pre className="max-h-80 overflow-auto border-t border-border px-3 py-2 font-mono text-xs text-slate">
+                        {JSON.stringify(entry.json, null, 2)}
+                      </pre>
+                    </details>
+                  ))}
+                </div>
+              )}
+
+              {formattedDebug && (
+                <details className="rounded-md border border-border bg-background/60">
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
+                    formatDataForClaude output ([CALL N … END CALL N])
+                  </summary>
+                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
+                    {formattedDebug}
+                  </pre>
+                </details>
+              )}
+
+              {analysisRaw && (
+                <details className="rounded-md border border-border bg-background/60" open>
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
+                    Final Claude JSON output
+                  </summary>
+                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
+                    {analysisRaw}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+
       </main>
 
       <footer className="border-t border-border px-6 py-3 text-center">
