@@ -481,6 +481,9 @@ function buildPinnacleSummary(oddsJson: unknown): {
   }
 
   return markets.length ? { markets, raw: pinnacle } : null;
+}
+
+
 
 function isEmptyResponse(response: unknown): boolean {
   if (response === null || response === undefined) return true;
