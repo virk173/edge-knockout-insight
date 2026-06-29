@@ -346,13 +346,11 @@ export async function collectMatchData(
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used
-  // by the api-proxy server function. These placeholders keep the existing
-  // call-site signatures unchanged.
+  // API keys live server-side (APIFOOTBALL_KEY) and are used by the api-proxy
+  // server function. This placeholder keeps the existing call-site signature.
   const afKey = "";
-  const saKey = "";
 
-  // When debugging, capture every raw HTTP call made by afGet/saGet.
+  // When debugging, capture every raw HTTP call made by afGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
@@ -371,21 +369,7 @@ export async function collectMatchData(
     console.log(`[analyse] ${key} (${label}): ${status}`, error ?? "");
   };
 
-  // ---- STEP 0: TheStatsAPI lineup match lookup (lineups only) ----
-  let statsApiResolved = false;
-  let statsApiMatchId: string | null = null;
-  try {
-    const matchDate = match.kickoffUtc.slice(0, 10);
-    statsApiMatchId = await findStatsApiMatchId(
-      saKey,
-      matchDate,
-      match.home,
-      match.away,
-    );
-    statsApiResolved = statsApiMatchId !== null;
-  } catch (e) {
-    console.warn("[analyse] StatsAPI lineup match lookup failed", e);
-  }
+
 
   // Wrapper that runs one numbered step and records its result.
   const runStep = async (
