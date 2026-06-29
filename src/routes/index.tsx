@@ -508,20 +508,18 @@ Start your response with { and end with }.`;
             className="flex items-center gap-2"
           >
             <span
-              className={`text-xs font-semibold uppercase tracking-wide ${
-                debugMode ? "text-signal-blue" : "text-slate"
-              }`}
+              className="text-xs font-semibold uppercase tracking-wide text-slate"
             >
               Debug
             </span>
             <span
-              className={`relative h-5 w-9 rounded-full transition-colors ${
-                debugMode ? "bg-signal-blue" : "bg-border"
+              className={`relative inline-block h-6 w-11 rounded-full transition-colors duration-200 ${
+                debugMode ? "bg-accent-amber" : "bg-slate-deep"
               }`}
             >
               <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                  debugMode ? "translate-x-4" : "translate-x-0.5"
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
+                  debugMode ? "left-[22px]" : "left-0.5"
                 }`}
               />
             </span>
