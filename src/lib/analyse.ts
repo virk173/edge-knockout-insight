@@ -820,31 +820,83 @@ async function buildRefereeProfile(
   return profile;
 }
 
-// ---- TheStatsAPI match-id resolution ----
+// ---- TheStatsAPI match resolution (S0) ----
 //
-// Both CALL 6 (lineups) and CALL 9B (Pinnacle odds) need TheStatsAPI's own
-// match_id. We resolve it once per pipeline run by listing FIFA World Cup 2026
-// matches for the kickoff date (competition + season hardcoded) and matching by
-// team name. Cached per (date) for the session to avoid a second list call.
+// TheStatsAPI is now the primary source for team stats (S2A/S2B), confirmed
+// lineups (S3), player stats (S4) and Pinnacle odds (S5). All of those need
+// TheStatsAPI's own match_id AND the per-team ids, which both come from the
+// match-lookup response. We resolve it once per pipeline run by listing FIFA
+// World Cup 2026 matches for the kickoff date (competition + season hardcoded),
+// matching by team name. The match list is cached per-day in localStorage under
+// "statsapi_matches_{YYYY-MM-DD}". Lineups and Pinnacle odds are NEVER cached.
 const statsapiMatchListMem: Record<string, unknown[]> = {};
 
 async function getStatsApiMatches(date: string): Promise<unknown[]> {
   if (statsapiMatchListMem[date]) return statsapiMatchListMem[date];
-  const payload = await saGet(
-    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`,
-  );
-  const arr = extractArray(payload);
+
+  // Daily localStorage cache of the match list (not lineups/odds).
+  const lsKey = `statsapi_matches_${date}`;
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(lsKey);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw) as unknown[];
+        statsapiMatchListMem[date] = arr;
+        return arr;
+      } catch {
+        /* fall through and refetch */
+      }
+    }
+  }
+
+  // Correct endpoint: date_from + date_to (there is no ?date= param), and
+  // status=scheduled for upcoming fixtures.
+  const base =
+    `/football/matches?competition_id=${STATSAPI_COMPETITION_ID}` +
+    `&season_id=${STATSAPI_SEASON_ID}&date_from=${date}&date_to=${date}&per_page=100`;
+  let payload = await saGet(`${base}&status=scheduled`);
+  let arr = extractArray(payload);
+
+  // Fallback: completed/in-play fixtures (e.g. Debug Mode uses a past match)
+  // do not appear under status=scheduled. Retry without the status filter.
+  if (arr.length === 0) {
+    payload = await saGet(base);
+    arr = extractArray(payload);
+  }
+
   statsapiMatchListMem[date] = arr;
+  if (typeof window !== "undefined" && arr.length) {
+    try {
+      window.localStorage.setItem(lsKey, JSON.stringify(arr));
+    } catch {
+      /* localStorage quota — keep the in-memory cache only */
+    }
+  }
   return arr;
 }
 
-// Resolve the TheStatsAPI match_id for a fixture by team name on its kickoff
-// date. Returns null when no match is found.
-async function resolveStatsApiMatchId(
+export interface StatsApiMatchRef {
+  id: string;
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  raw: unknown;
+}
+
+function idOrNull(v: unknown): string | null {
+  return v == null ? null : String(v);
+}
+
+// Resolve the TheStatsAPI match (id + team ids) for a fixture by team name on
+// its kickoff date. Case-insensitive "contains" check in both directions, since
+// API-Football and TheStatsAPI name teams slightly differently. Returns null
+// when no match is found.
+async function resolveStatsApiMatch(
   home: string,
   away: string,
   kickoffUtc: string,
-): Promise<string | null> {
+): Promise<StatsApiMatchRef | null> {
   const date = (kickoffUtc || "").slice(0, 10);
   if (!date) return null;
   const list = await getStatsApiMatches(date);
@@ -853,15 +905,103 @@ async function resolveStatsApiMatchId(
   const found = list.find((mt) => {
     const hn = normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""));
     const an = normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""));
-    if (!hn || !an) return false;
-    const direct =
-      (hn.includes(h) || h.includes(hn)) && (an.includes(a) || a.includes(an));
-    const swapped =
-      (hn.includes(a) || a.includes(hn)) && (an.includes(h) || h.includes(an));
-    return direct || swapped;
+    if (!hn && !an) return false;
+    return (
+      hn.includes(h) ||
+      an.includes(h) ||
+      hn.includes(a) ||
+      an.includes(a) ||
+      h.includes(hn) ||
+      a.includes(an)
+    );
   });
+  if (!found) return null;
   const id = getField(found, ["id", "match_id"]);
-  return id != null ? String(id) : null;
+  if (id == null) return null;
+  return {
+    id: String(id),
+    homeTeamId: idOrNull(getField(getField(found, ["home_team"]), ["id", "team_id"])),
+    awayTeamId: idOrNull(getField(getField(found, ["away_team"]), ["id", "team_id"])),
+    homeTeamName: (getField(getField(found, ["home_team"]), ["name"]) as string) ?? null,
+    awayTeamName: (getField(getField(found, ["away_team"]), ["name"]) as string) ?? null,
+    raw: found,
+  };
+}
+
+// Back-compat wrapper used by refetchLineups: resolve just the match_id.
+async function resolveStatsApiMatchId(
+  home: string,
+  away: string,
+  kickoffUtc: string,
+): Promise<string | null> {
+  const ref = await resolveStatsApiMatch(home, away, kickoffUtc);
+  return ref?.id ?? null;
+}
+
+// ---- TheStatsAPI extraction helpers ----
+
+// Extract the key season-stat fields from a TheStatsAPI /teams/{id}/stats
+// response. Keeps the raw payload too so Claude still sees everything.
+function extractTeamStats(raw: unknown): Record<string, unknown> {
+  const d = (getField(raw, ["stats", "statistics", "data"]) ?? raw) as unknown;
+  const goals = getField(d, ["goals"]);
+  return {
+    form: getField(d, ["form", "recent_form"]) ?? null,
+    goals_for:
+      getField(d, ["goals_for", "goalsFor"]) ??
+      getField(goals, ["for", "scored"]) ??
+      null,
+    goals_against:
+      getField(d, ["goals_against", "goalsAgainst"]) ??
+      getField(goals, ["against", "conceded"]) ??
+      null,
+    wins: getField(d, ["wins", "won"]) ?? null,
+    draws: getField(d, ["draws", "drawn"]) ?? null,
+    losses: getField(d, ["losses", "lost", "loses"]) ?? null,
+    matches_played:
+      getField(d, ["matches_played", "matchesPlayed", "played", "games_played"]) ?? null,
+    position: getField(d, ["position", "rank", "standing"]) ?? null,
+  };
+}
+
+// Pull the starting_xi player ids out of a TheStatsAPI lineups response.
+function extractLineupPlayerIds(lineup: unknown): string[] {
+  const ids = new Set<string>();
+  const collectSide = (side: unknown) => {
+    const xi = getField(side, ["starting_xi", "startingXi", "startingXI", "lineup"]);
+    for (const p of extractArray(xi)) {
+      const id =
+        getField(p, ["player_id", "id"]) ?? getField(getField(p, ["player"]), ["id"]);
+      if (id != null) ids.add(String(id));
+    }
+  };
+  collectSide(getField(lineup, ["home"]));
+  collectSide(getField(lineup, ["away"]));
+  // Array-shaped lineup responses (one entry per team).
+  for (const item of extractArray(lineup)) collectSide(item);
+  return [...ids];
+}
+
+// Extract the player-stat fields the GAP formula needs from a TheStatsAPI
+// /players/{id}/stats response.
+function extractPlayerStats(raw: unknown): Record<string, unknown> {
+  const d = (getField(raw, ["stats", "statistics", "data"]) ?? raw) as unknown;
+  const scoring = getField(d, ["scoring"]);
+  const shooting = getField(d, ["shooting"]);
+  const passing = getField(d, ["passing"]);
+  const discipline = getField(d, ["discipline"]);
+  return {
+    appearances: getField(d, ["appearances", "apps"]) ?? null,
+    starts: getField(d, ["starts"]) ?? null,
+    minutes_played: getField(d, ["minutes_played", "minutesPlayed", "minutes"]) ?? null,
+    "scoring.goals": getField(scoring, ["goals"]) ?? null,
+    "scoring.assists": getField(scoring, ["assists"]) ?? null,
+    "shooting.total_shots": getField(shooting, ["total_shots", "shots"]) ?? null,
+    "shooting.shots_on_target": getField(shooting, ["shots_on_target", "on_target"]) ?? null,
+    "passing.key_passes": getField(passing, ["key_passes", "keyPasses"]) ?? null,
+    "discipline.yellow_cards": getField(discipline, ["yellow_cards", "yellows"]) ?? null,
+    "discipline.red_cards": getField(discipline, ["red_cards", "reds"]) ?? null,
+  };
 }
 
 export async function collectMatchData(
