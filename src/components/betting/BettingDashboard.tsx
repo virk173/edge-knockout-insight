@@ -492,85 +492,9 @@ function AnalystNote({ note }: { note?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Market intelligence
+// (Market intelligence / Pinnacle card removed — lineups-only pipeline)
 // ─────────────────────────────────────────────────────────────
-function lineRowStyle(signal?: string) {
-  const v = (signal ?? "").toUpperCase();
-  if (v.includes("SHARP"))
-    return { icon: <Zap size={13} />, className: "bg-accent-amber/10 text-accent-amber" };
-  if (v.includes("DRIFT"))
-    return { icon: <TrendingDown size={13} />, className: "bg-signal-blue/10 text-signal-blue" };
-  return { icon: <span className="opacity-50">•</span>, className: "bg-card text-slate" };
-}
 
-function gapRowStyle(verdict?: string) {
-  const v = (verdict ?? "").toUpperCase();
-  if (v.includes("OFFERS VALUE"))
-    return { icon: "💰", className: "bg-signal-green/10 text-signal-green" };
-  if (v.includes("WORSE"))
-    return { icon: "⚠️", className: "bg-signal-red/10 text-signal-red" };
-  return { icon: "•", className: "bg-card text-slate" };
-}
-
-function MarketIntelligence({ result }: { result: AnalysisResult }) {
-  const lines = result.line_movement_signals ?? [];
-  const gaps = result.pinnacle_gap_check ?? [];
-  return (
-    <div className={cn(CARD, "flex flex-col gap-4")}>
-      <SectionLabel>Market Intelligence</SectionLabel>
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-slate">Line Movement</span>
-          {lines.length === 0 && (
-            <span className="text-xs text-slate">No data.</span>
-          )}
-          {lines.map((l: LineMovementSignal, i) => {
-            const s = lineRowStyle(l.signal);
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs",
-                  s.className,
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {s.icon} {l.market}
-                </span>
-                <span className="font-semibold">
-                  {l.movement_pct}% · {l.signal}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-slate">Pinnacle Gap</span>
-          {gaps.length === 0 && (
-            <span className="text-xs text-slate">No data.</span>
-          )}
-          {gaps.map((g: PinnacleGap, i) => {
-            const s = gapRowStyle(g.verdict);
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs",
-                  s.className,
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {s.icon} {g.market}
-                </span>
-                <span className="font-semibold">{g.gap_pct}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
