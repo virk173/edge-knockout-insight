@@ -1914,13 +1914,8 @@ EXAMPLE OUTPUT:
 
         "ev": 0.101,
 
-        "pinnacle_gap": "+3.5%",
-
-        "sharp_money_signal": "CONFIRMS",
-
-        "line_movement_pct": -6.0,
-
         "confidence": 73.0,
+
 
         "ensemble_alignment": "MAJORITY"
 
