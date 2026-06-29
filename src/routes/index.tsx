@@ -65,6 +65,7 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
+  const [testMode, setTestMode] = useState(false);
 
   // Per-match data collection state.
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
