@@ -80,6 +80,9 @@ export interface CollectionResult {
   // competition name/field search logic.
   competitionsRawPreview?: string;
   competitionsFirst5?: unknown[];
+  // Debug-only: all international tournaments (type === "tournament" with no
+  // country) found in TheStatsAPI, so we can locate the World Cup entry + id.
+  internationalTournaments?: { id: string; name: string }[];
 }
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
