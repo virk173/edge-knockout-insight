@@ -122,9 +122,10 @@ API-FOOTBALL
 
   Alert threshold: 85 calls
 
-THESTATSAPI
+  Note: The pipeline is 100% API-Football. Confirmed
+  lineups (C6) come from API-Football /fixtures/lineups.
 
-  Role: confirmed lineups only (C6)
+
 
 ════════════════════════════════════════════════════════
 
