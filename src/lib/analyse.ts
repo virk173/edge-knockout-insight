@@ -371,21 +371,31 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
 let oddspapiCallsThisRun = 0;
 
 // OddsPapi GET (via server proxy). The server appends the apiKey query param.
-// Waits 900ms before the second (or later) OddsPapi call in the same run.
+// Free tier enforces a ~0.88s cooldown between calls, so we always wait 900ms
+// before issuing a call. On HTTP 429 (rate limit) we wait 2s and retry once;
+// if the retry also fails we surface the error (the C9B caller swallows it).
 async function opGet(path: string): Promise<unknown> {
-  if (oddspapiCallsThisRun > 0) {
-    await sleep(ODDSPAPI_COOLDOWN_MS);
-  }
+  // 900ms cooldown before every OddsPapi call (including the first this run).
+  await sleep(ODDSPAPI_COOLDOWN_MS);
   oddspapiCallsThisRun++;
   const url = `${OP_BASE}${path}`;
-  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
-  try {
-    result = await apiFetch({ data: { provider: "oddspapi", url } });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "OddsPapi", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`OddsPapi network error: ${msg}`);
+
+  const attempt = async (): Promise<{ ok: boolean; status: number | string; statusText?: string; json: unknown }> => {
+    try {
+      return await apiFetch({ data: { provider: "oddspapi", url } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, status: "network error", statusText: msg, json: null };
+    }
+  };
+
+  let result = await attempt();
+  // Retry once on rate-limit (429) after a 2s wait.
+  if (!result.ok && String(result.status) === "429") {
+    await sleep(2000);
+    result = await attempt();
   }
+
   if (!result || !result.ok) {
     const status = result?.status ?? "no response";
     debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
