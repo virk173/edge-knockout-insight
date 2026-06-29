@@ -19,7 +19,7 @@ interface AnalyseMatchInput {
 }
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_TOKENS = 4000;
+const DEFAULT_MAX_TOKENS = 8000;
 
 function validateInput(input: unknown): AnalyseMatchInput {
   if (typeof input !== "object" || input === null) {
