@@ -170,17 +170,24 @@ function afErrors(errors: unknown): string | null {
 
 // API-Football GET. Increments the daily counter on a successful HTTP response.
 async function afGet(path: string, key: string): Promise<unknown> {
-  const res = await fetch(`${AF_BASE}${path}`, {
-    headers: { "x-apisports-key": key },
-  });
-  if (!res.ok) {
-    throw new Error(`API-Football ${res.status} ${res.statusText}`);
+  let res: Response;
+  try {
+    res = await fetch(`${AF_BASE}${path}`, {
+      headers: { "x-apisports-key": key },
+    });
+  } catch (err) {
+    throw new Error(
+      `API-Football network error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!res || !res.ok) {
+    throw new Error(`API-Football ${res?.status ?? "no response"} ${res?.statusText ?? ""}`.trim());
   }
   incrementApiCallCount();
-  const json = (await res.json()) as AfResponse;
-  const err = afErrors(json.errors);
+  const json = (await res.json().catch(() => null)) as AfResponse | null;
+  const err = afErrors(json?.errors);
   if (err) throw new Error(err);
-  return json.response ?? null;
+  return json?.response ?? null;
 }
 
 function isEmptyResponse(response: unknown): boolean {
