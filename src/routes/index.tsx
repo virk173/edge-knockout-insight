@@ -534,6 +534,32 @@ Start your response with { and end with }.`;
                 )}
               </div>
 
+              {collection?.competitionsRawPreview !== undefined && (
+                <div className="flex flex-col gap-3 rounded-md border border-signal-blue/40 bg-background/60 p-4">
+                  <div className="font-mono text-sm font-semibold text-signal-blue">
+                    TheStatsAPI raw response preview:
+                  </div>
+                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-3 font-mono text-xs text-slate">
+                    {collection.competitionsRawPreview || "(empty response)"}
+                  </pre>
+                  {collection.competitionsFirst5 &&
+                    collection.competitionsFirst5.length > 0 && (
+                      <>
+                        <div className="font-mono text-sm font-semibold text-signal-blue">
+                          First 5 competition objects:
+                        </div>
+                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-3 font-mono text-xs text-slate">
+                          {JSON.stringify(
+                            collection.competitionsFirst5,
+                            null,
+                            2,
+                          )}
+                        </pre>
+                      </>
+                    )}
+                </div>
+              )}
+
               {collection && (
                 <DebugReportView report={buildDebugReport(collection)} />
               )}
