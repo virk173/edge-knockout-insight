@@ -889,6 +889,9 @@ export async function collectMatchData(
     competitionsFirst5: opts.debug
       ? extractArray(lastCompetitionsRaw).slice(0, 5)
       : undefined,
+    internationalTournaments: opts.debug
+      ? lastInternationalTournaments
+      : undefined,
   };
 }
 
