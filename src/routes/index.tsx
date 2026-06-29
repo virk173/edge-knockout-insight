@@ -136,7 +136,13 @@ function Index() {
     setAnalysisRaw(null);
     setTokenUsage(null);
 
-    const formattedData = formatDataForClaude(result.callResults);
+    let formattedData: string;
+    try {
+      formattedData = formatDataForClaude(result.callResults);
+    } catch (e) {
+      console.error("formatDataForClaude failed:", e);
+      formattedData = "No usable API data could be formatted for analysis.";
+    }
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
 
 MATCH: ${match.home} vs ${match.away}
@@ -162,14 +168,23 @@ Start your response with { and end with }.`;
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
 
-      if (!res.ok) {
-        setAnalysisError(res.error ?? "The analysis service returned an error.");
-        toast.error("Analysis failed", { description: res.error });
+      // Guard: the server function can resolve to undefined if the edge
+      // request times out or the response cannot be deserialized. Reading
+      // `res.ok` directly in that case throws "Cannot read properties of
+      // undefined (reading 'ok')".
+      if (!res || !res.ok) {
+        const msg =
+          res?.error ??
+          "The analysis service did not return a response. It may have timed out — please try again.";
+        setAnalysisError(msg);
+        toast.error("Analysis failed", { description: msg });
         return;
       }
 
       const text: string =
         res.data?.content?.[0]?.text ?? "";
+
+
 
       // Capture token usage for the debug display.
       const usage = res.data?.usage;
@@ -245,17 +260,24 @@ Start your response with { and end with }.`;
 
   async function handleTestMode() {
     // Bypass all API calls: inject the France vs Senegal mock data directly.
-    setTestMode(true);
-    setError(null);
-    const mockMatch = MOCK_TEST_MATCH;
-    const mockResult = buildMockCollectionResult();
-    setMatches([mockMatch]);
-    setActiveMatchId(mockMatch.id);
-    setCollectError(null);
-    setProgress(null);
-    setCollection(mockResult);
-    toast.message("Test Mode", { description: "Using mock France vs Senegal data." });
-    await runClaudeAnalysis(mockMatch, mockResult);
+    try {
+      setTestMode(true);
+      setError(null);
+      const mockMatch = MOCK_TEST_MATCH;
+      const mockResult = buildMockCollectionResult();
+      setMatches([mockMatch]);
+      setActiveMatchId(mockMatch.id);
+      setCollectError(null);
+      setProgress(null);
+      setCollection(mockResult);
+      toast.message("Test Mode", { description: "Using mock France vs Senegal data." });
+      await runClaudeAnalysis(mockMatch, mockResult);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error.";
+      console.error("Full error:", err);
+      setError(`Analysis failed: ${msg}`);
+      setAnalysing(false);
+    }
   }
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
