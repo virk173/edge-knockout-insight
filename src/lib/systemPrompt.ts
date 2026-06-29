@@ -847,7 +847,9 @@ tier_3_jackpot:
   stake string, stake_boost_pct,
   legs array, combined_odds,
   returns with raw and realistic,
-  jackpot_ev,
+  jackpot_ev_inputs with:
+    p_final, combined_odds
+  (app computes jackpot_ev)
   class_c_signals array
 total_staked: string
 unallocated_stake: string
