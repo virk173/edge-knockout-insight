@@ -81,6 +81,12 @@ function Index() {
   const [apiCalls, setApiCalls] = useState(0);
   const [debugMode, setDebugMode] = useState(false);
 
+  // Top-level view tab.
+  const [tab, setTab] = useState<"analysis" | "log">("analysis");
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+
+
+
   // Per-match data collection state.
   const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
