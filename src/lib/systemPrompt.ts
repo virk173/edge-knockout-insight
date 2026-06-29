@@ -1231,9 +1231,10 @@ tier_1_anchor object with:
 
   books_true_implied, ev decimal, ev_rating,
 
-  pinnacle_gap string, sharp_signal string,
+  sharp_signal string,
 
   source_calls array, reasoning string
+
 
 tier_2_parlay object with:
 
