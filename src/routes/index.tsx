@@ -19,9 +19,19 @@ import {
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
+import { BacktestLog } from "@/components/betting/BacktestLog";
+import {
+  appendLogEntry,
+  getLogEntries,
+  setRecommendationOutcome,
+  clearLog,
+  type LogEntry,
+  type Outcome,
+} from "@/lib/backtestLog";
 import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
+import { BarChart3 } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
   "Analysing team form and statistics...",
