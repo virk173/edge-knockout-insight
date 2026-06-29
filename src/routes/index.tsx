@@ -79,6 +79,7 @@ function Index() {
   const [analysisResult, setAnalysisResult] = useState<unknown>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -131,6 +132,7 @@ function Index() {
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
+    setTokenUsage(null);
 
     const formattedData = formatDataForClaude(result.callResults);
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
@@ -166,16 +168,46 @@ Start your response with { and end with }.`;
 
       const text: string =
         res.data?.content?.[0]?.text ?? "";
+
+      // Capture token usage for the debug display.
+      const usage = res.data?.usage;
+      if (usage) {
+        setTokenUsage({
+          input: usage.input_tokens ?? 0,
+          output: usage.output_tokens ?? 0,
+        });
+      }
+
+      // 1. Strip markdown fences.
       const cleaned = text.replace(/```json|```/g, "").trim();
       setAnalysisRaw(cleaned);
 
+      const tryParse = (): unknown => {
+        // First attempt: parse the cleaned text directly.
+        try {
+          return JSON.parse(cleaned);
+        } catch {
+          // 2. Fall back to extracting the outermost { ... } block.
+          const start = cleaned.indexOf("{");
+          const end = cleaned.lastIndexOf("}");
+          if (start !== -1 && end !== -1 && end > start) {
+            const extracted = cleaned.slice(start, end + 1);
+            return JSON.parse(extracted);
+          }
+          throw new Error("No JSON object found in response.");
+        }
+      };
+
       try {
-        const parsed = JSON.parse(cleaned);
+        const parsed = tryParse();
         setAnalysisResult(parsed);
         toast.success("Analysis complete");
       } catch {
+        // 3. Surface where the response cuts off: first + last 500 chars.
+        const head = cleaned.slice(0, 500);
+        const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
         setAnalysisError(
-          "Claude returned output that could not be parsed as JSON. Raw text shown below for debugging.",
+          `Claude returned output that could not be parsed as JSON. The response may be truncated.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
         );
         toast.error("Could not parse analysis JSON");
       }
@@ -365,7 +397,7 @@ Start your response with { and end with }.`;
                     )}
 
                     {isActive && analysisError && (
-                      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
                         {analysisError}
                       </div>
                     )}
@@ -382,6 +414,15 @@ Start your response with { and end with }.`;
                             ? JSON.stringify(analysisResult, null, 2)
                             : analysisRaw}
                         </pre>
+                        {tokenUsage && (
+                          <p className="font-mono text-xs text-slate">
+                            Tokens used:{" "}
+                            <span className="text-accent-amber">{tokenUsage.input}</span>{" "}
+                            in,{" "}
+                            <span className="text-accent-amber">{tokenUsage.output}</span>{" "}
+                            out
+                          </p>
+                        )}
                       </div>
                     )}
                   </li>
