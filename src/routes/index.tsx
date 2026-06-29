@@ -518,7 +518,7 @@ Start your response with { and end with }.`;
         {/* Debug raw-response inspector */}
         {debugMode &&
           activeMatchId !== null &&
-          (debugEntries || formattedDebug || analysisRaw) && (
+          (collection || formattedDebug || analysisRaw) && (
             <div className="mt-8 flex w-full max-w-5xl flex-col gap-4">
               <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-xs text-slate">
                 <span className="font-semibold text-signal-blue">
@@ -540,39 +540,14 @@ Start your response with { and end with }.`;
                 )}
               </div>
 
-              {debugEntries && debugEntries.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-semibold text-foreground">
-                    Raw API responses ({debugEntries.length} calls)
-                  </p>
-                  {debugEntries.map((entry, i) => (
-                    <details
-                      key={i}
-                      className="rounded-md border border-border bg-background/60"
-                    >
-                      <summary className="cursor-pointer px-3 py-2 font-mono text-xs text-slate">
-                        <span
-                          className={
-                            entry.ok ? "text-signal-green" : "text-signal-red"
-                          }
-                        >
-                          [{entry.api}] {entry.status}
-                        </span>{" "}
-                        — {entry.url}
-                        {entry.error ? ` — ${entry.error}` : ""}
-                      </summary>
-                      <pre className="max-h-80 overflow-auto border-t border-border px-3 py-2 font-mono text-xs text-slate">
-                        {JSON.stringify(entry.json, null, 2)}
-                      </pre>
-                    </details>
-                  ))}
-                </div>
+              {collection && (
+                <DebugReportView report={buildDebugReport(collection)} />
               )}
 
               {formattedDebug && (
                 <details className="rounded-md border border-border bg-background/60">
                   <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    formatDataForClaude output ([CALL N … END CALL N])
+                    PART 4 — formatDataForClaude output ([CALL N … END CALL N])
                   </summary>
                   <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
                     {formattedDebug}
@@ -583,7 +558,7 @@ Start your response with { and end with }.`;
               {analysisRaw && (
                 <details className="rounded-md border border-border bg-background/60" open>
                   <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    Final Claude JSON output
+                    PART 4 — Final Claude JSON output
                   </summary>
                   <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
                     {analysisRaw}
