@@ -178,6 +178,9 @@ function Index() {
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks fixtures we've already auto-refetched lineups for, so the timer
+  // effect only fires one refetch per match once the lineup-drop time passes.
+  const lineupRefetchedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
