@@ -298,6 +298,16 @@ Assess rotation risk or motivation.
 SECTION 2 — PROBABILITY AND EV
 ════════════════════════════════════════
 
+CRITICAL — RAW VARIABLES ONLY:
+The application computes all arithmetic.
+For EV, parlay EV, gap score, confidence,
+stacked multiplier and overround you must
+output the RAW INPUT VARIABLES only, never
+the computed result. The app derives the
+final numbers. Emit the *_inputs objects
+exactly as specified below. Do NOT perform
+the multiplication or addition yourself.
+
 STEP 1 — BUILD MODEL PROBABILITIES
 Before any bookmaker odds estimate:
 Home Win, Draw, Away Win from C2-C8.
@@ -305,10 +315,15 @@ Must sum to 100 percent.
 Label: MODEL independent of market.
 
 STEP 2 — DEVIG STAKE ODDS
-  raw_implied = 1 / decimal_odds
+Do NOT compute the overround yourself.
+Output overround_inputs.outcomes as an
+array of { name, odds } for every outcome
+in the market (one decimal odds each).
+The app computes:
+  raw_implied = 1 / odds
   overround = sum of all raw_implied
   true_implied = raw_implied / overround
-Show overround_stake in output.
+  overround_stake = overround
 
 STEP 3 — ENSEMBLE CHECK goals markets
 Three signals:
