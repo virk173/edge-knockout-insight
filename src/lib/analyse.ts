@@ -82,6 +82,11 @@ export interface CollectionResult {
 // duration of a single debug run, since the pipeline runs sequentially.
 let debugSink: DebugEntry[] | null = null;
 
+// Module-level label for the logical call currently executing. afGet/saGet
+// stamp every captured DebugEntry with it so the Debug report can group raw
+// HTTP calls under their logical CALL number (e.g. "2A", "9B", "competitions").
+let currentDebugCall: string | null = null;
+
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
