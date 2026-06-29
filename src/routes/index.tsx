@@ -834,8 +834,18 @@ Start your response with { and end with }.`;
       )}
 
 
-      <footer className="border-t border-border px-6 py-3 text-center">
-        <span className="font-mono text-sm text-slate" suppressHydrationWarning>
+      <footer className="flex flex-col items-center gap-1 border-t border-border px-6 py-4 text-center">
+        <span className="text-xs font-semibold text-foreground">
+          Edge v3.2 — WC2026 Knockout Intelligence
+        </span>
+        <span className="text-xs text-slate">
+          Not financial advice. Bet responsibly.
+        </span>
+        <span className="font-mono text-xs text-slate">
+          API calls today: <span className={apiColorClass}>{apiCalls}</span>/
+          {DAILY_LIMIT}
+        </span>
+        <span className="mt-1 font-mono text-sm text-slate" suppressHydrationWarning>
           {formatUtc(now)}
         </span>
       </footer>
