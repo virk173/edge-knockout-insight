@@ -28,6 +28,17 @@ function classificationStyle(c?: string): { label: string; className: string } {
   return { label: c ?? "—", className: "border-border bg-card text-slate" };
 }
 
+function dataQualityStyle(q?: string): { label: string; className: string } {
+  const v = (q ?? "").toUpperCase();
+  if (v.includes("FULL"))
+    return { label: "DATA: FULL", className: "border-signal-green/50 bg-signal-green/15 text-signal-green" };
+  if (v.includes("PARTIAL"))
+    return { label: "DATA: PARTIAL", className: "border-accent-amber/50 bg-accent-amber/15 text-accent-amber" };
+  if (v.includes("THIN"))
+    return { label: "DATA: THIN", className: "border-signal-red/50 bg-signal-red/15 text-signal-red" };
+  return { label: "DATA: —", className: "border-border bg-card text-slate" };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Confidence meter
 // ─────────────────────────────────────────────────────────────
