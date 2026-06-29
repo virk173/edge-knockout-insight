@@ -1089,28 +1089,48 @@ export async function collectMatchData(
   const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
   // ---- STEP 1: data calls ----
-  // 1 + 2: team statistics
-  await runStep("2A", "Fetching home team statistics... (1/11)", async () => {
-    const r = await afGet(
-      `/teams/statistics?league=1&season=2026&team=${match.homeId}`,
-      afKey,
-    );
-    const avg = getField(getField(getField(r, ["goals"]), ["for"]), ["average"]);
-    if (!avg || getField(avg, ["total"]) === undefined) {
-      console.warn("[analyse] 2A missing goals.for.average.total");
+
+  // S0: resolve the TheStatsAPI match (id + per-team ids). Everything sourced
+  // from TheStatsAPI (team stats, lineups, player stats, Pinnacle) depends on
+  // this. Recorded as its own debug row so the report shows S0 explicitly.
+  await runStep("S0", "Resolving TheStatsAPI match (lookup)... (S0)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref) {
+      throw new Error(
+        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date.",
+      );
     }
-    return r;
+    return {
+      match_id: ref.id,
+      home_team: { id: ref.homeTeamId, name: ref.homeTeamName },
+      away_team: { id: ref.awayTeamId, name: ref.awayTeamName },
+    };
   });
-  await runStep("2B", "Fetching away team statistics... (2/11)", async () => {
-    const r = await afGet(
-      `/teams/statistics?league=1&season=2026&team=${match.awayId}`,
-      afKey,
-    );
-    const avg = getField(getField(getField(r, ["goals"]), ["for"]), ["average"]);
-    if (!avg || getField(avg, ["total"]) === undefined) {
-      console.warn("[analyse] 2B missing goals.for.average.total");
+
+  // S2A / S2B: team season stats from TheStatsAPI (richer WC2026 data than
+  // API-Football for this tournament). Replaces the old API-Football
+  // /teams/statistics calls. Team ids come from the S0 lookup response.
+  await runStep("2A", "Fetching home team stats (TheStatsAPI)... (1/11)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref?.homeTeamId) {
+      throw new Error("No TheStatsAPI home_team.id available from match lookup.");
     }
-    return r;
+    const raw = await saGet(
+      `/football/teams/${ref.homeTeamId}/stats?season_id=${STATSAPI_SEASON_ID}`,
+    );
+    if (isEmptyResponse(raw)) throw new Error("No TheStatsAPI home team stats returned.");
+    return { teamId: ref.homeTeamId, extracted: extractTeamStats(raw), raw };
+  });
+  await runStep("2B", "Fetching away team stats (TheStatsAPI)... (2/11)", async () => {
+    const ref = await ensureStatsApiMatch();
+    if (!ref?.awayTeamId) {
+      throw new Error("No TheStatsAPI away_team.id available from match lookup.");
+    }
+    const raw = await saGet(
+      `/football/teams/${ref.awayTeamId}/stats?season_id=${STATSAPI_SEASON_ID}`,
+    );
+    if (isEmptyResponse(raw)) throw new Error("No TheStatsAPI away team stats returned.");
+    return { teamId: ref.awayTeamId, extracted: extractTeamStats(raw), raw };
   });
 
   // 3: head-to-head
