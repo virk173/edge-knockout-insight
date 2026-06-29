@@ -95,13 +95,13 @@ let currentDebugCall: string | null = null;
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
-  { key: "2A", n: "2A", endpoint: "/teams/statistics (home)" },
-  { key: "2B", n: "2B", endpoint: "/teams/statistics (away)" },
+  { key: "2A", n: "2A", endpoint: "TheStatsAPI /teams/{id}/stats (home)" },
+  { key: "2B", n: "2B", endpoint: "TheStatsAPI /teams/{id}/stats (away)" },
   { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
   { key: "6", n: "6", endpoint: "TheStatsAPI /lineups" },
-  { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
+  { key: "6B", n: "6B", endpoint: "TheStatsAPI /players/{id}/stats" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
