@@ -10,6 +10,11 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
+const OP_BASE = "https://api.oddspapi.io";
+// OddsPapi free tier: 0.88s cooldown between calls. We wait 900ms before a
+// second (or later) OddsPapi call within the same pipeline run.
+const ODDSPAPI_COOLDOWN_MS = 900;
+const ODDSPAPI_SPORT_ID = 10; // football/soccer
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
@@ -28,9 +33,11 @@ export interface ProgressUpdate {
   label: string;
 }
 
+type ApiName = "API-Football" | "OddsPapi";
+
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
-  api: "API-Football";
+  api: ApiName;
   url: string;
   status: number | string;
   ok: boolean;
@@ -42,7 +49,7 @@ export interface DebugEntry {
 // One logical call row for the structured Debug Mode report.
 export interface DebugCallRow {
   callLabel: string; // e.g. "CALL 2A"
-  api: "API-Football";
+  api: ApiName;
   endpoint: string;
   url: string;
   status: number | string;
@@ -56,6 +63,8 @@ export interface DebugReport {
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
+  oddspapiSucceeded: number;
+  oddspapiTotal: number;
   readyForClaude: boolean;
 }
 
@@ -94,6 +103,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
+  { key: "9B", n: "9B", endpoint: "OddsPapi Pinnacle odds" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
@@ -183,7 +193,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
   interface Spec {
     callLabel: string;
-    api: "API-Football";
+    api: ApiName;
     endpoint: string;
     entryKey: string;
     crKey?: string;
@@ -201,6 +211,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
+    { callLabel: "CALL 9B", api: "OddsPapi", endpoint: "/v4/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -223,8 +234,11 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
 
+  const opCount = specs.filter((s) => s.api === "OddsPapi" && s.count);
+  const oddspapiSucceeded = opCount.filter((s) => s.extracted).length;
+
   // Claude can run as long as the two mandatory team-statistics calls landed.
-  // Optional calls (lineups/referee/bracket) may be EMPTY without blocking.
+  // Optional calls (lineups/referee/bracket/Pinnacle) may be EMPTY without blocking.
   const readyForClaude =
     cr["2A"]?.status === "SUCCESS" && cr["2B"]?.status === "SUCCESS";
 
@@ -232,13 +246,15 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     rows,
     afSucceeded,
     afTotal: afCount.length,
+    oddspapiSucceeded,
+    oddspapiTotal: opCount.length,
     readyForClaude,
   };
 }
 
 
 
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 12;
 
 function normalize(name: string): string {
   return name
@@ -305,6 +321,221 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
   return json?.response ?? null;
 }
 
+// Counts OddsPapi calls within the current pipeline run, to honour the free
+// tier's 0.88s cooldown. Reset at the start of every collectMatchData run.
+let oddspapiCallsThisRun = 0;
+
+// OddsPapi GET (via server proxy). The server appends the apiKey query param.
+// Waits 900ms before the second (or later) OddsPapi call in the same run.
+async function opGet(path: string): Promise<unknown> {
+  if (oddspapiCallsThisRun > 0) {
+    await sleep(ODDSPAPI_COOLDOWN_MS);
+  }
+  oddspapiCallsThisRun++;
+  const url = `${OP_BASE}${path}`;
+  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
+  try {
+    result = await apiFetch({ data: { provider: "oddspapi", url } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    debugSink?.push({ api: "OddsPapi", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`OddsPapi network error: ${msg}`);
+  }
+  if (!result || !result.ok) {
+    const status = result?.status ?? "no response";
+    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`OddsPapi ${status} ${result?.statusText ?? ""}`.trim());
+  }
+  const json = result.json ?? null;
+  debugSink?.push({ api: "OddsPapi", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
+  return json;
+}
+
+// --- Pinnacle line-movement helpers ---
+
+function toNum(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = parseFloat(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// Movement signal from opening -> current price (lower price = shortened).
+function movementSignal(
+  opening: number | null,
+  current: number | null,
+): { movement_pct: number | null; signal: string } {
+  if (opening == null || current == null || opening === 0) {
+    return { movement_pct: null, signal: "UNKNOWN" };
+  }
+  const movement_pct = ((current - opening) / opening) * 100;
+  let signal: string;
+  if (movement_pct <= -8) signal = "SHARP MOVE"; // shortened > 8%
+  else if (movement_pct >= 8) signal = "DRIFT"; // drifted > 8%
+  else if (Math.abs(movement_pct) < 5) signal = "STABLE";
+  else signal = "MINOR";
+  return { movement_pct: Math.round(movement_pct * 100) / 100, signal };
+}
+
+// Loosely classify a market by id and/or name into our target buckets.
+function classifyMarket(id: unknown, name: unknown): string | null {
+  const idStr = id != null ? String(id) : "";
+  const n = typeof name === "string" ? name.toLowerCase() : "";
+  if (idStr === "101" || /\b1x2\b|full[- ]?time result|match result|moneyline/.test(n))
+    return "1X2 Full Time Result";
+  if (/over\/?under|total goals|o\/u|totals/.test(n) && /2\.?5/.test(n + idStr))
+    return "Over/Under 2.5 Goals";
+  if (/over\/?under|total goals|o\/u|totals/.test(n) && !/corner|card/.test(n))
+    return "Over/Under Goals";
+  if (/both teams to score|btts|gg\/ng/.test(n)) return "BTTS";
+  if (/asian handicap|handicap|spread/.test(n) && !/corner|card/.test(n))
+    return "Asian Handicap";
+  if (/corner/.test(n)) return "Corners Over/Under";
+  if (/card|booking/.test(n)) return "Cards Over/Under";
+  return null;
+}
+
+// Extract { current, opening } prices from an outcome object, trying common
+// OddsPapi field names defensively.
+function extractPrices(outcome: unknown): { current: number | null; opening: number | null } {
+  const current = toNum(
+    getField(outcome, ["current", "currentOdds", "price", "latest", "latestPrice", "odds", "value"]),
+  );
+  const opening = toNum(
+    getField(outcome, ["opening", "openingOdds", "openPrice", "open", "openingPrice", "first"]),
+  );
+  return { current, opening };
+}
+
+interface PinnacleMarketSummary {
+  market: string;
+  outcomes: Array<{
+    name: string;
+    current: number | null;
+    opening: number | null;
+    movement_pct: number | null;
+    signal: string;
+  }>;
+}
+
+// Build a structured Pinnacle summary (markets + line movement) from a raw
+// /v4/odds response. Returns null if no Pinnacle markets are present.
+function buildPinnacleSummary(oddsJson: unknown): {
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
+  // Locate bookmakerOdds.pinnacle.markets, tolerating nesting in data/response.
+  const root =
+    getField(oddsJson, ["data", "response", "result"]) ?? oddsJson;
+  const bookmakerOdds =
+    getField(root, ["bookmakerOdds"]) ??
+    getField(extractArray(root)[0], ["bookmakerOdds"]);
+  const pinnacle = getField(bookmakerOdds, ["pinnacle", "Pinnacle"]);
+  const rawMarkets = getField(pinnacle, ["markets"]);
+  if (!rawMarkets) return null;
+
+  const marketList: unknown[] = Array.isArray(rawMarkets)
+    ? rawMarkets
+    : typeof rawMarkets === "object"
+      ? Object.entries(rawMarkets as Record<string, unknown>).map(([k, v]) =>
+          v && typeof v === "object" && !Array.isArray(v)
+            ? { id: k, ...(v as Record<string, unknown>) }
+            : { id: k, value: v },
+        )
+      : [];
+
+  const markets: PinnacleMarketSummary[] = [];
+  for (const m of marketList) {
+    const id = getField(m, ["id", "marketId", "key"]);
+    const name = getField(m, ["name", "marketName", "label", "title"]);
+    const bucket = classifyMarket(id, name);
+    if (!bucket) continue;
+
+    const rawOutcomes =
+      getField(m, ["outcomes", "selections", "runners", "lines", "odds"]) ?? [];
+    const outcomesArr: unknown[] = Array.isArray(rawOutcomes)
+      ? rawOutcomes
+      : typeof rawOutcomes === "object"
+        ? Object.entries(rawOutcomes as Record<string, unknown>).map(([k, v]) =>
+            v && typeof v === "object" ? { name: k, ...(v as Record<string, unknown>) } : { name: k, value: v },
+          )
+        : [];
+
+    const outcomes = outcomesArr.map((o) => {
+      const oid = getField(o, ["id", "outcomeId", "key"]);
+      let oname =
+        (getField(o, ["name", "outcomeName", "label", "selection"]) as string | undefined) ??
+        (oid != null ? String(oid) : "outcome");
+      // Map known 1X2 outcome ids.
+      if (String(oid) === "101") oname = "Home";
+      else if (String(oid) === "102") oname = "Draw";
+      else if (String(oid) === "103") oname = "Away";
+      const { current, opening } = extractPrices(o);
+      const mv = movementSignal(opening, current);
+      return { name: String(oname), current, opening, ...mv };
+    });
+
+    markets.push({ market: bucket, outcomes });
+  }
+
+  return markets.length ? { markets, raw: pinnacle } : null;
+}
+
+// Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
+function extractStake1X2(stakeOdds: unknown): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  const responseArr = extractArray(stakeOdds);
+  for (const item of responseArr) {
+    const bookmakers = extractArray(getField(item, ["bookmakers"]));
+    for (const bk of bookmakers) {
+      const bets = extractArray(getField(bk, ["bets"]));
+      for (const bet of bets) {
+        const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+        if (!/match winner|1x2|full time result/.test(betName)) continue;
+        const values = extractArray(getField(bet, ["values"]));
+        for (const v of values) {
+          const vname = String(getField(v, ["value"]) ?? "").toLowerCase();
+          const odd = toNum(getField(v, ["odd", "odds", "price"]));
+          if (vname.includes("home") || vname === "1") out["Home"] = odd;
+          else if (vname.includes("draw") || vname === "x") out["Draw"] = odd;
+          else if (vname.includes("away") || vname === "2") out["Away"] = odd;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Step 4 — gap check: compare Stake odds vs Pinnacle current odds (1X2).
+// Higher decimal odds = better price for the bettor.
+function buildStakeGapCheck(
+  stakeOdds: unknown,
+  markets: PinnacleMarketSummary[],
+): Array<{ outcome: string; stake: number | null; pinnacle: number | null; verdict: string }> {
+  const stake1X2 = extractStake1X2(stakeOdds);
+  const pinnacle1X2 = markets.find((m) => m.market === "1X2 Full Time Result");
+  if (!pinnacle1X2) return [];
+  return pinnacle1X2.outcomes
+    .filter((o) => ["Home", "Draw", "Away"].includes(o.name))
+    .map((o) => {
+      const stakePrice = stake1X2[o.name] ?? null;
+      const pinPrice = o.current;
+      let verdict = "UNKNOWN";
+      if (stakePrice != null && pinPrice != null) {
+        if (stakePrice > pinPrice) verdict = "STAKE OFFERS VALUE";
+        else if (pinPrice > stakePrice) verdict = "STAKE WORSE";
+        else verdict = "EQUAL";
+      }
+      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, verdict };
+    });
+}
+
+
+
+
+
 function isEmptyResponse(response: unknown): boolean {
   if (response === null || response === undefined) return true;
   if (Array.isArray(response)) return response.length === 0;
@@ -361,6 +592,11 @@ export async function collectMatchData(
   // When debugging, capture every raw HTTP call made by afGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
+
+  // Reset the OddsPapi cooldown counter for this run.
+  oddspapiCallsThisRun = 0;
+
+
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
@@ -588,6 +824,100 @@ export async function collectMatchData(
     );
     return { stakeOdds: afOdds };
   });
+
+  // CALL 9B: OddsPapi Pinnacle odds + line movement (separate provider).
+  // Step 1: find the World Cup fixture by date + loose team-name match.
+  // Step 2: fetch Pinnacle odds for that fixture.
+  // Step 3: compute line movement signals. Step 4: gap check vs Stake.
+  // On any failure or no fixture match -> EMPTY (Pinnacle data unavailable).
+  {
+    stepKeys.push("9B");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching Pinnacle odds (OddsPapi)...",
+    });
+    currentDebugCall = "9B";
+    try {
+      const matchDate = (match.kickoffUtc ?? "").slice(0, 10) || DEBUG_FIXTURE_DATE;
+      // Step 1 — find fixture.
+      const fixturesJson = await opGet(
+        `/v4/fixtures?sportId=${ODDSPAPI_SPORT_ID}&from=${matchDate}&to=${matchDate}&hasOdds=true`,
+      );
+      const fixtureList = extractArray(
+        getField(fixturesJson, ["data", "fixtures", "response"]) ?? fixturesJson,
+      );
+      const homeN = normalize(match.home);
+      const awayN = normalize(match.away);
+      const fxMatch = fixtureList.find((f) => {
+        const p1 = normalize(String(getField(f, ["participant1Name", "homeName", "home"]) ?? ""));
+        const p2 = normalize(String(getField(f, ["participant2Name", "awayName", "away"]) ?? ""));
+        const direct =
+          (p1.includes(homeN) || homeN.includes(p1)) &&
+          (p2.includes(awayN) || awayN.includes(p2));
+        const swapped =
+          (p1.includes(awayN) || awayN.includes(p1)) &&
+          (p2.includes(homeN) || homeN.includes(p2));
+        return Boolean(p1 && p2 && (direct || swapped));
+      });
+      const fixtureId = getField(fxMatch, ["fixtureId", "id"]);
+
+      if (fixtureId == null) {
+        record(
+          "9B",
+          "Pinnacle odds (OddsPapi)",
+          "EMPTY",
+          undefined,
+          "Pinnacle data unavailable — no OddsPapi fixture matched this match.",
+        );
+      } else {
+        // Step 2 — get Pinnacle odds.
+        const oddsJson = await opGet(
+          `/v4/odds?fixtureId=${encodeURIComponent(String(fixtureId))}&bookmakers=pinnacle`,
+        );
+        // Step 3 — line movement.
+        const summary = buildPinnacleSummary(oddsJson);
+
+        if (!summary) {
+          record(
+            "9B",
+            "Pinnacle odds (OddsPapi)",
+            "EMPTY",
+            { fixtureId },
+            "Pinnacle data unavailable — no Pinnacle markets returned for this fixture.",
+          );
+        } else {
+          // Step 4 — gap check vs Stake (best-effort on 1X2).
+          const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
+          const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
+
+          record("9B", "Pinnacle odds (OddsPapi)", "SUCCESS", {
+            fixtureId,
+            matched_fixture: {
+              participant1: getField(fxMatch, ["participant1Name", "homeName", "home"]) ?? null,
+              participant2: getField(fxMatch, ["participant2Name", "awayName", "away"]) ?? null,
+            },
+            markets: summary.markets,
+            gap_check: gapCheck,
+            note:
+              "movement_pct = (current - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact).",
+          });
+        }
+      }
+    } catch (e) {
+      record(
+        "9B",
+        "Pinnacle odds (OddsPapi)",
+        "EMPTY",
+        undefined,
+        `Pinnacle data unavailable — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      currentDebugCall = null;
+    }
+  }
+
+
 
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
   const nr = nextRound(match.round);

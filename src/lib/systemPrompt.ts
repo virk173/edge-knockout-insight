@@ -390,6 +390,40 @@ These are the odds for EV calculations.
 
 
 
+CALL 9B — PINNACLE ODDS AND LINE MOVEMENT (OddsPapi)
+
+Source: OddsPapi (Pinnacle bookmaker). Markets: 1X2 Full Time
+Result, Over/Under 2.5 goals, BTTS, Asian Handicap main line,
+Corners O/U and Cards O/U when available. Each outcome carries
+current odds, opening odds (when available), movement_pct and a
+precomputed signal.
+
+Line movement (movement_pct = (current - opening) / opening * 100):
+- SHARP MOVE — Pinnacle shortened more than 8 percent.
+  Confidence impact: +5 if your model agrees with the move,
+  -5 if your model opposes it.
+- DRIFT — Pinnacle drifted more than 8 percent.
+  Confidence impact: -3.
+- STABLE — less than 5 percent either way. No impact.
+
+Pinnacle gap check (gap_check field): for each market compares
+Stake odds vs Pinnacle current odds. STAKE OFFERS VALUE means
+Stake price beats Pinnacle (positive signal for a Stake bet).
+STAKE WORSE means Pinnacle is sharper than Stake (caution).
+
+Treat Pinnacle as the sharp reference line. Use it to validate
+or temper model confidence; do NOT use Pinnacle prices for the
+EV calculation itself — EV always uses Stake (C9A) odds.
+
+If CALL 9B is EMPTY, set pinnacle_data_available to false and
+note "Pinnacle data unavailable" in the relevant output fields.
+Proceed with the analysis using Stake odds only.
+
+
+
+
+
+
 CALL 10 — BRACKET CONTEXT
 
 Parse fixtures tree to identify potential next
