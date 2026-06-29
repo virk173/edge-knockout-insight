@@ -1035,11 +1035,11 @@ export async function collectMatchData(
 
 
   // 7: referee profile.
-  // API-Football cannot filter fixtures by referee with referee+season alone;
-  // the referee filter must be combined with league. Try the 2026 World Cup
-  // first, then fall back to an older completed tournament (2022). If both come
-  // back empty or error, mark EMPTY, set referee strictness UNKNOWN, and add a
-  // note so Claude falls back to historical base rates for cards markets.
+  // API-Football does NOT support a `referee` query filter ("The Referee field
+  // do not exist"). Instead we pull all completed World Cup fixtures for the
+  // season once (cached for the day), then filter client-side by the referee
+  // name extracted from CALL 1. Falls back to 2022 when <3 matches found, and
+  // marks UNKNOWN when no fixtures match either season.
   {
     stepKeys.push("7");
     onProgress({
@@ -1064,39 +1064,34 @@ export async function collectMatchData(
         "Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.",
       );
     } else {
-      const refEnc = encodeURIComponent(match.referee);
-      const seasons = [2026, 2022];
-      let refData: unknown = null;
-      let lastError: string | null = null;
-      for (const season of seasons) {
-        currentDebugCall = "7";
-        try {
-          const r = await afGet(
-            `/fixtures?league=1&season=${season}&referee=${refEnc}`,
-            afKey,
+      currentDebugCall = "7";
+      try {
+        // Skip the (per-fixture) statistics enrichment when the budget is near
+        // its limit — the completed-fixtures list itself is cheap + cached.
+        const profile = await buildRefereeProfile(match.referee, !counterWarning);
+        if (profile) {
+          record("7", "Referee profile", "SUCCESS", profile);
+        } else {
+          record(
+            "7",
+            "Referee profile",
+            "EMPTY",
+            undefined,
+            `Referee strictness: UNKNOWN. No WC2026/2022 fixtures found for referee "${match.referee}" — cards market estimates use historical base rate only.`,
           );
-          if (!isEmptyResponse(r)) {
-            refData = r;
-            break;
-          }
-        } catch (e) {
-          lastError = e instanceof Error ? e.message : String(e);
-        } finally {
-          currentDebugCall = null;
         }
-      }
-      if (refData !== null) {
-        record("7", "Referee profile", "SUCCESS", refData);
-      } else {
+      } catch (e) {
         record(
           "7",
           "Referee profile",
           "EMPTY",
           undefined,
-          `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.${
-            lastError ? ` (${lastError})` : ""
-          }`,
+          `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
+            e instanceof Error ? e.message : String(e)
+          })`,
         );
+      } finally {
+        currentDebugCall = null;
       }
     }
   }
