@@ -1156,25 +1156,8 @@ odds_confirmed_UTC: ISO-8601 string
 
 overround_stake: decimal number
 
-overround_pinnacle: decimal number
-
-line_movement_signals: array of objects each with:
-
-  market, outcome, opening_odds, current_odds,
-
-  movement_pct, signal (SHARP MOVE or DRIFT
-
-  or STABLE), confidence_impact, note
-
-pinnacle_gap_check: array of objects each with:
-
-  market, stake_odds, pinnacle_odds, gap_pct,
-
-  verdict (STAKE OFFERS VALUE vs PINNACLE or
-
-  STAKE WORSE THAN PINNACLE)
-
 ensemble_check object with:
+
 
   market, signal_1_model, signal_2_poisson,
 
