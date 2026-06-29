@@ -86,6 +86,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Edge — WC2026 Betting Engine" },
+      { name: "twitter:description", content: "WC2026 Knockout Intelligence betting engine." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/8a29f5d2-ebb1-4a9d-92b0-d9d1c4d4624f/id-preview-e81d5795--dea05804-6162-427e-905b-ba99ec86f835.lovable.app-1782749198853.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/8a29f5d2-ebb1-4a9d-92b0-d9d1c4d4624f/id-preview-e81d5795--dea05804-6162-427e-905b-ba99ec86f835.lovable.app-1782749198853.png" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
