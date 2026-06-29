@@ -169,6 +169,92 @@ export function formatDataForClaude(
   return blocks.join("\n\n");
 }
 
+// Treats "NOT_AVAILABLE" (our null sentinel), null, empty arrays/objects as no data.
+function hasUsableData(x: unknown): boolean {
+  if (x === null || x === undefined || x === "NOT_AVAILABLE") return false;
+  if (Array.isArray(x)) return x.length > 0;
+  if (typeof x === "object") return Object.keys(x as object).length > 0;
+  return true;
+}
+
+/**
+ * Builds the structured Debug Mode report: one row per logical API call with
+ * its URL, HTTP status, raw JSON, and whether formatDataForClaude would extract
+ * data from it, plus per-API success tallies and a Claude-readiness flag.
+ */
+export function buildDebugReport(result: CollectionResult): DebugReport {
+  const entries = result.debugEntries ?? [];
+  const cr = result.callResults;
+
+  const findEntry = (label: string): DebugEntry | undefined => {
+    const matches = entries.filter((e) => e.callLabel === label);
+    return matches.length ? matches[matches.length - 1] : undefined;
+  };
+
+  const odds = cr["9"]?.data as
+    | { stakeOdds?: unknown; pinnacleOdds?: unknown }
+    | undefined;
+
+  interface Spec {
+    callLabel: string;
+    api: "API-Football" | "TheStatsAPI";
+    endpoint: string;
+    entryKey: string;
+    crKey?: string;
+    extracted: boolean;
+    count: boolean;
+  }
+
+  const specs: Spec[] = [
+    { callLabel: "CALL 2A", api: "API-Football", endpoint: "/teams/statistics (South Africa)", entryKey: "2A", extracted: cr["2A"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 2B", api: "API-Football", endpoint: "/teams/statistics (Canada)", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
+    { callLabel: "STATSAPI competitions", api: "TheStatsAPI", endpoint: "/football/competitions (verify IDs)", entryKey: "competitions", extracted: result.wcCompetitionId !== null, count: false },
+    { callLabel: "STATSAPI matches", api: "TheStatsAPI", endpoint: "/football/matches (match ID lookup)", entryKey: "matches", extracted: result.statsApiMatchId !== null, count: true },
+    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 9B", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: hasUsableData(odds?.pinnacleOdds), count: true },
+  ];
+
+  const rows: DebugCallRow[] = specs.map((sp) => {
+    const entry = findEntry(sp.entryKey);
+    const crEntry = cr[sp.crKey ?? sp.entryKey];
+    return {
+      callLabel: sp.callLabel,
+      api: sp.api,
+      endpoint: sp.endpoint,
+      url: entry?.url ?? "— (not called)",
+      status: entry?.status ?? crEntry?.status ?? "NOT CALLED",
+      ok: entry?.ok ?? false,
+      dataExtracted: sp.extracted,
+      json: entry?.json ?? crEntry?.data ?? null,
+      error: entry?.error ?? crEntry?.error,
+    };
+  });
+
+  const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
+  const saCount = specs.filter((s) => s.api === "TheStatsAPI" && s.count);
+  const afSucceeded = afCount.filter((s) => s.extracted).length;
+  const saSucceeded = saCount.filter((s) => s.extracted).length;
+
+  return {
+    competitionId: result.wcCompetitionId,
+    seasonId: result.wcSeasonId,
+    statsMatchId: result.statsApiMatchId,
+    rows,
+    afSucceeded,
+    afTotal: afCount.length,
+    saSucceeded,
+    saTotal: saCount.length,
+    readyForClaude:
+      afSucceeded === afCount.length && saSucceeded === saCount.length,
+  };
+}
+
 const TOTAL_STEPS = 11;
 
 function normalize(name: string): string {
