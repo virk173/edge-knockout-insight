@@ -193,7 +193,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
   interface Spec {
     callLabel: string;
-    api: "API-Football";
+    api: ApiName;
     endpoint: string;
     entryKey: string;
     crKey?: string;
@@ -211,6 +211,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
+    { callLabel: "CALL 9B", api: "OddsPapi", endpoint: "/v4/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -233,8 +234,11 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
 
+  const opCount = specs.filter((s) => s.api === "OddsPapi" && s.count);
+  const oddspapiSucceeded = opCount.filter((s) => s.extracted).length;
+
   // Claude can run as long as the two mandatory team-statistics calls landed.
-  // Optional calls (lineups/referee/bracket) may be EMPTY without blocking.
+  // Optional calls (lineups/referee/bracket/Pinnacle) may be EMPTY without blocking.
   const readyForClaude =
     cr["2A"]?.status === "SUCCESS" && cr["2B"]?.status === "SUCCESS";
 
@@ -242,6 +246,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     rows,
     afSucceeded,
     afTotal: afCount.length,
+    oddspapiSucceeded,
+    oddspapiTotal: opCount.length,
     readyForClaude,
   };
 }
