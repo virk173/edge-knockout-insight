@@ -400,8 +400,17 @@ async function opGet(path: string): Promise<unknown> {
 
   if (!result || !result.ok) {
     const status = result?.status ?? "no response";
-    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`OddsPapi ${status} ${result?.statusText ?? ""}`.trim());
+    // Surface the OddsPapi error body (e.g. {"error":{"message":"Invalid API
+    // key",...}}) so an invalid/expired key is obvious in debug + logs.
+    const bodyErr = getField(getField(result?.json, ["error"]), ["message"]);
+    const detail =
+      (typeof bodyErr === "string" && bodyErr) || result?.statusText || "";
+    const hint =
+      String(status) === "401"
+        ? " — the ODDSPAPI_KEY secret is invalid or expired; update it with a valid key from oddspapi.io"
+        : "";
+    debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: result?.json ?? null, error: `${detail}${hint}`, callLabel: currentDebugCall ?? undefined });
+    throw new Error(`OddsPapi ${status} ${detail}${hint}`.trim());
   }
   const json = result.json ?? null;
   debugSink?.push({ api: "OddsPapi", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
