@@ -12,6 +12,8 @@ export interface Fixture {
   isTomorrow: boolean;
   referee: string | null;
   round: string | null;
+  venueName: string | null;
+  venueCity: string | null;
 }
 
 export type MatchStatus =
@@ -36,7 +38,12 @@ function isoDate(date: Date): string {
 interface ApiFixtureResponse {
   errors?: unknown;
   response?: Array<{
-    fixture: { id: number; date: string; referee?: string | null };
+    fixture: {
+      id: number;
+      date: string;
+      referee?: string | null;
+      venue?: { name?: string | null; city?: string | null } | null;
+    };
     league?: { round?: string | null };
     teams: {
       home: { id: number; name: string };
@@ -90,6 +97,8 @@ async function fetchFixturesForDate(
     isTomorrow,
     referee: item.fixture.referee ?? null,
     round: item.league?.round ?? null,
+    venueName: item.fixture.venue?.name ?? null,
+    venueCity: item.fixture.venue?.city ?? null,
   }));
 }
 
