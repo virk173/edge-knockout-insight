@@ -143,14 +143,14 @@ export function computeOverround(
   outcomes: { name?: string; odds?: number; raw_implied: number; true_implied: number }[];
 } | undefined {
   if (!Array.isArray(outcomes) || outcomes.length === 0) return undefined;
-  const enriched = outcomes
-    .map((o) => {
-      const odds = num(o?.odds);
-      return odds && odds > 0
-        ? { name: o?.name, odds, raw_implied: 1 / odds }
-        : null;
-    })
-    .filter((o): o is { name?: string; odds: number; raw_implied: number } => o !== null);
+  type Enriched = { name?: string; odds: number; raw_implied: number };
+  const enriched: Enriched[] = [];
+  for (const o of outcomes) {
+    const odds = num(o?.odds);
+    if (odds && odds > 0) {
+      enriched.push({ name: o?.name, odds, raw_implied: 1 / odds });
+    }
+  }
   if (enriched.length === 0) return undefined;
   const overround = enriched.reduce((acc, o) => acc + o.raw_implied, 0);
   return {
