@@ -637,6 +637,193 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ---- CALL 7 referee history (client-side derivation) ----
+//
+// API-Football does NOT support filtering fixtures by referee name (the
+// `referee` query parameter returns "The Referee field do not exist"). Instead
+// we pull ALL completed World Cup fixtures for a season once, cache them for the
+// day, then filter client-side by the referee name extracted from CALL 1.
+
+// Day-scoped in-memory cache of completed fixtures per season so the (large)
+// /fixtures?status=FT-AET-PEN call runs at most once per season per day.
+const completedFixturesMem: Record<string, unknown[]> = {};
+
+async function getCompletedFixtures(season: number): Promise<unknown[]> {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const memKey = `${season}_${dateKey}`;
+  if (completedFixturesMem[memKey]) return completedFixturesMem[memKey];
+
+  const lsKey = `wc_completed_fixtures_${season}_${dateKey}`;
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(lsKey);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw) as unknown[];
+        completedFixturesMem[memKey] = arr;
+        return arr;
+      } catch {
+        /* fall through and refetch */
+      }
+    }
+  }
+
+  const r = await afGet(
+    `/fixtures?league=1&season=${season}&status=FT-AET-PEN`,
+  );
+  const arr = extractArray(r);
+  completedFixturesMem[memKey] = arr;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(lsKey, JSON.stringify(arr));
+    } catch {
+      /* localStorage quota — keep the in-memory cache only */
+    }
+  }
+  return arr;
+}
+
+// Case-insensitive, accent-insensitive "contains" check both ways, since
+// referee names vary slightly between API responses.
+function refereeMatches(fixtureRef: unknown, target: string): boolean {
+  if (typeof fixtureRef !== "string") return false;
+  const a = normalize(fixtureRef);
+  const b = normalize(target);
+  if (!a || !b) return false;
+  return a.includes(b) || b.includes(a);
+}
+
+// Sum a numeric statistic of a given type across both teams of one fixture's
+// /fixtures/statistics payload. Returns null when the stat is unavailable.
+function sumStatType(statsResponse: unknown, type: string): number | null {
+  const teams = extractArray(statsResponse);
+  if (!teams.length) return null;
+  let total = 0;
+  let seen = false;
+  for (const team of teams) {
+    const stats = extractArray(getField(team, ["statistics"]));
+    for (const s of stats) {
+      const t = getField(s, ["type"]);
+      if (typeof t === "string" && normalize(t) === normalize(type)) {
+        const v = getField(s, ["value"]);
+        const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
+        if (Number.isFinite(n)) {
+          total += n;
+          seen = true;
+        }
+      }
+    }
+  }
+  return seen ? total : null;
+}
+
+interface RefereeProfile {
+  referee: string;
+  matches_officiated: number;
+  seasons_used: number[];
+  avg_yellow_cards_per_game: number | string;
+  avg_fouls_per_game: number | string;
+  penalties_awarded: number | string;
+  sample_fixtures_with_stats: number;
+}
+
+// Build a referee profile from cached completed fixtures, optionally enriching
+// with per-fixture statistics (yellow cards / fouls / penalties). `withStats`
+// is disabled when the daily API budget is near its limit.
+async function buildRefereeProfile(
+  refName: string,
+  withStats: boolean,
+): Promise<RefereeProfile | null> {
+  // Step 1+4: gather matching fixtures across 2026, falling back to 2022.
+  const matchingByFixtureId = new Map<string, unknown>();
+  const seasonsUsed: number[] = [];
+
+  const collectSeason = async (season: number) => {
+    const fixtures = await getCompletedFixtures(season);
+    let added = 0;
+    for (const fx of fixtures) {
+      const ref = getField(getField(fx, ["fixture"]), ["referee"]);
+      if (refereeMatches(ref, refName)) {
+        const id = String(getField(getField(fx, ["fixture"]), ["id"]) ?? "");
+        if (id && !matchingByFixtureId.has(id)) {
+          matchingByFixtureId.set(id, fx);
+          added++;
+        }
+      }
+    }
+    if (added > 0 && !seasonsUsed.includes(season)) seasonsUsed.push(season);
+  };
+
+  await collectSeason(2026);
+  // Step 4: if fewer than 3 found in 2026, also pull 2022 and combine.
+  if (matchingByFixtureId.size < 3) {
+    await collectSeason(2022);
+  }
+
+  // Step 5: still nothing -> UNKNOWN.
+  if (matchingByFixtureId.size === 0) return null;
+
+  const matching = [...matchingByFixtureId.values()];
+  const profile: RefereeProfile = {
+    referee: refName,
+    matches_officiated: matching.length,
+    seasons_used: seasonsUsed,
+    avg_yellow_cards_per_game: "NOT_AVAILABLE",
+    avg_fouls_per_game: "NOT_AVAILABLE",
+    penalties_awarded: "NOT_AVAILABLE",
+    sample_fixtures_with_stats: 0,
+  };
+
+  // Step 3: derive card/foul/penalty averages from per-fixture statistics.
+  // Each statistics call costs one API request, so cap the sample and skip
+  // entirely when the budget is near its limit.
+  if (withStats) {
+    const MAX_STAT_FIXTURES = 8;
+    const sample = matching.slice(0, MAX_STAT_FIXTURES);
+    let yellowTotal = 0;
+    let foulTotal = 0;
+    let penaltyTotal = 0;
+    let yellowGames = 0;
+    let foulGames = 0;
+    for (const fx of sample) {
+      const id = getField(getField(fx, ["fixture"]), ["id"]);
+      if (id == null) continue;
+      try {
+        const stats = await afGet(`/fixtures/statistics?fixture=${id}`);
+        const yellows = sumStatType(stats, "Yellow Cards");
+        const fouls = sumStatType(stats, "Fouls");
+        const pens = sumStatType(stats, "Penalty");
+        if (yellows != null) {
+          yellowTotal += yellows;
+          yellowGames++;
+        }
+        if (fouls != null) {
+          foulTotal += fouls;
+          foulGames++;
+        }
+        if (pens != null) penaltyTotal += pens;
+      } catch {
+        /* skip this fixture's stats */
+      }
+    }
+    profile.sample_fixtures_with_stats = Math.max(yellowGames, foulGames);
+    if (yellowGames > 0) {
+      profile.avg_yellow_cards_per_game =
+        Math.round((yellowTotal / yellowGames) * 100) / 100;
+    }
+    if (foulGames > 0) {
+      profile.avg_fouls_per_game =
+        Math.round((foulTotal / foulGames) * 100) / 100;
+    }
+    if (yellowGames > 0 || foulGames > 0) {
+      profile.penalties_awarded = penaltyTotal;
+    }
+  }
+
+  return profile;
+}
+
+
+
 export async function collectMatchData(
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
