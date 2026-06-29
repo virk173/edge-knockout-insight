@@ -204,12 +204,17 @@ export function formatDataForClaude(
       blocks.push(
         `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}\n[END CALL ${n}]`,
       );
+    } else if (r?.status === "EXPECTED_EMPTY") {
+      blocks.push(
+        `[CALL ${n} — ${endpoint} — EXPECTED EMPTY]\nNext round fixtures not yet scheduled. Round of 32 still in progress. Bracket context unavailable.\n[END CALL ${n}]`,
+      );
     } else {
       const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
         `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}\n[END CALL ${n}]`,
       );
     }
+
   }
   return blocks.join("\n\n");
 }
