@@ -688,8 +688,8 @@ Start your response with { and end with }.`;
                             <span className="text-accent-amber">
                               Lineups drop in:{" "}
                               {minsToLineups > 0
-                                ? fmtMinutes(minsToLineups)
-                                : "confirmed window"}
+                                ? `${fmtMinutes(minsToLineups)} (T-75)`
+                                : "confirmed window (T-75)"}
                             </span>
                             <span className="text-slate">
                               Kickoff in: {fmtMinutes(minsToKickoff)}
