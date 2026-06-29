@@ -206,8 +206,9 @@ export function formatDataForClaude(
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
-        `[CALL ${n} — ${endpoint} — EXPECTED EMPTY]\nNext round fixtures not yet scheduled. Round of 32 still in progress. Bracket context unavailable.\n[END CALL ${n}]`,
+        `[CALL ${n} — bracket context — EXPECTED EMPTY]\nNext round fixtures not yet scheduled. Round of 32 still in progress. Bracket context unavailable.\n[END CALL ${n}]`,
       );
+
     } else {
       const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
