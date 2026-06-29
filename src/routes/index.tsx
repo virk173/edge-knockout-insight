@@ -448,6 +448,14 @@ Start your response with { and end with }.`;
 
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
+  const counterCritical = apiCalls >= CRITICAL_THRESHOLD;
+  const apiLevel = budgetLevel(apiCalls);
+  const apiColorClass =
+    apiLevel === "critical" || apiLevel === "warning"
+      ? "text-signal-red"
+      : apiLevel === "amber"
+        ? "text-accent-amber"
+        : "text-slate";
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
