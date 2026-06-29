@@ -782,6 +782,68 @@ export async function collectMatchData(
     throw new Error("LINEUP PENDING — lineups not yet published (empty array).");
   });
 
+  // CALL 6B: player intelligence (API-Football player statistics).
+  // Trigger ONLY when CALL 5 (injuries) returned absences, exactly as the
+  // system prompt specifies. Fetches player statistics for each affected team
+  // so Claude can run the GAP score formula. Not part of the 11 numbered
+  // progress steps (like CALL 10); recorded directly into callResults.
+  {
+    currentDebugCall = "6B";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching player intelligence...",
+    });
+    const injuries = callResults["5"];
+    const injuryItems =
+      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
+    const affectedTeamIds = Array.from(
+      new Set(
+        injuryItems
+          .map((it) => getField(getField(it, ["team"]), ["id"]))
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    );
+    if (affectedTeamIds.length === 0) {
+      record(
+        "6B",
+        "Player intelligence",
+        "SKIPPED",
+        undefined,
+        "No absences in CALL 5 — player intelligence not triggered.",
+      );
+    } else {
+      try {
+        const perTeam: Record<string, unknown> = {};
+        for (const teamId of affectedTeamIds) {
+          perTeam[String(teamId)] = await afGet(
+            `/players?team=${teamId}&season=2026`,
+            afKey,
+          );
+        }
+        const anyData = Object.values(perTeam).some((v) => !isEmptyResponse(v));
+        record(
+          "6B",
+          "Player intelligence",
+          anyData ? "SUCCESS" : "EMPTY",
+          anyData ? { affectedTeamIds, playerStatistics: perTeam } : undefined,
+          anyData
+            ? undefined
+            : "No player statistics returned for the affected teams.",
+        );
+      } catch (e) {
+        record(
+          "6B",
+          "Player intelligence",
+          "FAILED",
+          undefined,
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+    currentDebugCall = null;
+  }
+
 
   // 7: referee profile.
   // API-Football cannot filter fixtures by referee with referee+season alone;
