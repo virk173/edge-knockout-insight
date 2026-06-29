@@ -1170,24 +1170,23 @@ EXAMPLE OUTPUT:
       {
         "player": "Sadio Mane",
         "team": "Senegal",
-        "gap_score": 50.8,
-        "gap_calculation": "Gap Score 50.8 CRITICAL above 40",
-        "classification": "CRITICAL",
-        "tournament_stats": {
+        "gap_score_inputs": {
           "actual_goals": 2,
-          "actual_assists": 1
+          "actual_assists": 1,
+          "shots_pg_delta": 1.9,
+          "keypasses_pg_delta": 1.3,
+          "set_piece_weight": 10
         },
+        "multiplier_inputs": {
+          "gap_multiplier": 0.72,
+          "depth_multiplier": 0.95
+        },
+        "classification": "CRITICAL",
         "set_piece_roles": ["free_kick_specialist"],
-        "set_piece_weight": 10,
         "replacement": "Boulaye Dia",
         "replacement_profile": "0G 0A THIN depth",
         "depth_rating": "THIN",
-        "goals_scored_multiplier": 0.72,
-        "goals_conceded_multiplier": 1.0,
-        "xg_proxy_multiplier": 0.72,
-        "stacked_multiplier": 0.684,
-        "stacked_floor_applied": false,
-        "adjustment_note": "CRITICAL 50.8. THIN x0.95. Combined 0.684 above 0.65 floor.",
+        "adjustment_note": "CRITICAL gap. THIN depth x0.95. App computes stacked above 0.65 floor.",
         "source_calls": ["C5","C6","C6B"]
       }
     ],
