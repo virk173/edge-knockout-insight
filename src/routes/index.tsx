@@ -79,6 +79,7 @@ function Index() {
   const [analysisResult, setAnalysisResult] = useState<unknown>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
