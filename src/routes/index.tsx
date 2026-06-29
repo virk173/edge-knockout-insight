@@ -12,6 +12,7 @@ import {
   formatDataForClaude,
   resolveDebugFixture,
   buildDebugReport,
+  refetchLineups,
   DEBUG_FIXTURE_DATE,
   type CollectionResult,
   type DebugReport,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
+import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
   appendLogEntry,
@@ -28,10 +30,16 @@ import {
   type LogEntry,
   type Outcome,
 } from "@/lib/backtestLog";
-import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
+import {
+  getApiCallCount,
+  budgetLevel,
+  DAILY_LIMIT,
+  WARNING_THRESHOLD,
+  CRITICAL_THRESHOLD,
+} from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, HelpCircle } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
   "Analysing team form and statistics...",
@@ -73,6 +81,70 @@ function formatLocal(iso: string): string {
   });
 }
 
+// Lineups for WC2026 are expected to drop ~75 min before kickoff.
+const LINEUP_DROP_MIN = 75;
+
+// Minutes from now until kickoff for a fixture (can be negative).
+function minutesUntil(iso: string, now: Date): number {
+  return Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
+}
+
+// "Xh Ym" / "Y min" friendly minutes formatter.
+function fmtMinutes(mins: number): string {
+  if (mins <= 0) return "now";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// Maps a raw pipeline error into a clear, actionable message.
+function friendlyError(raw: string): string {
+  const m = raw.toLowerCase();
+  if (
+    m.includes("apifootball_key") ||
+    m.includes("vite_apifootball") ||
+    m.includes("api key") ||
+    m.includes("not configured") ||
+    m.includes("missing") && m.includes("key")
+  ) {
+    return "API key not configured.\nAdd VITE_APIFOOTBALL_KEY to your environment variables.";
+  }
+  return raw;
+}
+
+// Builds a short "next matches" string from the upcoming fixtures.
+function nextMatchesText(matches: AnalysedMatch[], now: Date): string {
+  const upcoming = matches
+    .filter((m) => minutesUntil(m.kickoffUtc, now) > 0)
+    .sort(
+      (a, b) =>
+        new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
+    );
+  if (upcoming.length === 0) return "None scheduled.";
+  return upcoming
+    .slice(0, 3)
+    .map((m) => `${m.home} vs ${m.away} (${formatLocal(m.kickoffUtc)})`)
+    .join(", ");
+}
+
+const HOW_TO_TEXT = `Best time to run: 60-90 minutes before kickoff when lineups are confirmed and odds are sharpest.
+
+This tool analyses:
+- Team form and statistics
+- Head-to-head history
+- Confirmed lineups and injuries
+- Referee profile
+- Stake odds with EV calculation
+- Pinnacle line movement
+
+Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C matches only)
+
+Total stake per match: $50
+Do not bet unallocated amounts.`;
+
+
+
 function Index() {
   const [now, setNow] = useState(() => new Date());
   const [loading, setLoading] = useState(false);
@@ -106,6 +178,9 @@ function Index() {
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks fixtures we've already auto-refetched lineups for, so the timer
+  // effect only fires one refetch per match once the lineup-drop time passes.
+  const lineupRefetchedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -145,6 +220,34 @@ function Index() {
     };
   }, [analysing]);
 
+  // Auto re-fetch CALL 6 (lineups) once the lineup-drop time passes, if the
+  // analysis already ran and lineups came back PENDING (empty).
+  useEffect(() => {
+    if (!collection || activeMatchId == null || !matches) return;
+    const match = matches.find((m) => m.id === activeMatchId);
+    if (!match) return;
+    const c6 = collection.callResults["6"];
+    const pending = !c6 || c6.status !== "SUCCESS";
+    if (!pending) return;
+    const mins = minutesUntil(match.kickoffUtc, now);
+    // Lineups drop ~75 min out; only refetch inside that window, pre-kickoff.
+    if (mins > LINEUP_DROP_MIN || mins <= 0) return;
+    if (lineupRefetchedRef.current.has(match.id)) return;
+    lineupRefetchedRef.current.add(match.id);
+    (async () => {
+      const updated = await refetchLineups(match.id);
+      setCollection((prev) =>
+        prev
+          ? { ...prev, callResults: { ...prev.callResults, "6": updated } }
+          : prev,
+      );
+      setApiCalls(getApiCallCount());
+      if (updated.status === "SUCCESS") {
+        toast.success("Confirmed lineups now available — re-analyse for full data.");
+      }
+    })();
+  }, [now, collection, activeMatchId, matches]);
+
   async function handleRun() {
     if (debugMode) {
       await handleRunDebug();
@@ -157,7 +260,7 @@ function Index() {
       setMatches(result.matches);
       setApiCalls(getApiCallCount());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error occurred.");
+      setError(friendlyError(e instanceof Error ? e.message : "Unknown error occurred."));
     } finally {
       setLoading(false);
     }
@@ -270,7 +373,7 @@ Start your response with { and end with }.`;
         const head = cleaned.slice(0, 500);
         const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
         setAnalysisError(
-          `Claude returned output that could not be parsed as JSON. The response may be truncated.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
+          `Analysis could not be parsed.\nCheck the Debug tab for raw output.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
         );
         toast.error("Could not parse analysis JSON");
       }
@@ -285,6 +388,7 @@ Start your response with { and end with }.`;
 
   async function handleAnalyseMatch(match: AnalysedMatch) {
     setActiveMatchId(match.id);
+    lineupRefetchedRef.current.delete(match.id);
     setCollection(null);
     setCollectError(null);
     setAnalysisResult(null);
@@ -302,7 +406,7 @@ Start your response with { and end with }.`;
       setApiCalls(getApiCallCount());
       await runClaudeAnalysis(match, result);
     } catch (e) {
-      setCollectError(e instanceof Error ? e.message : "Data collection failed.");
+      setCollectError(friendlyError(e instanceof Error ? e.message : "Data collection failed."));
       setProgress(null);
       setApiCalls(getApiCallCount());
     }
@@ -334,7 +438,7 @@ Start your response with { and end with }.`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error.";
       console.error("Debug run failed:", err);
-      setError(`Debug analysis failed: ${msg}`);
+      setError(`Debug analysis failed: ${friendlyError(msg)}`);
       setProgress(null);
       setApiCalls(getApiCallCount());
     } finally {
@@ -344,6 +448,14 @@ Start your response with { and end with }.`;
 
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
+  const counterCritical = apiCalls >= CRITICAL_THRESHOLD;
+  const apiLevel = budgetLevel(apiCalls);
+  const apiColorClass =
+    apiLevel === "critical" || apiLevel === "warning"
+      ? "text-signal-red"
+      : apiLevel === "amber"
+        ? "text-accent-amber"
+        : "text-slate";
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -379,33 +491,42 @@ Start your response with { and end with }.`;
           </button>
         </nav>
 
-        <button
-          type="button"
-          role="switch"
-          aria-checked={debugMode}
-          aria-label="Toggle Debug Mode"
-          onClick={() => setDebugMode((v) => !v)}
-          className="flex items-center gap-2"
-        >
+        <div className="flex items-center gap-4">
           <span
-            className={`text-xs font-semibold uppercase tracking-wide ${
-              debugMode ? "text-signal-blue" : "text-slate"
-            }`}
+            className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
+            title="API-Football calls used today (resets at midnight UTC)"
           >
-            Debug
+            API: {apiCalls}/{DAILY_LIMIT}
           </span>
-          <span
-            className={`relative h-5 w-9 rounded-full transition-colors ${
-              debugMode ? "bg-signal-blue" : "bg-border"
-            }`}
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={debugMode}
+            aria-label="Toggle Debug Mode"
+            onClick={() => setDebugMode((v) => !v)}
+            className="flex items-center gap-2"
           >
             <span
-              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                debugMode ? "translate-x-4" : "translate-x-0.5"
+              className={`text-xs font-semibold uppercase tracking-wide ${
+                debugMode ? "text-signal-blue" : "text-slate"
               }`}
-            />
-          </span>
-        </button>
+            >
+              Debug
+            </span>
+            <span
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                debugMode ? "bg-signal-blue" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                  debugMode ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
+        </div>
       </header>
 
       {tab === "log" ? (
@@ -421,21 +542,37 @@ Start your response with { and end with }.`;
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRun}
-              disabled={loading || analysing}
-              className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading
-                ? "Analysing…"
-                : debugMode
-                  ? "Run Debug Analysis"
-                  : "Run Analysis"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={loading || analysing}
+                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading
+                  ? "Analysing…"
+                  : debugMode
+                    ? "Run Debug Analysis"
+                    : "Run Analysis"}
+              </button>
+
+              {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label="How to use this tool"
+                  className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                >
+                  <HelpCircle size={16} />
+                </button>
+                <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                  {HOW_TO_TEXT}
+                </div>
+              </div>
+            </div>
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
-              <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}
+              <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
             </span>
           </div>
 
@@ -446,16 +583,21 @@ Start your response with { and end with }.`;
             </div>
           )}
 
-
-          {counterWarning && (
-            <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
-              ⚠️ Daily API budget near limit ({apiCalls}/{DAILY_LIMIT}). Predictions
-              and bracket calls are skipped for remaining matches today.
+          {counterCritical ? (
+            <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
+              🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only
+              essential calls running (predictions, referee and bracket calls
+              skipped).
             </div>
-          )}
+          ) : counterWarning ? (
+            <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
+              ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Skipping
+              predictions (C8) and bracket (C10) for remaining matches.
+            </div>
+          ) : null}
 
           {error && (
-            <div className="w-full rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="w-full whitespace-pre-line rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -467,16 +609,43 @@ Start your response with { and end with }.`;
           )}
 
           {matches && matches.length === 0 && (
-            <p className="pt-10 text-lg font-medium text-slate">
-              No fixtures found for today or tomorrow.
-            </p>
+            <div className="w-full rounded-md border border-border bg-card/40 px-4 py-5 text-center text-sm text-slate">
+              No World Cup matches scheduled today or tomorrow. Check back closer
+              to the next knockout fixtures.
+            </div>
           )}
+
+          {matches &&
+            matches.length > 0 &&
+            matches.filter((m) => !m.isTomorrow).length === 0 && (
+              <div className="w-full whitespace-pre-line rounded-md border border-border bg-card/40 px-4 py-4 text-center text-sm text-slate">
+                No World Cup matches scheduled today.
+                {"\n"}Next match: {nextMatchesText(matches, now)}
+              </div>
+            )}
+
+          {matches &&
+            matches.length > 0 &&
+            matches.filter((m) => !m.isTomorrow).length > 0 &&
+            matches
+              .filter((m) => !m.isTomorrow)
+              .every((m) => m.status === "SKIP") && (
+              <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
+                All of today's matches have already kicked off. Come back
+                tomorrow.
+                {"\n"}Next matches: {nextMatchesText(matches, now)}
+              </div>
+            )}
 
           {matches && matches.length > 0 && (
             <ul className="flex w-full flex-col gap-3">
               {matches.map((m) => {
                 const meta = STATUS_META[m.status];
                 const isActive = activeMatchId === m.id;
+                const showCountdown =
+                  m.status === "OPTIMAL" || m.status === "VALID";
+                const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+                const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
                 return (
                   <li
                     key={m.id}
@@ -490,6 +659,19 @@ Start your response with { and end with }.`;
                         <span className="font-mono text-xs text-slate">
                           {formatLocal(m.kickoffUtc)}
                         </span>
+                        {showCountdown && (
+                          <span className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs">
+                            <span className="text-accent-amber">
+                              Lineups drop in:{" "}
+                              {minsToLineups > 0
+                                ? fmtMinutes(minsToLineups)
+                                : "confirmed window"}
+                            </span>
+                            <span className="text-slate">
+                              Kickoff in: {fmtMinutes(minsToKickoff)}
+                            </span>
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span
@@ -557,6 +739,16 @@ Start your response with { and end with }.`;
             </ul>
           )}
         </div>
+
+        {/* Loading skeletons (prevent layout shift while Claude generates) */}
+        {activeMatchId !== null &&
+          analysing &&
+          analysisResult === null &&
+          !analysisRaw && (
+            <div className="mt-8 w-full max-w-5xl">
+              <SkeletonDashboard />
+            </div>
+          )}
 
         {/* Wide analysis output area */}
         {activeMatchId !== null && (analysisResult !== null || analysisRaw) && (
@@ -642,8 +834,18 @@ Start your response with { and end with }.`;
       )}
 
 
-      <footer className="border-t border-border px-6 py-3 text-center">
-        <span className="font-mono text-sm text-slate" suppressHydrationWarning>
+      <footer className="flex flex-col items-center gap-1 border-t border-border px-6 py-4 text-center">
+        <span className="text-xs font-semibold text-foreground">
+          Edge v3.2 — WC2026 Knockout Intelligence
+        </span>
+        <span className="text-xs text-slate">
+          Not financial advice. Bet responsibly.
+        </span>
+        <span className="font-mono text-xs text-slate">
+          API calls today: <span className={apiColorClass}>{apiCalls}</span>/
+          {DAILY_LIMIT}
+        </span>
+        <span className="mt-1 font-mono text-sm text-slate" suppressHydrationWarning>
           {formatUtc(now)}
         </span>
       </footer>

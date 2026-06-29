@@ -7,6 +7,7 @@ import {
   getApiCallCount,
   incrementApiCallCount,
   WARNING_THRESHOLD,
+  CRITICAL_THRESHOLD,
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
@@ -108,6 +109,42 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
 ];
 
 /**
+ * Per-call schema validation. Returns the data unchanged when the call-specific
+ * required fields are present, or null when the response is structurally invalid
+ * (so formatDataForClaude renders it as an EMPTY block instead of feeding Claude
+ * malformed data). Validation is keyed by the logical CALL number.
+ */
+export function validateCall(callKey: string, data: unknown): unknown {
+  if (data == null) return null;
+
+  const d = data as Record<string, unknown>;
+  const resp = d.response as unknown;
+  const firstResp =
+    Array.isArray(resp) && resp.length ? (resp[0] as Record<string, unknown>) : undefined;
+
+  const checks: Record<string, () => boolean> = {
+    "2A": () => !!firstResp?.statistics,
+    "2B": () => !!firstResp?.statistics,
+    "3": () => resp !== undefined,
+    "4": () => resp !== undefined,
+    "5": () => resp !== undefined,
+    "6": () => resp !== undefined,
+    "7": () => resp !== undefined,
+    "8": () => !!firstResp?.predictions,
+    "9A": () => resp !== undefined,
+    "9B": () => d.bookmakerOdds !== undefined || d.data !== undefined || d.markets !== undefined,
+    "10": () => resp !== undefined,
+  };
+
+  const check = checks[callKey];
+  if (check && !check()) {
+    console.warn(`Call ${callKey} failed schema validation`, data);
+    return null;
+  }
+  return data;
+}
+
+/**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
@@ -119,13 +156,16 @@ export function formatDataForClaude(
   // Defensive: never assume callResults (or any individual entry) exists.
   const safeResults: Record<string, CallResult> = callResults ?? {};
 
-  // Safely pull the validated data out of a single call result.
-  const getCallData = (key: string): unknown => {
+  // Safely pull the validated data out of a single call result. Runs the
+  // per-call schema validator and drops the data if it fails.
+  const getCallData = (key: string, validationKey?: string): unknown => {
     const result = safeResults[key];
     if (!result || result.status !== "SUCCESS" || result.data == null) {
       return null;
     }
-    return result.data;
+    return validateCall(validationKey ?? key, result.data) === null && validationKey
+      ? null
+      : result.data;
   };
 
   // The odds step stores its data under key "9" (Stake only).
@@ -151,11 +191,16 @@ export function formatDataForClaude(
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
-    const hasData =
-      r && r.status === "SUCCESS" && r.data !== null && !isEmptyResponse(r.data);
+    // Validate the response shape before feeding it to Claude. validateCall
+    // returns null for structurally invalid responses.
+    const validated =
+      r && r.status === "SUCCESS" && r.data !== null
+        ? validateCall(n, r.data)
+        : null;
+    const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
       blocks.push(
-        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(r.data, null, 2)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}\n[END CALL ${n}]`,
       );
     } else {
       const note = r?.error ? `\n${r.error}` : "";
@@ -326,21 +371,31 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
 let oddspapiCallsThisRun = 0;
 
 // OddsPapi GET (via server proxy). The server appends the apiKey query param.
-// Waits 900ms before the second (or later) OddsPapi call in the same run.
+// Free tier enforces a ~0.88s cooldown between calls, so we always wait 900ms
+// before issuing a call. On HTTP 429 (rate limit) we wait 2s and retry once;
+// if the retry also fails we surface the error (the C9B caller swallows it).
 async function opGet(path: string): Promise<unknown> {
-  if (oddspapiCallsThisRun > 0) {
-    await sleep(ODDSPAPI_COOLDOWN_MS);
-  }
+  // 900ms cooldown before every OddsPapi call (including the first this run).
+  await sleep(ODDSPAPI_COOLDOWN_MS);
   oddspapiCallsThisRun++;
   const url = `${OP_BASE}${path}`;
-  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
-  try {
-    result = await apiFetch({ data: { provider: "oddspapi", url } });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "OddsPapi", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`OddsPapi network error: ${msg}`);
+
+  const attempt = async (): Promise<{ ok: boolean; status: number | string; statusText?: string; json: unknown }> => {
+    try {
+      return await apiFetch({ data: { provider: "oddspapi", url } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, status: "network error", statusText: msg, json: null };
+    }
+  };
+
+  let result = await attempt();
+  // Retry once on rate-limit (429) after a 2s wait.
+  if (!result.ok && String(result.status) === "429") {
+    await sleep(2000);
+    result = await attempt();
   }
+
   if (!result || !result.ok) {
     const status = result?.status ?? "no response";
     debugSink?.push({ api: "OddsPapi", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
@@ -641,6 +696,7 @@ export async function collectMatchData(
   };
 
   const counterWarning = getApiCallCount() >= WARNING_THRESHOLD;
+  const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
   // ---- STEP 1: data calls ----
   // 1 + 2: team statistics
@@ -740,7 +796,15 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching referee profile... (9/11)",
     });
-    if (!match.referee) {
+    if (counterCritical) {
+      record(
+        "7",
+        "Referee profile",
+        "SKIPPED",
+        undefined,
+        "Skipped — daily API budget critical (>=95). Referee strictness: UNKNOWN.",
+      );
+    } else if (!match.referee) {
       record(
         "7",
         "Referee profile",
@@ -971,9 +1035,40 @@ export async function collectMatchData(
   };
 }
 
+/**
+ * Re-fetch CALL 6 (confirmed lineups) for a single fixture. Used to
+ * auto-refresh lineups once the lineup-drop time passes when an earlier run
+ * came back LINEUP PENDING. Returns a CallResult that callers can merge into an
+ * existing callResults object. Increments the API counter via afGet.
+ */
+export async function refetchLineups(fixtureId: number): Promise<CallResult> {
+  try {
+    const payload = await afGet(`/fixtures/lineups?fixture=${fixtureId}`);
+    if (isEmptyResponse(payload)) {
+      return {
+        key: "6",
+        label: "Confirmed lineups",
+        status: "EMPTY",
+        error: "LINEUP PENDING — lineups not yet published (empty array).",
+      };
+    }
+    return {
+      key: "6",
+      label: "Confirmed lineups",
+      status: "SUCCESS",
+      data: replaceNulls(payload),
+    };
+  } catch (e) {
+    return {
+      key: "6",
+      label: "Confirmed lineups",
+      status: "FAILED",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
 
 
-// ============================================================================
 // DEBUG MODE — resolve a fixed real fixture for testing the full pipeline.
 // South Africa vs Canada (2026-06-28). Fetches the real fixture from
 // API-Football for that date so collectMatchData can run against live data.
