@@ -1,6 +1,8 @@
-// API-Football fixtures fetching + status logic (client-side, uses VITE key).
+// API-Football fixtures fetching + status logic. API key lives server-side
+// (APIFOOTBALL_KEY) and is used by the api-proxy server function.
 
 import { incrementApiCallCount } from "./apiCounter";
+import { apiFetch } from "./api-proxy.functions";
 
 export interface Fixture {
   id: number;
