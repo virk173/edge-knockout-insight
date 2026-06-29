@@ -76,6 +76,8 @@ export interface DimensionBreakdownItem {
 }
 
 export interface ConfidenceScores {
+  // Raw variables from Claude (preferred source of truth).
+  confidence_inputs?: ConfidenceInputs;
   dimension_weighted_raw?: number;
   adjustments?: ConfidenceAdjustment[];
   post_adjustment?: number;
