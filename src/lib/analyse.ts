@@ -1339,18 +1339,33 @@ export async function collectMatchData(
 /**
  * Re-fetch CALL 6 (confirmed lineups) for a single fixture. Used to
  * auto-refresh lineups once the lineup-drop time passes when an earlier run
- * came back LINEUP PENDING. Returns a CallResult that callers can merge into an
- * existing callResults object. Increments the API counter via afGet.
+ * came back LINEUP PENDING. Resolves TheStatsAPI's match_id by team name on the
+ * kickoff date, then fetches /football/matches/{match_id}/lineups. Returns a
+ * CallResult that callers can merge into an existing callResults object.
  */
-export async function refetchLineups(fixtureId: number): Promise<CallResult> {
+export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> {
   try {
-    const payload = await afGet(`/fixtures/lineups?fixture=${fixtureId}`);
+    const matchId = await resolveStatsApiMatchId(
+      match.home,
+      match.away,
+      match.kickoffUtc,
+    );
+    if (!matchId) {
+      return {
+        key: "6",
+        label: "Confirmed lineups",
+        status: "EMPTY",
+        error:
+          "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date.",
+      };
+    }
+    const payload = await saGet(`/football/matches/${matchId}/lineups`);
     if (isEmptyResponse(payload)) {
       return {
         key: "6",
         label: "Confirmed lineups",
         status: "EMPTY",
-        error: "LINEUP PENDING — lineups not yet published (empty array).",
+        error: "LINEUP PENDING — lineups not yet announced (empty/404).",
       };
     }
     return {
