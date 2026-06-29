@@ -542,21 +542,37 @@ Start your response with { and end with }.`;
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRun}
-              disabled={loading || analysing}
-              className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading
-                ? "Analysing…"
-                : debugMode
-                  ? "Run Debug Analysis"
-                  : "Run Analysis"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={loading || analysing}
+                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading
+                  ? "Analysing…"
+                  : debugMode
+                    ? "Run Debug Analysis"
+                    : "Run Analysis"}
+              </button>
+
+              {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label="How to use this tool"
+                  className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                >
+                  <HelpCircle size={16} />
+                </button>
+                <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                  {HOW_TO_TEXT}
+                </div>
+              </div>
+            </div>
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
-              <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}
+              <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
             </span>
           </div>
 
@@ -567,16 +583,21 @@ Start your response with { and end with }.`;
             </div>
           )}
 
-
-          {counterWarning && (
-            <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
-              ⚠️ Daily API budget near limit ({apiCalls}/{DAILY_LIMIT}). Predictions
-              and bracket calls are skipped for remaining matches today.
+          {counterCritical ? (
+            <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
+              🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only
+              essential calls running (predictions, referee and bracket calls
+              skipped).
             </div>
-          )}
+          ) : counterWarning ? (
+            <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
+              ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Skipping
+              predictions (C8) and bracket (C10) for remaining matches.
+            </div>
+          ) : null}
 
           {error && (
-            <div className="w-full rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="w-full whitespace-pre-line rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -588,10 +609,33 @@ Start your response with { and end with }.`;
           )}
 
           {matches && matches.length === 0 && (
-            <p className="pt-10 text-lg font-medium text-slate">
-              No fixtures found for today or tomorrow.
-            </p>
+            <div className="w-full rounded-md border border-border bg-card/40 px-4 py-5 text-center text-sm text-slate">
+              No World Cup matches scheduled today or tomorrow. Check back closer
+              to the next knockout fixtures.
+            </div>
           )}
+
+          {matches &&
+            matches.length > 0 &&
+            matches.filter((m) => !m.isTomorrow).length === 0 && (
+              <div className="w-full whitespace-pre-line rounded-md border border-border bg-card/40 px-4 py-4 text-center text-sm text-slate">
+                No World Cup matches scheduled today.
+                {"\n"}Next match: {nextMatchesText(matches, now)}
+              </div>
+            )}
+
+          {matches &&
+            matches.length > 0 &&
+            matches.filter((m) => !m.isTomorrow).length > 0 &&
+            matches
+              .filter((m) => !m.isTomorrow)
+              .every((m) => m.status === "SKIP") && (
+              <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
+                All of today's matches have already kicked off. Come back
+                tomorrow.
+                {"\n"}Next matches: {nextMatchesText(matches, now)}
+              </div>
+            )}
 
           {matches && matches.length > 0 && (
             <ul className="flex w-full flex-col gap-3">
