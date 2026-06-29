@@ -209,6 +209,21 @@ Start your response with { and end with }.`;
     }
   }
 
+  async function handleTestMode() {
+    // Bypass all API calls: inject the France vs Senegal mock data directly.
+    setTestMode(true);
+    setError(null);
+    const mockMatch = MOCK_TEST_MATCH;
+    const mockResult = buildMockCollectionResult();
+    setMatches([mockMatch]);
+    setActiveMatchId(mockMatch.id);
+    setCollectError(null);
+    setProgress(null);
+    setCollection(mockResult);
+    toast.message("Test Mode", { description: "Using mock France vs Senegal data." });
+    await runClaudeAnalysis(mockMatch, mockResult);
+  }
+
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
 
   return (
