@@ -11,9 +11,11 @@ import {
   collectMatchData,
   formatDataForClaude,
   resolveDebugFixture,
+  buildDebugReport,
   DEBUG_FIXTURE_DATE,
   type CollectionResult,
   type DebugEntry,
+  type DebugReport,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
