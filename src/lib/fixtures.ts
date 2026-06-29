@@ -1,11 +1,17 @@
 // API-Football fixtures fetching + status logic (client-side, uses VITE key).
 
+import { incrementApiCallCount } from "./apiCounter";
+
 export interface Fixture {
   id: number;
   home: string;
   away: string;
+  homeId: number;
+  awayId: number;
   kickoffUtc: string; // ISO string
   isTomorrow: boolean;
+  referee: string | null;
+  round: string | null;
 }
 
 export type MatchStatus =
@@ -30,8 +36,12 @@ function isoDate(date: Date): string {
 interface ApiFixtureResponse {
   errors?: unknown;
   response?: Array<{
-    fixture: { id: number; date: string };
-    teams: { home: { name: string }; away: { name: string } };
+    fixture: { id: number; date: string; referee?: string | null };
+    league?: { round?: string | null };
+    teams: {
+      home: { id: number; name: string };
+      away: { id: number; name: string };
+    };
   }>;
 }
 
@@ -74,8 +84,12 @@ async function fetchFixturesForDate(
     id: item.fixture.id,
     home: item.teams.home.name,
     away: item.teams.away.name,
+    homeId: item.teams.home.id,
+    awayId: item.teams.away.id,
     kickoffUtc: item.fixture.date,
     isTomorrow,
+    referee: item.fixture.referee ?? null,
+    round: item.league?.round ?? null,
   }));
 }
 
@@ -110,12 +124,14 @@ export async function runAnalysis(): Promise<AnalysisResult> {
   let apiCallsUsed = 0;
   const todayFixtures = await fetchFixturesForDate(isoDate(now), apiKey, false);
   apiCallsUsed += 1;
+  incrementApiCallCount();
   const tomorrowFixtures = await fetchFixturesForDate(
     isoDate(tomorrow),
     apiKey,
     true,
   );
   apiCallsUsed += 1;
+  incrementApiCallCount();
 
   const reference = new Date();
   const matches: AnalysedMatch[] = [...todayFixtures, ...tomorrowFixtures]
