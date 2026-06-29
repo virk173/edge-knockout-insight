@@ -1260,8 +1260,10 @@ EXAMPLE OUTPUT:
       "potential_return_realistic": "$86.00",
       "basis_note": "Realistic uses hold-adjusted 4.30. Use this figure."
     },
-    "parlay_ev": 0.075,
-    "ev_rating": "MARGINAL",
+    "parlay_ev_inputs": {
+      "p_final": 0.150,
+      "effective_sgp_price": 4.30
+    },
     "reasoning": "France Win + Over 3.5 Cards + Under 2.5 Goals. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]."
   },
   "tier_3_jackpot": {
