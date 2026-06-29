@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   runAnalysis,
   STATUS_META,
@@ -7,10 +9,23 @@ import {
 } from "@/lib/fixtures";
 import {
   collectMatchData,
+  formatDataForClaude,
   type CollectionResult,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import { getApiCallCount, DAILY_LIMIT, WARNING_THRESHOLD } from "@/lib/apiCounter";
+import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
+import { analyseMatch } from "@/lib/analyse-match.functions";
+
+const CLAUDE_LOADING_MESSAGES = [
+  "Analysing team form and statistics...",
+  "Evaluating tactical matchups...",
+  "Calculating expected value...",
+  "Checking Pinnacle line movement...",
+  "Building parlay recommendations...",
+  "Validating EV thresholds...",
+  "Generating betting cards...",
+];
 
 export const Route = createFileRoute("/")({
   head: () => ({
