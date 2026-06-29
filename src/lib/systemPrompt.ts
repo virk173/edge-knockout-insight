@@ -1573,7 +1573,7 @@ EXAMPLE OUTPUT:
 
   "lineup_confirmed": true,
 
-  "lineup_source": "TheStatsAPI",
+  "lineup_source": "API-Football",
 
   "odds_source": "Stake",
 
