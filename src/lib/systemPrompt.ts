@@ -774,13 +774,12 @@ amnesty_status:
     player, team, yellows_this_block,
     role, market_impact
 confidence_scores:
-  dimension_weighted_raw,
-  adjustments array each with
-    type and delta,
-  post_adjustment,
-  bayesian_applied boolean,
-  bayesian_formula string,
-  final_confidence
+  confidence_inputs with:
+    dimension_weighted_raw,
+    adjustments array each with
+      type and delta
+  (app computes post_adjustment,
+   bayesian_applied and final_confidence)
 tactical_analysis:
   formation_home, formation_away,
   formation_home_assumed,
