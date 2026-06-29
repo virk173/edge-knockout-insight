@@ -312,9 +312,12 @@ interface WcIds {
   seasonId: string;
 }
 
-async function resolveWcIds(key: string): Promise<WcIds | null> {
+async function resolveWcIds(
+  key: string,
+  bypassCache = false,
+): Promise<WcIds | null> {
   const cacheKey = `statsapi_wc2026_ids_${todayDate()}`;
-  if (typeof window !== "undefined") {
+  if (!bypassCache && typeof window !== "undefined") {
     const cached = window.localStorage.getItem(cacheKey);
     if (cached) {
       try {
@@ -325,7 +328,14 @@ async function resolveWcIds(key: string): Promise<WcIds | null> {
     }
   }
 
-  const payload = await saGet("/competitions", key);
+  const prev = currentDebugCall;
+  currentDebugCall = "competitions";
+  let payload: unknown;
+  try {
+    payload = await saGet("/competitions", key);
+  } finally {
+    currentDebugCall = prev;
+  }
   const comps = extractArray(payload);
   const wc = comps.find((c) => {
     const name = getField(c, ["name", "title", "competition_name"]);
@@ -351,34 +361,43 @@ async function resolveWcIds(key: string): Promise<WcIds | null> {
   return ids;
 }
 
-// Step 0: build name -> statsapi match id lookup for today + tomorrow.
+// Step 0: build name -> statsapi match id lookup. Returns the resolved
+// competition/season ids alongside the lookup so the debug report can show them.
 async function buildStatsApiLookup(
   key: string,
-): Promise<Record<string, string>> {
-  const ids = await resolveWcIds(key);
-  if (!ids) return {};
+  opts: { dates?: string[]; bypassCache?: boolean } = {},
+): Promise<{ lookup: Record<string, string>; ids: WcIds | null }> {
+  const ids = await resolveWcIds(key, opts.bypassCache);
+  if (!ids) return { lookup: {}, ids: null };
 
   const lookup: Record<string, string> = {};
   const today = todayDate();
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const dates = Array.from(new Set([today, tomorrow, ...(opts.dates ?? [])]));
 
-  for (const date of [today, tomorrow]) {
-    const payload = await saGet(
-      `/matches?competition_id=${encodeURIComponent(
-        ids.competitionId,
-      )}&season_id=${encodeURIComponent(ids.seasonId)}&date=${date}`,
-      key,
-    );
-    for (const m of extractArray(payload)) {
-      const home = getTeamName(m, "home");
-      const away = getTeamName(m, "away");
-      const matchId = getField(m, ["match_id", "id"]);
-      if (home && away && matchId !== undefined) {
-        lookup[pairKey(home, away)] = String(matchId);
+  const prev = currentDebugCall;
+  currentDebugCall = "matches";
+  try {
+    for (const date of dates) {
+      const payload = await saGet(
+        `/matches?competition_id=${encodeURIComponent(
+          ids.competitionId,
+        )}&season_id=${encodeURIComponent(ids.seasonId)}&date=${date}`,
+        key,
+      );
+      for (const m of extractArray(payload)) {
+        const home = getTeamName(m, "home");
+        const away = getTeamName(m, "away");
+        const matchId = getField(m, ["match_id", "id"]);
+        if (home && away && matchId !== undefined) {
+          lookup[pairKey(home, away)] = String(matchId);
+        }
       }
     }
+  } finally {
+    currentDebugCall = prev;
   }
-  return lookup;
+  return { lookup, ids };
 }
 
 function nextRound(current: string | null): string | null {
