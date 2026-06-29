@@ -254,6 +254,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6B", api: "API-Football", endpoint: "/players (player statistics)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
