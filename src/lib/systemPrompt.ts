@@ -1886,7 +1886,7 @@ EXAMPLE OUTPUT:
 
   "key_risk_flag": "Senegal 4-4-2 compact block is untested at this tournament. If they execute low-block effectively France may struggle in 90 minutes increasing ET probability.",
 
-  "analyst_note": "France are firm favourites and Mane's confirmed CRITICAL absence fundamentally changes this match. Senegal's tactical shift to 4-4-2 signals defensive intent. Zwayer strictness 89.95 combined with Senegal's physical style makes cards interesting but parlay EV was negative after hold adjustment. Under 2.5 anchor at EV 0.101 with sharp money confirmation and Stake offering 3.5% over Pinnacle is the clearest value bet.",
+  "analyst_note": "France are firm favourites and Mane's confirmed CRITICAL absence fundamentally changes this match. Senegal's tactical shift to 4-4-2 signals defensive intent. Zwayer strictness 89.95 combined with Senegal's physical style makes cards interesting but parlay EV was negative after hold adjustment. Under 2.5 anchor at EV 0.101 is the clearest value bet.",
 
   "log_entry": {
 
