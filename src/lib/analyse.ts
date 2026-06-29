@@ -53,8 +53,6 @@ export interface DebugCallRow {
 }
 
 export interface DebugReport {
-  competitionId: string | null;
-  seasonId: string | null;
   statsMatchId: string | null;
   rows: DebugCallRow[];
   afSucceeded: number;
@@ -68,21 +66,12 @@ export interface CollectionResult {
   callResults: Record<string, CallResult>;
   statsApiResolved: boolean;
   statsApiMatchId: string | null;
-  wcCompetitionId: string | null;
-  wcSeasonId: string | null;
   succeeded: number;
   emptyOrFailed: number;
   failedCalls: string[];
   warning: string | null;
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
-  // Debug-only: raw TheStatsAPI /competitions response, for diagnosing the
-  // competition name/field search logic.
-  competitionsRawPreview?: string;
-  competitionsFirst5?: unknown[];
-  // Debug-only: all international tournaments (type === "tournament" with no
-  // country) found in TheStatsAPI, so we can locate the World Cup entry + id.
-  internationalTournaments?: { id: string; name: string }[];
 }
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
@@ -92,17 +81,8 @@ let debugSink: DebugEntry[] | null = null;
 
 // Module-level label for the logical call currently executing. afGet/saGet
 // stamp every captured DebugEntry with it so the Debug report can group raw
-// HTTP calls under their logical CALL number (e.g. "2A", "9B", "competitions").
+// HTTP calls under their logical CALL number (e.g. "2A", "6", "matches").
 let currentDebugCall: string | null = null;
-
-// Captures the raw TheStatsAPI /competitions response from the most recent
-// resolveWcIds call so Debug Mode can show exactly what field/competition names
-// the API uses. Reset at the start of each collectMatchData run.
-let lastCompetitionsRaw: unknown = null;
-
-// Captures the list of international tournaments (type === "tournament" with no
-// country) from the most recent /competitions response for Debug Mode display.
-let lastInternationalTournaments: { id: string; name: string }[] = [];
 
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
@@ -116,7 +96,6 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "TheStatsAPI/odds (Pinnacle)" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
@@ -140,12 +119,10 @@ export function formatDataForClaude(
     return result.data;
   };
 
-  // The combined odds step stores its data under key "9".
+  // The odds step stores its data under key "9" (Stake only).
   const combinedOdds = safeResults["9"];
   const oddsData = (getCallData("9") ?? null) as {
     stakeOdds?: unknown;
-    pinnacleOdds?: unknown;
-    pinnacleError?: string | null;
   } | null;
 
   const resolved: Record<string, { status: CallStatus; data: unknown; error?: string }> = {};
@@ -153,18 +130,12 @@ export function formatDataForClaude(
     if (!v) continue;
     resolved[k] = { status: v.status, data: v.data ?? null, error: v.error };
   }
-  // Synthesize 9A and 9B from the combined "9" call.
+  // Synthesize 9A (Stake odds) from the combined "9" call.
   if (combinedOdds) {
     const stake = oddsData?.stakeOdds ?? null;
     resolved["9A"] = {
       status: isEmptyResponse(stake) || combinedOdds.status !== "SUCCESS" ? "EMPTY" : "SUCCESS",
       data: stake,
-    };
-    const pinnacle = oddsData?.pinnacleOdds ?? null;
-    resolved["9B"] = {
-      status: isEmptyResponse(pinnacle) ? "EMPTY" : "SUCCESS",
-      data: pinnacle,
-      error: oddsData?.pinnacleError ?? undefined,
     };
   }
 
@@ -209,9 +180,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     return matches.length ? matches[matches.length - 1] : undefined;
   };
 
-  const odds = cr["9"]?.data as
-    | { stakeOdds?: unknown; pinnacleOdds?: unknown }
-    | undefined;
+  const odds = cr["9"]?.data as { stakeOdds?: unknown } | undefined;
 
   interface Spec {
     callLabel: string;
@@ -232,10 +201,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "STATSAPI competitions", api: "TheStatsAPI", endpoint: "/football/competitions (verify IDs)", entryKey: "competitions", extracted: result.wcCompetitionId !== null, count: false },
-    { callLabel: "STATSAPI matches", api: "TheStatsAPI", endpoint: "/football/matches (match ID lookup)", entryKey: "matches", extracted: result.statsApiMatchId !== null, count: true },
+    { callLabel: "STATSAPI matches", api: "TheStatsAPI", endpoint: "/football/matches (lineup match lookup)", entryKey: "matches", extracted: result.statsApiMatchId !== null, count: true },
     { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 9B", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: hasUsableData(odds?.pinnacleOdds), count: true },
   ];
 
   const rows: DebugCallRow[] = specs.map((sp) => {
@@ -260,8 +227,6 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   const saSucceeded = saCount.filter((s) => s.extracted).length;
 
   return {
-    competitionId: result.wcCompetitionId,
-    seasonId: result.wcSeasonId,
     statsMatchId: result.statsApiMatchId,
     rows,
     afSucceeded,
@@ -283,13 +248,6 @@ function normalize(name: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function pairKey(home: string, away: string): string {
-  return `${normalize(home)}_vs_${normalize(away)}`;
-}
-
-function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // Deep-replace null values with "NOT_AVAILABLE".
 function replaceNulls(value: unknown): unknown {
@@ -409,126 +367,47 @@ function getTeamName(obj: unknown, side: "home" | "away"): string | null {
   return null;
 }
 
-interface WcIds {
-  competitionId: string;
-  seasonId: string;
+// TheStatsAPI is used ONLY for confirmed lineups. We find the match id by
+// listing all matches on the kickoff date and loosely matching team names
+// (lowercase, mutual substring) against the API-Football names.
+function looseTeamMatch(a: string, b: string): boolean {
+  const x = normalize(a);
+  const y = normalize(b);
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x);
 }
 
-async function resolveWcIds(
+async function findStatsApiMatchId(
   key: string,
-  bypassCache = false,
-): Promise<WcIds | null> {
-  const cacheKey = `statsapi_wc2026_ids_${todayDate()}`;
-  if (!bypassCache && typeof window !== "undefined") {
-    const cached = window.localStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached) as WcIds;
-      } catch {
-        // fall through and re-fetch
-      }
-    }
-  }
-
-  const prev = currentDebugCall;
-  currentDebugCall = "competitions";
-  let payload: unknown;
-  try {
-    payload = await saGet("/competitions", key);
-  } finally {
-    currentDebugCall = prev;
-  }
-  lastCompetitionsRaw = payload;
-  console.log(
-    "TheStatsAPI competitions raw:",
-    JSON.stringify(payload).slice(0, 2000),
-  );
-  const comps = extractArray(payload);
-
-  // Capture all international tournaments (type === "tournament" with no
-  // country) for debug display so we can spot the exact World Cup entry/id.
-  lastInternationalTournaments = comps
-    .filter((c) => {
-      const rec = c as Record<string, unknown>;
-      return rec?.type === "tournament" && !rec?.country;
-    })
-    .map((c) => {
-      const rec = c as Record<string, unknown>;
-      return {
-        id: String(getField(c, ["id", "competition_id"]) ?? ""),
-        name: String(getField(c, ["name", "title", "competition_name"]) ?? ""),
-      };
-    });
-
-  const wc = comps.find((c) => {
-    const rec = c as Record<string, unknown>;
-    const name = getField(c, ["name", "title", "competition_name"]);
-    const lower = typeof name === "string" ? name.toLowerCase() : "";
-    return (
-      lower.includes("world cup") ||
-      lower.includes("fifa world") ||
-      (rec?.type === "tournament" &&
-        rec?.country === null &&
-        rec?.confederation === "FIFA")
-    );
-  });
-  if (!wc) return null;
-
-  const competitionId = getField(wc, ["competition_id", "id"]);
-  let seasonId = getField(wc, ["season_id", "current_season_id"]);
-  if (!seasonId) {
-    const season = getField(wc, ["current_season", "season"]);
-    seasonId = getField(season, ["season_id", "id"]);
-  }
-  if (!competitionId || !seasonId) return null;
-
-  const ids: WcIds = {
-    competitionId: String(competitionId),
-    seasonId: String(seasonId),
-  };
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(cacheKey, JSON.stringify(ids));
-  }
-  return ids;
-}
-
-// Step 0: build name -> statsapi match id lookup. Returns the resolved
-// competition/season ids alongside the lookup so the debug report can show them.
-async function buildStatsApiLookup(
-  key: string,
-  opts: { dates?: string[]; bypassCache?: boolean } = {},
-): Promise<{ lookup: Record<string, string>; ids: WcIds | null }> {
-  const ids = await resolveWcIds(key, opts.bypassCache);
-  if (!ids) return { lookup: {}, ids: null };
-
-  const lookup: Record<string, string> = {};
-  const today = todayDate();
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const dates = Array.from(new Set([today, tomorrow, ...(opts.dates ?? [])]));
-
+  matchDate: string,
+  home: string,
+  away: string,
+): Promise<string | null> {
   const prev = currentDebugCall;
   currentDebugCall = "matches";
+  let payload: unknown;
   try {
-    for (const date of dates) {
-      const payload = await saGet(
-        `/matches?competition_id=${encodeURIComponent(
-          ids.competitionId,
-        )}&season_id=${encodeURIComponent(ids.seasonId)}&date=${date}`,
-        key,
-      );
-      for (const m of extractArray(payload)) {
-        const home = getTeamName(m, "home");
-        const away = getTeamName(m, "away");
-        const matchId = getField(m, ["match_id", "id"]);
-        if (home && away && matchId !== undefined) {
-          lookup[pairKey(home, away)] = String(matchId);
-        }
-      }
-    }
+    payload = await saGet(`/matches?date=${matchDate}`, key);
   } finally {
     currentDebugCall = prev;
   }
-  return { lookup, ids };
+
+  for (const m of extractArray(payload)) {
+    const mHome = getTeamName(m, "home");
+    const mAway = getTeamName(m, "away");
+    const matchId = getField(m, ["match_id", "id"]);
+    if (matchId === undefined || (!mHome && !mAway)) continue;
+    const direct =
+      (mHome && looseTeamMatch(mHome, home)) ||
+      (mAway && looseTeamMatch(mAway, away));
+    const swapped =
+      (mHome && looseTeamMatch(mHome, away)) ||
+      (mAway && looseTeamMatch(mAway, home));
+    if (direct || swapped) {
+      return String(matchId);
+    }
+  }
+  return null;
 }
 
 function nextRound(current: string | null): string | null {
@@ -559,8 +438,6 @@ export async function collectMatchData(
   // When debugging, capture every raw HTTP call made by afGet/saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
-  lastCompetitionsRaw = null;
-  lastInternationalTournaments = [];
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
@@ -577,25 +454,20 @@ export async function collectMatchData(
     console.log(`[analyse] ${key} (${label}): ${status}`, error ?? "");
   };
 
-  // ---- STEP 0: TheStatsAPI lookup ----
-  let lookup: Record<string, string> = {};
+  // ---- STEP 0: TheStatsAPI lineup match lookup (lineups only) ----
   let statsApiResolved = false;
   let statsApiMatchId: string | null = null;
-  let wcCompetitionId: string | null = null;
-  let wcSeasonId: string | null = null;
   try {
     const matchDate = match.kickoffUtc.slice(0, 10);
-    const out = await buildStatsApiLookup(saKey, {
-      dates: [matchDate],
-      bypassCache: opts.debug,
-    });
-    lookup = out.lookup;
-    wcCompetitionId = out.ids?.competitionId ?? null;
-    wcSeasonId = out.ids?.seasonId ?? null;
-    statsApiMatchId = lookup[pairKey(match.home, match.away)] ?? null;
+    statsApiMatchId = await findStatsApiMatchId(
+      saKey,
+      matchDate,
+      match.home,
+      match.away,
+    );
     statsApiResolved = statsApiMatchId !== null;
   } catch (e) {
-    console.warn("[analyse] StatsAPI lookup failed", e);
+    console.warn("[analyse] StatsAPI lineup match lookup failed", e);
   }
 
   // Wrapper that runs one numbered step and records its result.
@@ -788,8 +660,8 @@ export async function collectMatchData(
     },
   );
 
-  // 9: odds + Pinnacle
-  await runStep("9", "Fetching odds and Pinnacle data... (11/11)", async () => {
+  // 9: odds (Stake via API-Football only)
+  await runStep("9", "Fetching odds... (11/11)", async () => {
     // 9A: resolve Stake bookmaker id (cached)
     currentDebugCall = "9A";
     let stakeId: string | null =
@@ -813,24 +685,7 @@ export async function collectMatchData(
       `/odds?fixture=${match.id}${stakeId ? `&bookmaker=${stakeId}` : ""}`,
       afKey,
     );
-
-    // 9B: TheStatsAPI odds (Pinnacle)
-    currentDebugCall = "9B";
-    let saOdds: unknown = null;
-    let saOddsError: string | null = null;
-    if (statsApiResolved && statsApiMatchId) {
-      try {
-        saOdds = await saGet(
-          `/matches/${encodeURIComponent(statsApiMatchId)}/odds`,
-          saKey!,
-        );
-      } catch (e) {
-        saOddsError = e instanceof Error ? e.message : String(e);
-      }
-    } else {
-      saOddsError = "TheStatsAPI match ID not resolved — Pinnacle odds unavailable.";
-    }
-    return { stakeOdds: afOdds, pinnacleOdds: saOdds, pinnacleError: saOddsError };
+    return { stakeOdds: afOdds };
   });
 
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
@@ -873,25 +728,14 @@ export async function collectMatchData(
     callResults,
     statsApiResolved,
     statsApiMatchId,
-    wcCompetitionId,
-    wcSeasonId,
     succeeded,
     emptyOrFailed,
     failedCalls,
     warning: statsApiResolved
       ? null
-      : "⚠️ TheStatsAPI match ID not resolved. Lineups and Pinnacle odds unavailable. Analysis will proceed with reduced data.",
+      : "⚠️ TheStatsAPI match ID not resolved. Confirmed lineups unavailable (LINEUP PENDING). Analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
-    competitionsRawPreview: opts.debug
-      ? JSON.stringify(lastCompetitionsRaw).slice(0, 2000)
-      : undefined,
-    competitionsFirst5: opts.debug
-      ? extractArray(lastCompetitionsRaw).slice(0, 5)
-      : undefined,
-    internationalTournaments: opts.debug
-      ? lastInternationalTournaments
-      : undefined,
   };
 }
 
