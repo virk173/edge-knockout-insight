@@ -992,7 +992,6 @@ All EV calculations use deviggged probabilities.
 
 All FINAL output uses most recently pulled C9A odds.
 
-Show Pinnacle gap check from C9B for every bet.
 
 TIER 1 — ANCHOR STRAIGHT BET
 
