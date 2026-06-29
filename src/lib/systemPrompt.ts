@@ -122,9 +122,10 @@ API-FOOTBALL
 
   Alert threshold: 85 calls
 
-THESTATSAPI
+  Note: The pipeline is 100% API-Football. Confirmed
+  lineups (C6) come from API-Football /fixtures/lineups.
 
-  Role: confirmed lineups only (C6)
+
 
 ════════════════════════════════════════════════════════
 
@@ -256,21 +257,22 @@ Manager will likely substitute around 60 to 70
 
 minutes. Apply market adjustments per D5.
 
-CALL 6 — CONFIRMED LINEUPS (TheStatsAPI)
+CALL 6 — CONFIRMED LINEUPS (API-Football)
 
-Available approximately 75 minutes before kickoff.
+Endpoint: /fixtures/lineups?fixture={fixture_id}
+
+Typically available 20-40 minutes before kickoff;
+
+for World Cup 2026 may appear up to 75 minutes early.
 
 If empty: flag LINEUP PENDING.
 
 All player props remain PENDING until confirmed.
 
-If TheStatsAPI returned a fallback from API-Football:
-
-note the reduced timing window in output.
-
 Extract: confirmed 11 starters per team,
 
 formation, bench list, captain.
+
 
 CALL 6B — PLAYER INTELLIGENCE
 
@@ -1146,9 +1148,8 @@ classification: HEAVY MISMATCH or COMPETITIVE
 
 lineup_confirmed: boolean
 
-lineup_source: TheStatsAPI or API-Football fallback
+lineup_source: API-Football or PENDING
 
-  or PENDING
 
 odds_source: string
 
@@ -1469,7 +1470,7 @@ France: no absences
 
 [END CALL 5]
 
-[CALL 6 — TheStatsAPI lineups — SUCCESS]
+[CALL 6 — API-Football lineups — SUCCESS]
 
 France: 4-3-3. Starters: Maignan, Pavard,
 
@@ -1572,7 +1573,7 @@ EXAMPLE OUTPUT:
 
   "lineup_confirmed": true,
 
-  "lineup_source": "TheStatsAPI",
+  "lineup_source": "API-Football",
 
   "odds_source": "Stake",
 

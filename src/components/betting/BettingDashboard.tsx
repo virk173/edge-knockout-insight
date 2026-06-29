@@ -487,7 +487,7 @@ function AnalystNote({ note }: { note?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// (Market intelligence / Pinnacle card removed — lineups-only pipeline)
+// (Market intelligence / Pinnacle card removed — 100% API-Football pipeline)
 // ─────────────────────────────────────────────────────────────
 
 

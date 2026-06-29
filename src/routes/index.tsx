@@ -255,7 +255,8 @@ Start your response with { and end with }.`;
     setAnalysisError(null);
     setAnalysisRaw(null);
     setFormattedDebug(null);
-    setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
+    setProgress({ step: 0, total: 11, label: "Starting data collection…" });
+
     try {
       const result = await collectMatchData(match, (p) => setProgress(p), {
         debug: debugMode,
@@ -286,7 +287,7 @@ Start your response with { and end with }.`;
       const match = await resolveDebugFixture();
       setMatches([match]);
       setActiveMatchId(match.id);
-      setProgress({ step: 0, total: 11, label: "Building TheStatsAPI lookup…" });
+      setProgress({ step: 0, total: 11, label: "Starting data collection…" });
       const result = await collectMatchData(match, (p) => setProgress(p), {
         debug: true,
       });
@@ -630,25 +631,12 @@ function CollectionPanel({ result }: { result: CollectionResult }) {
 
 function DebugReportView({ report }: { report: DebugReport }) {
   const afRows = report.rows.filter((r) => r.api === "API-Football");
-  const saRows = report.rows.filter((r) => r.api === "TheStatsAPI");
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Resolved TheStatsAPI lineup match id */}
-      <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs text-slate">
-        <span>
-          statsapi lineup match_id:{" "}
-          <span className="text-accent-amber">
-            {report.statsMatchId ?? "NOT RESOLVED (LINEUP PENDING)"}
-          </span>
-        </span>
-      </div>
+      <DebugCallGroup title="API-Football calls" rows={afRows} />
 
-
-      <DebugCallGroup title="PART 1 — API-Football calls" rows={afRows} />
-      <DebugCallGroup title="PART 2 — TheStatsAPI calls" rows={saRows} />
-
-      {/* PART 3 — Summary */}
+      {/* Summary */}
       <div className="flex flex-col gap-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-sm">
         <span className="font-semibold text-signal-blue">SUMMARY</span>
         <span className="text-slate">
@@ -656,14 +644,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
           <span className="text-accent-amber">
             {report.afSucceeded}/{report.afTotal}
           </span>{" "}
-          calls succeeded
-        </span>
-        <span className="text-slate">
-          TheStatsAPI:{" "}
-          <span className="text-accent-amber">
-            {report.saSucceeded}/{report.saTotal}
-          </span>{" "}
-          calls succeeded
+          calls
         </span>
         <span className="text-slate">
           Ready for Claude:{" "}
@@ -679,6 +660,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
     </div>
   );
 }
+
 
 function DebugCallGroup({
   title,

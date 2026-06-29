@@ -10,7 +10,7 @@ import {
 } from "./apiCounter";
 
 const AF_BASE = "https://v3.football.api-sports.io";
-const SA_BASE = "https://api.thestatsapi.com/api/football";
+
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "FAILED" | "SKIPPED";
 
@@ -30,7 +30,7 @@ export interface ProgressUpdate {
 
 // A single raw HTTP call captured during a debug run.
 export interface DebugEntry {
-  api: "API-Football" | "TheStatsAPI";
+  api: "API-Football";
   url: string;
   status: number | string;
   ok: boolean;
@@ -42,7 +42,7 @@ export interface DebugEntry {
 // One logical call row for the structured Debug Mode report.
 export interface DebugCallRow {
   callLabel: string; // e.g. "CALL 2A"
-  api: "API-Football" | "TheStatsAPI";
+  api: "API-Football";
   endpoint: string;
   url: string;
   status: number | string;
@@ -53,19 +53,16 @@ export interface DebugCallRow {
 }
 
 export interface DebugReport {
-  statsMatchId: string | null;
   rows: DebugCallRow[];
   afSucceeded: number;
   afTotal: number;
-  saSucceeded: number;
-  saTotal: number;
   readyForClaude: boolean;
 }
 
+
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
-  statsApiResolved: boolean;
-  statsApiMatchId: string | null;
+  lineupResolved: boolean;
   succeeded: number;
   emptyOrFailed: number;
   failedCalls: string[];
@@ -73,6 +70,7 @@ export interface CollectionResult {
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
 }
+
 
 // Module-level sink. When non-null, afGet/saGet record every raw HTTP call
 // (url, status, parsed JSON) into it. collectMatchData wires this up for the
@@ -92,7 +90,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "3", n: "3", endpoint: "/fixtures/headtohead" },
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
-  { key: "6", n: "6", endpoint: "TheStatsAPI/lineups" },
+  { key: "6", n: "6", endpoint: "/fixtures/lineups" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
@@ -184,7 +182,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
 
   interface Spec {
     callLabel: string;
-    api: "API-Football" | "TheStatsAPI";
+    api: "API-Football";
     endpoint: string;
     entryKey: string;
     crKey?: string;
@@ -198,11 +196,10 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 6", api: "API-Football", endpoint: "/fixtures/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
-    { callLabel: "STATSAPI matches", api: "TheStatsAPI", endpoint: "/football/matches (lineup match lookup)", entryKey: "matches", extracted: result.statsApiMatchId !== null, count: true },
-    { callLabel: "CALL 6", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
   ];
 
   const rows: DebugCallRow[] = specs.map((sp) => {
@@ -222,21 +219,16 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
   });
 
   const afCount = specs.filter((s) => s.api === "API-Football" && s.count);
-  const saCount = specs.filter((s) => s.api === "TheStatsAPI" && s.count);
   const afSucceeded = afCount.filter((s) => s.extracted).length;
-  const saSucceeded = saCount.filter((s) => s.extracted).length;
 
   return {
-    statsMatchId: result.statsApiMatchId,
     rows,
     afSucceeded,
     afTotal: afCount.length,
-    saSucceeded,
-    saTotal: saCount.length,
-    readyForClaude:
-      afSucceeded === afCount.length && saSucceeded === saCount.length,
+    readyForClaude: afSucceeded === afCount.length,
   };
 }
+
 
 const TOTAL_STEPS = 11;
 
@@ -313,32 +305,12 @@ function isEmptyResponse(response: unknown): boolean {
   return false;
 }
 
-async function saGet(path: string, _key?: string): Promise<unknown> {
-  const url = `${SA_BASE}${path}`;
-  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
-  try {
-    result = await apiFetch({ data: { provider: "statsapi", url } });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI network error: ${msg}`);
-  }
-  if (!result || !result.ok) {
-    const status = result?.status ?? "no response";
-    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`TheStatsAPI ${status} ${result?.statusText ?? ""}`.trim());
-  }
-  const json = result.json ?? null;
-  debugSink?.push({ api: "TheStatsAPI", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
-  return json;
-}
-
-// Pull an array out of common TheStatsAPI envelope shapes.
+// Pull an array out of common API-Football envelope shapes.
 function extractArray(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>;
-    for (const field of ["data", "matches", "competitions", "results"]) {
+    for (const field of ["data", "response", "results"]) {
       if (Array.isArray(obj[field])) return obj[field] as unknown[];
     }
   }
@@ -354,63 +326,8 @@ function getField(obj: unknown, keys: string[]): unknown {
   return undefined;
 }
 
-function getTeamName(obj: unknown, side: "home" | "away"): string | null {
-  const rec = obj as Record<string, unknown>;
-  if (!rec) return null;
-  const direct = getField(obj, [`${side}_team_name`, `${side}_name`]);
-  if (typeof direct === "string") return direct;
-  const team = getField(obj, [`${side}_team`, side]);
-  if (team && typeof team === "object") {
-    const n = getField(team, ["name", "team_name", "title"]);
-    if (typeof n === "string") return n;
-  }
-  return null;
-}
-
-// TheStatsAPI is used ONLY for confirmed lineups. We find the match id by
-// listing all matches on the kickoff date and loosely matching team names
-// (lowercase, mutual substring) against the API-Football names.
-function looseTeamMatch(a: string, b: string): boolean {
-  const x = normalize(a);
-  const y = normalize(b);
-  if (!x || !y) return false;
-  return x.includes(y) || y.includes(x);
-}
-
-async function findStatsApiMatchId(
-  key: string,
-  matchDate: string,
-  home: string,
-  away: string,
-): Promise<string | null> {
-  const prev = currentDebugCall;
-  currentDebugCall = "matches";
-  let payload: unknown;
-  try {
-    payload = await saGet(`/matches?date=${matchDate}`, key);
-  } finally {
-    currentDebugCall = prev;
-  }
-
-  for (const m of extractArray(payload)) {
-    const mHome = getTeamName(m, "home");
-    const mAway = getTeamName(m, "away");
-    const matchId = getField(m, ["match_id", "id"]);
-    if (matchId === undefined || (!mHome && !mAway)) continue;
-    const direct =
-      (mHome && looseTeamMatch(mHome, home)) ||
-      (mAway && looseTeamMatch(mAway, away));
-    const swapped =
-      (mHome && looseTeamMatch(mHome, away)) ||
-      (mAway && looseTeamMatch(mAway, home));
-    if (direct || swapped) {
-      return String(matchId);
-    }
-  }
-  return null;
-}
-
 function nextRound(current: string | null): string | null {
+
   if (!current) return null;
   const c = current.toLowerCase();
   if (c.includes("round of 32")) return "Round of 16";
@@ -429,13 +346,11 @@ export async function collectMatchData(
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
 ): Promise<CollectionResult> {
-  // API keys live server-side (APIFOOTBALL_KEY / STATSAPI_KEY) and are used
-  // by the api-proxy server function. These placeholders keep the existing
-  // call-site signatures unchanged.
+  // API keys live server-side (APIFOOTBALL_KEY) and are used by the api-proxy
+  // server function. This placeholder keeps the existing call-site signature.
   const afKey = "";
-  const saKey = "";
 
-  // When debugging, capture every raw HTTP call made by afGet/saGet.
+  // When debugging, capture every raw HTTP call made by afGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
 
@@ -454,21 +369,7 @@ export async function collectMatchData(
     console.log(`[analyse] ${key} (${label}): ${status}`, error ?? "");
   };
 
-  // ---- STEP 0: TheStatsAPI lineup match lookup (lineups only) ----
-  let statsApiResolved = false;
-  let statsApiMatchId: string | null = null;
-  try {
-    const matchDate = match.kickoffUtc.slice(0, 10);
-    statsApiMatchId = await findStatsApiMatchId(
-      saKey,
-      matchDate,
-      match.home,
-      match.away,
-    );
-    statsApiResolved = statsApiMatchId !== null;
-  } catch (e) {
-    console.warn("[analyse] StatsAPI lineup match lookup failed", e);
-  }
+
 
   // Wrapper that runs one numbered step and records its result.
   const runStep = async (
@@ -565,30 +466,22 @@ export async function collectMatchData(
     afGet(`/injuries?fixture=${match.id}`, afKey),
   );
 
-  // 6: confirmed lineups (TheStatsAPI, with retries)
-  await runStep(
-    "6",
-    "Fetching confirmed lineups... (8/11)",
-    async () => {
-      if (!statsApiMatchId) throw new Error("StatsAPI match id unavailable");
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const payload = await saGet(
-          `/matches/${encodeURIComponent(statsApiMatchId)}/lineups`,
-          saKey!,
-        );
-        if (!isEmptyResponse(extractArray(payload)) || !isEmptyResponse(payload)) {
-          return payload;
-        }
-        if (attempt < 2) await sleep(5000);
-      }
-      throw new Error("LINEUP PENDING — not yet published");
-    },
-    {
-      skip: !statsApiResolved,
-      skipReason:
-        "TheStatsAPI match ID not resolved — lineups unavailable.",
-    },
-  );
+  // 6: confirmed lineups (API-Football).
+  // Lineups are typically published 20-40 min before kickoff (earlier — up to
+  // ~75 min — for World Cup 2026). If the array is empty, flag LINEUP PENDING.
+  // Retry up to 3 times with 30s gaps when we are within 90 min of kickoff.
+  await runStep("6", "Fetching confirmed lineups... (8/11)", async () => {
+    const withinWindow = match.minutesUntilKickoff <= 90;
+    const maxAttempts = withinWindow ? 3 : 1;
+    let payload: unknown = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      payload = await afGet(`/fixtures/lineups?fixture=${match.id}`, afKey);
+      if (!isEmptyResponse(payload)) return payload;
+      if (attempt < maxAttempts - 1) await sleep(30000);
+    }
+    throw new Error("LINEUP PENDING — lineups not yet published (empty array).");
+  });
+
 
   // 7: referee profile.
   // API-Football cannot filter fixtures by referee with referee+season alone;
@@ -721,23 +614,25 @@ export async function collectMatchData(
   );
   const emptyOrFailed = failedCalls.length;
 
+  const lineupResolved = callResults["6"]?.status === "SUCCESS";
+
   // Detach the debug sink so later non-debug runs are not recorded into it.
   debugSink = null;
 
   return {
     callResults,
-    statsApiResolved,
-    statsApiMatchId,
+    lineupResolved,
     succeeded,
     emptyOrFailed,
     failedCalls,
-    warning: statsApiResolved
+    warning: lineupResolved
       ? null
-      : "⚠️ TheStatsAPI match ID not resolved. Confirmed lineups unavailable (LINEUP PENDING). Analysis will proceed with reduced data.",
+      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). Lineups publish 20-75 min before kickoff — analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
   };
 }
+
 
 
 // ============================================================================

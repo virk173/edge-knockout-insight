@@ -3,16 +3,15 @@ import { createServerFn } from "@tanstack/react-start";
 /**
  * api-proxy
  *
- * Server-side proxy for the two third-party sports data providers so their
- * API keys never reach the browser. Keys are read from server-only env vars:
+ * Server-side proxy for API-Football so its API key never reaches the browser.
+ * The key is read from a server-only env var:
  *   - APIFOOTBALL_KEY  (api-sports.io / API-Football)
- *   - STATSAPI_KEY     (thestatsapi.com)
  *
- * Input:  { provider: "apifootball" | "statsapi", url: string }
+ * Input:  { provider: "apifootball", url: string }
  * Output: { ok, status, statusText, json } or { ok: false, error }
  */
 
-type Provider = "apifootball" | "statsapi";
+type Provider = "apifootball";
 
 interface ApiFetchInput {
   provider: Provider;
@@ -21,7 +20,6 @@ interface ApiFetchInput {
 
 const ALLOWED_PREFIX: Record<Provider, string> = {
   apifootball: "https://v3.football.api-sports.io",
-  statsapi: "https://api.thestatsapi.com",
 };
 
 function validateInput(input: unknown): ApiFetchInput {
@@ -29,8 +27,8 @@ function validateInput(input: unknown): ApiFetchInput {
     throw new Error("Request body must be an object.");
   }
   const { provider, url } = input as Record<string, unknown>;
-  if (provider !== "apifootball" && provider !== "statsapi") {
-    throw new Error("`provider` must be 'apifootball' or 'statsapi'.");
+  if (provider !== "apifootball") {
+    throw new Error("`provider` must be 'apifootball'.");
   }
   if (typeof url !== "string" || !url.startsWith(ALLOWED_PREFIX[provider])) {
     throw new Error("`url` is missing or not an allowed endpoint.");
@@ -41,26 +39,18 @@ function validateInput(input: unknown): ApiFetchInput {
 export const apiFetch = createServerFn({ method: "POST" })
   .inputValidator(validateInput)
   .handler(async ({ data }) => {
-    const key =
-      data.provider === "apifootball"
-        ? process.env.APIFOOTBALL_KEY
-        : process.env.STATSAPI_KEY;
+    const key = process.env.APIFOOTBALL_KEY;
 
     if (!key) {
-      const name =
-        data.provider === "apifootball" ? "APIFOOTBALL_KEY" : "STATSAPI_KEY";
       return {
         ok: false as const,
         status: 0,
-        statusText: `${name} is not configured on the server.`,
+        statusText: "APIFOOTBALL_KEY is not configured on the server.",
         json: null,
       };
     }
 
-    const headers: Record<string, string> =
-      data.provider === "apifootball"
-        ? { "x-apisports-key": key }
-        : { Authorization: `Bearer ${key}` };
+    const headers: Record<string, string> = { "x-apisports-key": key };
 
     let response: Response;
     try {
