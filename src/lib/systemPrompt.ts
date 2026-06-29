@@ -1025,30 +1025,30 @@ Corners over 9.5: 1.88
 Cards over 3.5: 1.82
 [END CALL 9A]
 
-[CALL 9B — OddsPapi Pinnacle — SUCCESS]
+[CALL 9B — TheStatsAPI Pinnacle — SUCCESS]
 France 1X2:
-  opening 1.68, current 1.65
+  opening 1.68, last_seen 1.65
   movement -1.79pct STABLE
 Draw:
-  opening 3.90, current 4.05
+  opening 3.90, last_seen 4.05
   movement +3.85pct STABLE
 Senegal:
-  opening 5.80, current 5.90
+  opening 5.80, last_seen 5.90
   movement +1.72pct STABLE
 Over 2.5:
-  opening 1.98, current 2.10
+  opening 1.98, last_seen 2.10
   movement +6.06pct DRIFT
 Under 2.5:
-  opening 1.83, current 1.72
+  opening 1.83, last_seen 1.72
   movement -6.01pct SHARP MOVE
 BTTS Yes:
-  opening 1.85, current 1.88
+  opening 1.85, last_seen 1.88
   movement +1.62pct STABLE
 Corners over 9.5:
-  opening 1.91, current 1.94
+  opening 1.91, last_seen 1.94
   movement +1.57pct STABLE
 Cards over 3.5:
-  opening 1.75, current 1.78
+  opening 1.75, last_seen 1.78
   movement +1.71pct STABLE
 [END CALL 9B]
 
