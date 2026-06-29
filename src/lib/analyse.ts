@@ -820,12 +820,8 @@ interface AfFixtureItem {
 }
 
 export async function resolveDebugFixture(): Promise<AnalysedMatch> {
-  const afKey = import.meta.env.VITE_APIFOOTBALL_KEY as string | undefined;
-  if (!afKey) throw new Error("Missing VITE_APIFOOTBALL_KEY.");
-
   const response = await afGet(
     `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
-    afKey,
   );
   const items = extractArray(response) as AfFixtureItem[];
 
