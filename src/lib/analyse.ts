@@ -101,6 +101,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "4-3", n: "4", endpoint: "/fixtures/statistics (batch)" },
   { key: "5", n: "5", endpoint: "/injuries" },
   { key: "6", n: "6", endpoint: "/fixtures/lineups" },
+  { key: "6B", n: "6B", endpoint: "/players (player statistics)" },
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
