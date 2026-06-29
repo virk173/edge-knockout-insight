@@ -179,12 +179,19 @@ formation, bench list, captain.
 CALL 6B — player intelligence
 Trigger only if Call 5 has absences.
 
-GAP SCORE FORMULA:
-gap = (actual_goals x 8)
-    + (actual_assists x 5)
-    + (shots_pg_delta x 7)
-    + (keypasses_pg_delta x 5)
-    + set_piece_weight
+GAP SCORE — RAW VARIABLES ONLY:
+Do NOT compute the gap score. For each
+absent player output gap_score_inputs:
+  gap_score_inputs: {
+    actual_goals, actual_assists,
+    shots_pg_delta, keypasses_pg_delta,
+    set_piece_weight }
+The app computes:
+  gap = (actual_goals x 8)
+      + (actual_assists x 5)
+      + (shots_pg_delta x 7)
+      + (keypasses_pg_delta x 5)
+      + set_piece_weight
 
 set_piece_weight by role:
   penalty_taker lost: +15
@@ -198,7 +205,7 @@ shots_pg_delta = absent shots pg
 minus replacement shots pg.
 If replacement UNTESTED use 0.0.
 
-Gap thresholds:
+Gap thresholds (apply to app-computed gap):
   40+: CRITICAL goals prob x0.72
     D4 to 18pct D2 to 17pct
   20-39: SIGNIFICANT x0.83
@@ -214,8 +221,19 @@ DEPTH RATING additional multiplier:
   THIN: 1 qualifying — x0.95
   CRITICAL SHORTAGE: 0 — x0.88
 
-STACKED MULTIPLIER CAP:
-Per player floor x0.65. Show calc.
+STACKED MULTIPLIER — RAW VARIABLES ONLY:
+Do NOT compute the stacked multiplier.
+Output multiplier_inputs:
+  multiplier_inputs: { gap_multiplier,
+    depth_multiplier }
+gap_multiplier is the goals-prob factor
+from the gap threshold (e.g. 0.72).
+depth_multiplier is the depth-rating
+factor (1.0, 0.95 or 0.88).
+The app computes:
+  stacked = gap_multiplier x depth_multiplier
+  if stacked < 0.65: stacked = 0.65
+
 
 CALL 7 — referee profile
 If UNKNOWN: use historical base rates.
