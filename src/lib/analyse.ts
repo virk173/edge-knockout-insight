@@ -1187,32 +1187,10 @@ export async function collectMatchData(
         "OddsPapi key prefix (browser, optional):",
         import.meta.env.VITE_ODDSPAPI_KEY?.slice(0, 4) ?? "(not set — using server ODDSPAPI_KEY)",
       );
-      const matchDate = (match.kickoffUtc ?? "").slice(0, 10) || DEBUG_FIXTURE_DATE;
-      // OddsPapi treats `to` as an exclusive end, so a single-day from==to
-      // window returns 404. Use the day after the match date as the upper bound.
-      const toDate = new Date(`${matchDate}T00:00:00Z`);
-      toDate.setUTCDate(toDate.getUTCDate() + 1);
-      const matchDateEnd = toDate.toISOString().slice(0, 10);
-      // Step 1 — find fixture (World Cup tournament hardcoded).
-      const fixturesJson = await opGet(
-        `/v4/fixtures?sportId=${ODDSPAPI_SPORT_ID}&tournamentId=${ODDSPAPI_WC_TOURNAMENT_ID}&from=${matchDate}&to=${matchDateEnd}`,
-      );
-      const fixtureList = extractArray(
-        getField(fixturesJson, ["data", "fixtures", "response"]) ?? fixturesJson,
-      );
-      const homeN = normalize(match.home);
-      const awayN = normalize(match.away);
-      const fxMatch = fixtureList.find((f) => {
-        const p1 = normalize(String(getField(f, ["participant1Name", "homeName", "home"]) ?? ""));
-        const p2 = normalize(String(getField(f, ["participant2Name", "awayName", "away"]) ?? ""));
-        const direct =
-          (p1.includes(homeN) || homeN.includes(p1)) &&
-          (p2.includes(awayN) || awayN.includes(p2));
-        const swapped =
-          (p1.includes(awayN) || awayN.includes(p1)) &&
-          (p2.includes(homeN) || homeN.includes(p2));
-        return Boolean(p1 && p2 && (direct || swapped));
-      });
+      // Step 1 — find fixture from the daily-cached World Cup fixtures list
+      // (tournament hardcoded). No date filter — we match by team name.
+      const fixtureList = await getOddspapiFixtures();
+      const fxMatch = findOddspapiFixture(fixtureList, match.home, match.away);
       const fixtureId = getField(fxMatch, ["fixtureId", "id"]);
 
       if (fixtureId == null) {
@@ -1224,12 +1202,13 @@ export async function collectMatchData(
           "Pinnacle data unavailable — no OddsPapi fixture matched this match.",
         );
       } else {
-        // Step 2 — get Pinnacle odds.
+        // Step 2 — get fresh Pinnacle odds (never cached).
         const oddsJson = await opGet(
           `/v4/odds?fixtureId=${encodeURIComponent(String(fixtureId))}&bookmakers=pinnacle`,
         );
-        // Step 3 — line movement.
-        const summary = buildPinnacleSummary(oddsJson);
+        // Step 3 — extract markets + line movement (opening vs current).
+        const summary = buildPinnacleSummary(oddsJson, String(fixtureId));
+
 
         if (!summary) {
           record(
