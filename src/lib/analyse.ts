@@ -614,23 +614,25 @@ export async function collectMatchData(
   );
   const emptyOrFailed = failedCalls.length;
 
+  const lineupResolved = callResults["6"]?.status === "SUCCESS";
+
   // Detach the debug sink so later non-debug runs are not recorded into it.
   debugSink = null;
 
   return {
     callResults,
-    statsApiResolved,
-    statsApiMatchId,
+    lineupResolved,
     succeeded,
     emptyOrFailed,
     failedCalls,
-    warning: statsApiResolved
+    warning: lineupResolved
       ? null
-      : "⚠️ TheStatsAPI match ID not resolved. Confirmed lineups unavailable (LINEUP PENDING). Analysis will proceed with reduced data.",
+      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). Lineups publish 20-75 min before kickoff — analysis will proceed with reduced data.",
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
   };
 }
+
 
 
 // ============================================================================
