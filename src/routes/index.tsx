@@ -939,7 +939,10 @@ function DebugReportView({ report }: { report: DebugReport }) {
     <div className="flex flex-col gap-4">
       <DebugCallGroup title="API-Football calls" rows={afRows} />
       {saRows.length > 0 && (
-        <DebugCallGroup title="TheStatsAPI calls (lineups + Pinnacle)" rows={saRows} />
+        <DebugCallGroup
+          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle)"
+          rows={saRows}
+        />
       )}
 
       {/* Summary */}
