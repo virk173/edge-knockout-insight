@@ -772,7 +772,7 @@ export function BettingDashboard({ result }: { result: AnalysisResult }) {
 
       <AnalystNote note={result.analyst_note} />
 
-      <MarketIntelligence result={result} />
+
 
       <AnalysisDetails result={result} />
 
