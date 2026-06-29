@@ -2,6 +2,7 @@
 // Runs entirely client-side. Does NOT call Claude.
 
 import { computeStatus, type AnalysedMatch } from "./fixtures";
+import { apiFetch } from "./api-proxy.functions";
 import {
   getApiCallCount,
   incrementApiCallCount,
