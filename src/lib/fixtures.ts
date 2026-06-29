@@ -36,8 +36,12 @@ function isoDate(date: Date): string {
 interface ApiFixtureResponse {
   errors?: unknown;
   response?: Array<{
-    fixture: { id: number; date: string };
-    teams: { home: { name: string }; away: { name: string } };
+    fixture: { id: number; date: string; referee?: string | null };
+    league?: { round?: string | null };
+    teams: {
+      home: { id: number; name: string };
+      away: { id: number; name: string };
+    };
   }>;
 }
 
