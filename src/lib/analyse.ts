@@ -227,17 +227,17 @@ async function afGet(path: string, key: string): Promise<unknown> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg });
+    debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`API-Football network error: ${msg}`);
   }
   if (!res || !res.ok) {
     const status = res?.status ?? "no response";
-    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: res?.statusText });
+    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
     throw new Error(`API-Football ${status} ${res?.statusText ?? ""}`.trim());
   }
   incrementApiCallCount();
   const json = (await res.json().catch(() => null)) as AfResponse | null;
-  debugSink?.push({ api: "API-Football", url, status: res.status, ok: true, json });
+  debugSink?.push({ api: "API-Football", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   const err = afErrors(json?.errors);
   if (err) throw new Error(err);
   return json?.response ?? null;
@@ -260,16 +260,16 @@ async function saGet(path: string, key: string): Promise<unknown> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg });
+    debugSink?.push({ api: "TheStatsAPI", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
     throw new Error(`TheStatsAPI network error: ${msg}`);
   }
   if (!res || !res.ok) {
     const status = res?.status ?? "no response";
-    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: res?.statusText });
+    debugSink?.push({ api: "TheStatsAPI", url, status, ok: false, json: null, error: res?.statusText, callLabel: currentDebugCall ?? undefined });
     throw new Error(`TheStatsAPI ${status} ${res?.statusText ?? ""}`.trim());
   }
   const json = await res.json().catch(() => null);
-  debugSink?.push({ api: "TheStatsAPI", url, status: res.status, ok: true, json });
+  debugSink?.push({ api: "TheStatsAPI", url, status: res.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
   return json;
 }
 
