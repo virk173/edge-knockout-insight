@@ -100,6 +100,10 @@ let currentDebugCall: string | null = null;
 // the API uses. Reset at the start of each collectMatchData run.
 let lastCompetitionsRaw: unknown = null;
 
+// Captures the list of international tournaments (type === "tournament" with no
+// country) from the most recent /competitions response for Debug Mode display.
+let lastInternationalTournaments: { id: string; name: string }[] = [];
+
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
