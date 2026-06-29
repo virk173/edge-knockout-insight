@@ -208,6 +208,9 @@ export interface AnalysisResult {
   data_quality?: string; // "FULL" | "PARTIAL" | "THIN"
   pinnacle_available?: boolean;
   overround_pinnacle?: number | null;
+  // Raw variables from Claude (preferred source of truth for overround).
+  overround_inputs?: OverroundInputs;
+  overround_stake?: number;
   ensemble_check?: EnsembleCheck;
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
