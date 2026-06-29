@@ -1580,49 +1580,6 @@ EXAMPLE OUTPUT:
 
   "overround_stake": 1.058,
 
-  "overround_pinnacle": 1.031,
-
-  "line_movement_signals": [
-
-    {
-
-      "market": "Under 2.5 Goals",
-
-      "outcome": "Under 2.5",
-
-      "opening_odds": 1.83,
-
-      "current_odds": 1.72,
-
-      "movement_pct": -6.0,
-
-      "signal": "SHARP MOVE",
-
-      "confidence_impact": "+5",
-
-      "note": "Under 2.5 shortened 6 percent since open. Sharp money moving toward Under. Model also favours Under — CONFIRMS."
-
-    }
-
-  ],
-
-  "pinnacle_gap_check": [
-
-    {
-
-      "market": "Under 2.5 Goals",
-
-      "stake_odds": 1.78,
-
-      "pinnacle_odds": 1.72,
-
-      "gap_pct": "+3.5%",
-
-      "verdict": "STAKE OFFERS VALUE vs PINNACLE"
-
-    }
-
-  ],
 
   "ensemble_check": {
 
