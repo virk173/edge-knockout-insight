@@ -611,6 +611,30 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // 1b — Stake-anchoring bias correction for the Tier 1 anchor.
+  if (t1?.ev !== undefined && t1.odds !== undefined) {
+    const pinnacleOdds = num(t1.pinnacle_odds) ?? null;
+    const adjustment = adjustEVForPinnacleGap({
+      raw_ev: t1.ev,
+      stake_odds: t1.odds,
+      pinnacle_odds: pinnacleOdds,
+    });
+
+    t1.raw_ev = t1.ev;
+    t1.ev = adjustment.adjusted_ev;
+    t1.ev_confidence = adjustment.ev_confidence;
+    t1.pinnacle_check_note = adjustment.note;
+
+    // Re-apply EV rating thresholds to the ADJUSTED ev, not raw.
+    t1.ev_rating =
+      adjustment.adjusted_ev >= 0.08
+        ? "STRONG"
+        : adjustment.adjusted_ev >= 0.05
+          ? "MARGINAL"
+          : "SKIP";
+    t1.active = adjustment.adjusted_ev >= 0.05;
+  }
+
   // 2 — Parlay EV
   const t2 = result.tier_2_parlay;
   if (t2?.parlay_ev_inputs) {
@@ -619,6 +643,28 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       t2.parlay_ev_inputs.effective_sgp_price,
     );
     if (ev !== undefined) t2.parlay_ev = ev;
+  }
+
+  // 2b — Stake-anchoring bias correction for any Tier 2 leg that has a
+  // corresponding Pinnacle market available.
+  if (Array.isArray(t2?.legs)) {
+    for (const leg of t2.legs) {
+      const legOdds = num(leg.odds);
+      const legProb = num(leg.model_probability);
+      if (legOdds === undefined || legProb === undefined) continue;
+      const legRawEv = computeEv(legProb, legOdds);
+      if (legRawEv === undefined) continue;
+      const legPinnacle = num(leg.pinnacle_odds) ?? null;
+      const legAdjustment = adjustEVForPinnacleGap({
+        raw_ev: legRawEv,
+        stake_odds: legOdds,
+        pinnacle_odds: legPinnacle,
+      });
+      leg.raw_ev = legRawEv;
+      leg.ev = legAdjustment.adjusted_ev;
+      leg.ev_confidence = legAdjustment.ev_confidence;
+      leg.pinnacle_check_note = legAdjustment.note;
+    }
   }
 
   // 2 — Jackpot EV
