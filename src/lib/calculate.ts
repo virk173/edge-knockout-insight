@@ -834,3 +834,156 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
 
   return result;
 }
+
+// ─────────────────────────────────────────────────────────────
+// Dead-rubber detection for group-stage fixtures in last-5 form
+// ─────────────────────────────────────────────────────────────
+/*
+ * CALL SEQUENCE EXPLANATION:
+ *
+ * This dead-rubber check only matters for group-stage fixtures appearing in a
+ * team's last-5 results (C4). Once the tournament moves past Round of 16, most
+ * or all of a team's last-5 fixtures will be knockout matches where dead rubbers
+ * cannot occur (every knockout match is won or the team is eliminated).
+ *
+ * This means S6 (standings) and the groups lookup become unnecessary calls
+ * automatically as the tournament progresses — no code change needed to "turn
+ * this off" later. The trigger condition in the pipeline (any fixture in the
+ * group-stage window) naturally stops firing once all five fixtures are
+ * knockout-stage.
+ *
+ * Call cost: at most 2 new calls per match (one groups lookup, cached forever;
+ * one standings lookup per team's group, cached per group per day) and only
+ * during the early knockout rounds where group-stage fixtures still appear in
+ * the last-5 window. By Quarter-Finals onward, expect zero additional calls.
+ */
+
+/**
+ * Determine whether a specific group-stage fixture was a "dead rubber" — a game
+ * the opponent had no sporting incentive in because their advancement (or
+ * elimination) was already mathematically settled before kickoff.
+ */
+export const detectDeadRubber = (
+  inputs: {
+    fixture_matchday: number;
+    fixture_date: string;
+    opponent_team_id: string;
+    group_standings: Array<{
+      team_id: string;
+      points: number;
+      position: number;
+      matches_played: number;
+    }>;
+    group_total_matchdays: number;
+  },
+): {
+  is_dead_rubber: boolean;
+  reason: string;
+} => {
+  const opponent = inputs.group_standings.find(
+    (s) => s.team_id === inputs.opponent_team_id,
+  );
+
+  if (!opponent) {
+    return {
+      is_dead_rubber: false,
+      reason:
+        "Opponent not found in group standings — cannot determine, default to not dead rubber.",
+    };
+  }
+
+  // Only the FINAL group matchday can produce a dead rubber in a 3-match group
+  // stage, since elimination or qualification is rarely mathematically certain
+  // before the last round.
+  const isFinalMatchday =
+    inputs.fixture_matchday === inputs.group_total_matchdays;
+
+  if (!isFinalMatchday) {
+    return {
+      is_dead_rubber: false,
+      reason:
+        "Not the final group matchday — standings not yet mathematically settled.",
+    };
+  }
+
+  // Top positions advance (varies by format, WC2026 top 2 per group of 4 plus
+  // some 3rd-place teams advance — use a conservative top-2-locked threshold).
+  const pointsAfterThisMatch = opponent.points;
+  const maxPossiblePointsForRivals = inputs.group_standings
+    .filter((s) => s.team_id !== inputs.opponent_team_id)
+    .map(
+      (s) =>
+        s.points + (inputs.group_total_matchdays - s.matches_played) * 3,
+    );
+
+  const clinchedTop2 =
+    opponent.position <= 2 &&
+    maxPossiblePointsForRivals.filter((p) => p > pointsAfterThisMatch).length <=
+      1;
+
+  const mathematicallyEliminated =
+    opponent.position >= 3 &&
+    maxPossiblePointsForRivals.filter((p) => p <= pointsAfterThisMatch)
+      .length === 0;
+
+  if (clinchedTop2 || mathematicallyEliminated) {
+    return {
+      is_dead_rubber: true,
+      reason: clinchedTop2
+        ? "Opponent had already clinched advancement before this fixture."
+        : "Opponent was already mathematically eliminated before this fixture.",
+    };
+  }
+
+  return {
+    is_dead_rubber: false,
+    reason:
+      "Final matchday but standings were not yet mathematically settled — both sides had something to play for.",
+  };
+};
+
+/**
+ * Recency-weight a team's last-5 fixtures, discounting group-stage games (0.4x)
+ * and dead-rubber group games even more heavily (0.2x), to produce adjusted
+ * goals/shots averages that better reflect knockout-relevant form.
+ */
+export const applyDeadRubberDiscount = (
+  fixtures: Array<{
+    goals_scored: number;
+    shots_on_target: number;
+    is_dead_rubber: boolean;
+    is_group_stage: boolean;
+  }>,
+): {
+  adjusted_goals_avg: number;
+  adjusted_shots_avg: number;
+  dead_rubber_count: number;
+  note: string;
+} => {
+  let totalGoals = 0;
+  let totalShots = 0;
+  let totalWeight = 0;
+  let deadRubberCount = 0;
+
+  fixtures.forEach((f) => {
+    let weight = 1.0;
+    if (f.is_group_stage) weight = 0.4;
+    if (f.is_dead_rubber) {
+      weight = 0.2;
+      deadRubberCount++;
+    }
+    totalGoals += f.goals_scored * weight;
+    totalShots += f.shots_on_target * weight;
+    totalWeight += weight;
+  });
+
+  return {
+    adjusted_goals_avg: totalWeight > 0 ? round(totalGoals / totalWeight) : 0,
+    adjusted_shots_avg: totalWeight > 0 ? round(totalShots / totalWeight) : 0,
+    dead_rubber_count: deadRubberCount,
+    note:
+      deadRubberCount > 0
+        ? `${deadRubberCount} dead-rubber fixture(s) discounted to 0.2x weight — opponent had already secured or lost advancement before kickoff.`
+        : "No dead-rubber fixtures detected in recent form.",
+  };
+};
