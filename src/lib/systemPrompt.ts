@@ -876,6 +876,9 @@ tier_2_parlay:
   legs array each with:
     leg_number, market, selection,
     odds, model_probability,
+    pinnacle_odds (Pinnacle decimal
+      price for this leg if available,
+      else null),
     correlation_logic
   combined_odds_independent,
   combined_odds_sgp,
