@@ -426,7 +426,105 @@ export const calculateTravelBurden = (inputs: {
 
 
 // ─────────────────────────────────────────────────────────────
-// Orchestrator
+// Validation — model probabilities (proportional rescale to 100)
+// ─────────────────────────────────────────────────────────────
+export const validateModelProbabilities = (probs: {
+  home: number;
+  draw: number;
+  away: number;
+}): {
+  home: number;
+  draw: number;
+  away: number;
+  was_normalized: boolean;
+  raw_sum: number;
+} => {
+  const sum = probs.home + probs.draw + probs.away;
+
+  if (Math.abs(sum - 100) < 0.5) {
+    return {
+      ...probs,
+      was_normalized: false,
+      raw_sum: sum,
+    };
+  }
+
+  // Proportionally rescale to sum to 100
+  const scale = 100 / sum;
+  return {
+    home: Math.round(probs.home * scale * 100) / 100,
+    draw: Math.round(probs.draw * scale * 100) / 100,
+    away: Math.round(probs.away * scale * 100) / 100,
+    was_normalized: true,
+    raw_sum: sum,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
+// Validation — dimension weights (against actual trigger conditions)
+//   Surfaces mismatches as flags; does NOT auto-correct the weights
+//   because Claude's weighted reasoning already happened upstream.
+// ─────────────────────────────────────────────────────────────
+export const validateDimensionWeights = (inputs: {
+  weights: DimensionWeights;
+  call4_fixture_count: number;
+  h2h_gate_passed: boolean;
+  critical_absence_present: boolean;
+  all_players_confirmed_fit: boolean;
+}): DimensionWeightsValidation => {
+  // Determine expected weights from actual data conditions, independent
+  // of what Claude claimed.
+  const expected: DimensionWeights = {
+    D1: 35,
+    D2: 25,
+    D3: 20,
+    D4: 10,
+    D5: 5,
+    D6: 5,
+  };
+
+  if (inputs.call4_fixture_count < 3) {
+    expected.D2 = 15;
+    expected.D1 = 45;
+  }
+
+  if (!inputs.h2h_gate_passed) {
+    expected.D6 = 0;
+    expected.D1 = inputs.call4_fixture_count < 3 ? 45 : 40;
+  }
+
+  if (inputs.critical_absence_present) {
+    expected.D4 = 18;
+    expected.D2 = 17;
+  } else if (inputs.all_players_confirmed_fit) {
+    expected.D4 = 5;
+    expected.D1 = 40;
+  }
+
+  const mismatchFlags: string[] = [];
+  (Object.keys(expected) as (keyof DimensionWeights)[]).forEach((k) => {
+    if (Math.abs(inputs.weights[k] - expected[k]) > 2) {
+      mismatchFlags.push(
+        `${k}: Claude used ${inputs.weights[k]}, expected ${expected[k]} given data conditions.`,
+      );
+    }
+  });
+
+  const sum = Object.values(inputs.weights).reduce((a, b) => a + b, 0);
+  const sumValid = Math.abs(sum - 100) < 1;
+  if (!sumValid) {
+    mismatchFlags.push(`Dimension weights sum to ${sum}, not 100.`);
+  }
+
+  return {
+    weights: inputs.weights,
+    expected_weights: expected,
+    mismatch_flags: mismatchFlags,
+    sum_valid: sumValid,
+  };
+};
+
+
 // ─────────────────────────────────────────────────────────────
 /**
  * Takes Claude's raw JSON output and returns an enriched copy where every
