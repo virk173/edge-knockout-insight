@@ -209,6 +209,26 @@ export function formatDataForClaude(
     };
   }
 
+  // CALL 4 (recent form) gets the dead-rubber-adjusted averages appended to its
+  // block instead of raw unweighted averages (see S6 in collectMatchData).
+  const drInjection = safeResults["4-deadrubber"]?.data as
+    | {
+        home?: Record<string, unknown>;
+        away?: Record<string, unknown>;
+        dead_rubber_count?: number;
+      }
+    | null
+    | undefined;
+  const deadRubberSuffix = (n: string): string => {
+    if (n !== "4" || !drInjection) return "";
+    const count = drInjection.dead_rubber_count ?? 0;
+    return (
+      `\n\nRECENCY-WEIGHTED & DEAD-RUBBER-ADJUSTED FORM (feeds D1 Form — use these, not raw averages):\n` +
+      `${JSON.stringify({ home: drInjection.home ?? null, away: drInjection.away ?? null }, null, 2)}\n` +
+      `Note: Recency-weighted and dead-rubber-adjusted. ${count} fixture(s) discounted.`
+    );
+  };
+
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
@@ -221,7 +241,7 @@ export function formatDataForClaude(
     const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
       blocks.push(
-        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
@@ -231,7 +251,7 @@ export function formatDataForClaude(
     } else {
       const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
-        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     }
 
