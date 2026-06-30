@@ -1479,7 +1479,8 @@ export async function collectMatchData(
       const ids = playerIds.slice(0, 8);
       const perPlayer: Record<string, unknown> = {};
       let lastError: string | undefined;
-      await sleep(3000);
+      // Each player call is spaced by STATSAPI_DELAY_MS inside saGet, so the
+      // loop runs sequentially with the standard 400ms gap between calls.
       for (const pid of ids) {
         try {
           const raw = await saGet(
@@ -1492,7 +1493,6 @@ export async function collectMatchData(
           lastError = e instanceof Error ? e.message : String(e);
           break; // stop on rate-limit / error; keep what we have
         }
-        await sleep(1500);
       }
       const anyData = Object.keys(perPlayer).length > 0;
       record(
