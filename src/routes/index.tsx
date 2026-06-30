@@ -1096,19 +1096,35 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
         {/* GAP 3 */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
-            dimension_weights_validation.mismatch_flags
+            dimension_weights_validation
           </div>
           {dw ? (
-            dw.mismatch_flags.length === 0 ? (
-              <div className="text-signal-blue">
-                [] — all weights matched expected conditions
+            dw.validation_ran === false ? (
+              <div className="space-y-1">
+                <span className="inline-block rounded bg-destructive/20 px-2 py-0.5 font-semibold text-destructive">
+                  NOT RUN — field missing from Claude output
+                </span>
+                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
+                  {dw.mismatch_flags.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
               </div>
+            ) : dw.mismatch_flags.length === 0 ? (
+              <span className="inline-block rounded bg-signal-blue/20 px-2 py-0.5 font-semibold text-signal-blue">
+                PASSED — weights match expected conditions
+              </span>
             ) : (
-              <ul className="list-disc space-y-0.5 pl-5 text-destructive">
-                {dw.mismatch_flags.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
+              <div className="space-y-1">
+                <span className="inline-block rounded bg-accent-amber/20 px-2 py-0.5 font-semibold text-accent-amber">
+                  MISMATCH DETECTED
+                </span>
+                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
+                  {dw.mismatch_flags.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
             )
           ) : (
             <div className="text-slate">not present in output</div>
