@@ -20,6 +20,9 @@ import type {
   AltitudeAdjustment,
   AnalysisResult,
   ConfidenceAdjustment,
+  DimensionWeights,
+  DimensionWeightsValidation,
+  ModelProbabilities,
   RestDisparity,
   TravelBurden,
 } from "@/lib/analysisResult";
