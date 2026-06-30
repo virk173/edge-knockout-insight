@@ -89,6 +89,10 @@ export interface DebugReport {
   historicalCaveatReason: string;
   wentToPenalties: boolean;
   penaltyShootoutNote: string;
+  // Three-state lineup classification for this run + whether the XI was resolved
+  // (from TheStatsAPI or the API-Football fallback).
+  lineupState: LineupState;
+  lineupResolved: boolean;
 }
 
 
@@ -384,6 +388,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
       "NOT ELIGIBLE — round unknown.",
     wentToPenalties: result.wentToPenalties ?? false,
     penaltyShootoutNote: result.penaltyShootoutNote ?? "Not evaluated.",
+    lineupState: result.lineupState ?? "NOT_ANNOUNCED",
+    lineupResolved: result.lineupResolved ?? false,
   };
 }
 
@@ -1268,18 +1274,68 @@ export const LINEUP_STATE_INFO: Record<
   { label: string; note: string }
 > = {
   NOT_ANNOUNCED: {
-    label: "LINEUP NOT YET ANNOUNCED",
-    note: "Official lineups have not been published yet (endpoint empty/404). Analysis proceeds on historical/expected XI.",
+    label: "LINEUP NOT ANNOUNCED",
+    note: "Endpoint returned 404 — the team sheet has genuinely not been published yet. Expected before T-60min. Analysis proceeds on historical/expected XI.",
   },
   PROPAGATING: {
-    label: "LINEUP ANNOUNCED BUT PROPAGATING",
-    note: "The lineup is confirmed to exist (full squad present) but TheStatsAPI has not split the starting XI out yet. This often only resolves at ~kickoff. A final re-check is scheduled near kickoff.",
+    label: "LINEUP PROPAGATING",
+    note: "confirmed=true but starting_xi arrays are still empty — the lineup is known to exist and the data is being ingested. Retried up to 5×60s, then fell back to API-Football.",
   },
   POPULATED: {
-    label: "LINEUP CONFIRMED AND POPULATED",
-    note: "Starting XI available for both teams.",
+    label: "LINEUP CONFIRMED",
+    note: "confirmed=true with a populated starting_xi for both teams. Source: TheStatsAPI (or API-Football fallback).",
   },
 };
+
+// API-Football lineup fallback. When TheStatsAPI is still PROPAGATING (or
+// NOT_ANNOUNCED) after the retry burst, pull the XI from API-Football's
+// /fixtures/lineups and normalise it into the same {home,away,starting_xi}
+// shape the rest of the pipeline reads, tagged source:"API-Football". Returns
+// null when API-Football has no usable (populated) XI either.
+async function fetchApiFootballLineupFallback(match: {
+  id: number;
+  homeId: number;
+  awayId: number;
+  home: string;
+  away: string;
+}): Promise<unknown | null> {
+  let raw: unknown;
+  try {
+    raw = await afGet(`/fixtures/lineups?fixture=${match.id}`);
+  } catch (e) {
+    console.warn("[S3 lineups/AF-fallback] request failed", e);
+    return null;
+  }
+  const entries = extractArray(raw);
+  if (entries.length < 2) return null;
+
+  const mapPlayer = (p: unknown) => {
+    const pl = getField(p, ["player"]) ?? p;
+    return {
+      id: String(getField(pl, ["id"]) ?? ""),
+      name: getField(pl, ["name"]) ?? null,
+      position: getField(pl, ["pos", "position"]) ?? null,
+      jersey_number: getField(pl, ["number", "jersey_number"]) ?? null,
+    };
+  };
+  const mapSide = (entry: unknown) => {
+    const team = getField(entry, ["team"]);
+    return {
+      id: String(getField(team, ["id"]) ?? ""),
+      name: getField(team, ["name"]) ?? null,
+      formation: getField(entry, ["formation"]) ?? null,
+      starting_xi: extractArray(getField(entry, ["startXI", "starting_xi"])).map(mapPlayer),
+      substitutes: extractArray(getField(entry, ["substitutes"])).map(mapPlayer),
+    };
+  };
+  const sides = entries.map(mapSide);
+  const home = sides.find((s) => s.id === String(match.homeId)) ?? sides[0];
+  const away = sides.find((s) => s.id === String(match.awayId)) ?? sides[1];
+
+  const payload = { confirmed: true, source: "API-Football", home, away };
+  if (!lineupsArePopulated(payload)) return null;
+  return payload;
+}
 
 // Extract the player-stat fields the GAP formula needs from a TheStatsAPI
 // /players/{id}/stats response.
@@ -1785,31 +1841,44 @@ export async function collectMatchData(
       const tag = `attempt ${attempt + 1}/${maxAttempts}`;
       if (state === "POPULATED") {
         console.log(
-          `[S3 lineups] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}).`,
+          `[S3 lineups] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — starting_xi populated for both teams.`,
         );
         return payload;
       }
       if (state === "PROPAGATING") {
         console.warn(
-          `[S3 lineups] LINEUP ANNOUNCED BUT PROPAGATING for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — confirmed/full squad present ` +
-            `but starting_xi not split out yet. Will re-check near kickoff (T-15).`,
+          `[S3 lineups] State 2 LINEUP PROPAGATING for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — confirmed=true but starting_xi ` +
+            `still empty (data being ingested). Will retry then fall back to API-Football.`,
         );
       } else {
         console.warn(
-          `[S3 lineups] LINEUP NOT YET ANNOUNCED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — endpoint empty/404.`,
+          `[S3 lineups] State 1 LINEUP NOT ANNOUNCED for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not published yet.`,
         );
       }
       if (attempt < maxAttempts - 1) await sleep(60000);
     }
+
+    // TheStatsAPI never reached POPULATED within the retry window — hand off to
+    // the API-Football lineup fallback (per spec: State 2 → fall back to AF).
+    const afLineup = await fetchApiFootballLineupFallback(match);
+    if (afLineup) {
+      lastLineupState = "POPULATED";
+      console.log(
+        `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
+          `${match.home} vs ${match.away} (TheStatsAPI was ${state}).`,
+      );
+      return afLineup;
+    }
+
     // Carry the resolved state in the thrown message so the caller knows whether
-    // this is NOT_ANNOUNCED vs PROPAGATING.
+    // this is NOT_ANNOUNCED vs PROPAGATING (and that the AF fallback was empty too).
     throw new Error(
       state === "PROPAGATING"
-        ? "LINEUP ANNOUNCED BUT PROPAGATING — confirmed but starting_xi not yet populated."
-        : "LINEUP NOT YET ANNOUNCED — lineups not published yet (empty/404).",
+        ? "LINEUP PROPAGATING — confirmed=true but starting_xi never populated; API-Football fallback also empty."
+        : "LINEUP NOT ANNOUNCED — lineups not published yet (404); API-Football fallback also empty.",
     );
   });
 
@@ -2357,17 +2426,31 @@ export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> 
       const info = LINEUP_STATE_INFO[state];
       console.warn(
         `[S3 lineups/refetch] ${info.label} for matchId=${matchId} ` +
-          `(${match.home} vs ${match.away}).`,
+          `(${match.home} vs ${match.away}) — trying API-Football fallback.`,
       );
+      // Per spec: State 2 PROPAGATING (or 1 NOT_ANNOUNCED) → fall back to AF.
+      const afLineup = await fetchApiFootballLineupFallback(match);
+      if (afLineup) {
+        console.log(
+          `[S3 lineups/refetch] State 3 LINEUP CONFIRMED via API-Football fallback ` +
+            `for ${match.home} vs ${match.away}.`,
+        );
+        return {
+          key: "6",
+          label: "Confirmed lineups",
+          status: "SUCCESS",
+          data: replaceNulls(afLineup),
+        };
+      }
       return {
         key: "6",
         label: "Confirmed lineups",
         status: "EMPTY",
-        error: `${info.label} — ${info.note}`,
+        error: `${info.label} — ${info.note} API-Football fallback also empty.`,
       };
     }
     console.log(
-      `[S3 lineups/refetch] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
+      `[S3 lineups/refetch] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
         `(${match.home} vs ${match.away}).`,
     );
     return {
