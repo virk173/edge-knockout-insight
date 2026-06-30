@@ -177,6 +177,13 @@ function Index() {
   // Debug-mode capture: raw HTTP calls + the formatted Claude input.
   const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
 
+  // Debug-mode two-step state: the data pipeline (Button 1) runs API calls and
+  // formatting only; "Send to Claude" (Button 2) reuses this cached data.
+  const [debugMatch, setDebugMatch] = useState<AnalysedMatch | null>(null);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineReady, setPipelineReady] = useState(false);
+  const [pipelineFetchedAt, setPipelineFetchedAt] = useState<Date | null>(null);
+
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Tracks fixtures we've already auto-refetched lineups for, so the timer
