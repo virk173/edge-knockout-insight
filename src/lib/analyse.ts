@@ -1209,7 +1209,7 @@ export function lineupsArePopulated(payload: unknown): boolean {
 // Detect the specific malformed pattern: the API claims confirmed=true but at
 // least one starting_xi is empty. Used purely for diagnostic logging so we can
 // tell whether this recurs for certain matches/competitions.
-function lineupConfirmedButEmpty(payload: unknown): boolean {
+export function lineupConfirmedButEmpty(payload: unknown): boolean {
   const node = getField(payload, ["data"]) ?? payload;
   const confirmed = getField(node, ["confirmed"]) === true;
   return confirmed && !lineupsArePopulated(payload);
