@@ -2298,15 +2298,22 @@ export async function collectMatchData(
   // Detach the debug sink so later non-debug runs are not recorded into it.
   debugSink = null;
 
+  // Resolved lineup state for this run. If CALL 6 succeeded the XI is populated;
+  // otherwise use the last state observed during the retry loop so the UI can
+  // tell NOT_ANNOUNCED apart from ANNOUNCED-BUT-PROPAGATING.
+  const lineupState: LineupState = lineupResolved ? "POPULATED" : lastLineupState;
+  const lineupInfo = LINEUP_STATE_INFO[lineupState];
+
   return {
     callResults,
     lineupResolved,
+    lineupState,
     succeeded,
     emptyOrFailed,
     failedCalls,
     warning: lineupResolved
       ? null
-      : "⚠️ Confirmed lineups unavailable (LINEUP PENDING). TheStatsAPI publishes lineups at ~T-75min before kickoff — analysis will proceed with reduced data.",
+      : `⚠️ ${lineupInfo.label}. ${lineupInfo.note}`,
     counterWarning,
     debugEntries: opts.debug ? localDebug : undefined,
     deadRubberTriggered,
