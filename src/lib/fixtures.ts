@@ -123,6 +123,7 @@ interface ApiFixtureResponse {
       date: string;
       referee?: string | null;
       venue?: { name?: string | null; city?: string | null } | null;
+      status?: { short?: string | null } | null;
     };
     league?: { round?: string | null };
     teams: {
@@ -154,8 +155,10 @@ async function fetchFixturesForDate(
     round: item.league?.round ?? null,
     venueName: item.fixture.venue?.name ?? null,
     venueCity: item.fixture.venue?.city ?? null,
+    statusShort: item.fixture.status?.short ?? "NS",
   }));
 }
+
 
 export function computeStatus(
   minutesUntilKickoff: number,
