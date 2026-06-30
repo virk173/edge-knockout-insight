@@ -88,6 +88,8 @@ export interface DebugReport {
   deadRubberFlagged: number;
   historicalCaveatEligible: boolean;
   historicalCaveatReason: string;
+  wentToPenalties: boolean;
+  penaltyShootoutNote: string;
 }
 
 
