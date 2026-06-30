@@ -1097,7 +1097,262 @@ function extractPlayerStats(raw: unknown): Record<string, unknown> {
   };
 }
 
-export async function collectMatchData(
+// ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
+//
+// See the CALL SEQUENCE EXPLANATION comment in src/lib/calculate.ts: this whole
+// block is only reachable while a team's last-5 still contains group-stage
+// fixtures (early knockout rounds). It naturally goes dark by the QFs.
+
+interface ParsedLast5Fixture {
+  matchday: number;
+  date: string;
+  opponentName: string;
+  goals_scored: number;
+  shots_on_target: number;
+  is_group_stage: boolean;
+  is_dead_rubber: boolean;
+}
+
+// Parse an API-Football last-5 fixtures list (CALL 4-1 / 4-2) into the minimal
+// shape the dead-rubber logic needs, from the perspective of `teamId`.
+function parseLast5(list: unknown, teamId: number): ParsedLast5Fixture[] {
+  return extractArray(list).map((item) => {
+    const fixture = getField(item, ["fixture"]);
+    const date = String(getField(fixture, ["date"]) ?? "");
+    const round = String(getField(getField(item, ["league"]), ["round"]) ?? "");
+    const teams = getField(item, ["teams"]);
+    const home = getField(teams, ["home"]);
+    const away = getField(teams, ["away"]);
+    const homeId = Number(getField(home, ["id"]));
+    const isHome = homeId === teamId;
+    const goals = getField(item, ["goals"]);
+    const goals_scored =
+      Number(getField(goals, [isHome ? "home" : "away"]) ?? 0) || 0;
+    const opp = isHome ? away : home;
+    const opponentName = String(getField(opp, ["name"]) ?? "");
+    // Group-stage if the round names a group OR the date is before knockout.
+    const is_group_stage =
+      /group/i.test(round) || date.slice(0, 10) < WC2026_GROUP_STAGE_END;
+    const mdMatch = round.match(/(\d+)\s*$/);
+    const matchday = mdMatch ? Number(mdMatch[1]) : GROUP_TOTAL_MATCHDAYS;
+    return {
+      matchday,
+      date,
+      opponentName,
+      goals_scored,
+      shots_on_target: 0, // /fixtures?ids batch carries no shot stats
+      is_group_stage,
+      is_dead_rubber: false,
+    };
+  });
+}
+
+// Normalize a TheStatsAPI standings payload into {team_id, team_name, points,
+// position, matches_played} rows. Defensive against several shapes.
+interface StandingRow {
+  team_id: string;
+  team_name: string;
+  points: number;
+  position: number;
+  matches_played: number;
+}
+function normalizeStandings(payload: unknown): StandingRow[] {
+  const arr = extractArray(
+    getField(payload, ["standings", "table", "rows"]) ?? payload,
+  );
+  return arr.map((row) => {
+    const team = getField(row, ["team"]) ?? row;
+    return {
+      team_id: String(
+        getField(team, ["id", "team_id"]) ?? getField(row, ["team_id"]) ?? "",
+      ),
+      team_name: String(getField(team, ["name", "team_name"]) ?? ""),
+      points: Number(getField(row, ["points", "pts"]) ?? 0) || 0,
+      position:
+        Number(getField(row, ["position", "rank", "place"]) ?? 0) || 0,
+      matches_played:
+        Number(
+          getField(row, [
+            "matches_played",
+            "matchesPlayed",
+            "played",
+            "games_played",
+          ]) ?? 0,
+        ) || 0,
+    };
+  });
+}
+
+// Static groups lookup — never changes, cached forever as "statsapi_groups_static".
+let statsapiGroupsMem: unknown[] | null = null;
+async function getStatsApiGroupsStatic(): Promise<unknown[]> {
+  if (statsapiGroupsMem) return statsapiGroupsMem;
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem("statsapi_groups_static");
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw) as unknown[];
+        statsapiGroupsMem = arr;
+        return arr;
+      } catch {
+        /* refetch */
+      }
+    }
+  }
+  const payload = await saGet(
+    `/football/competitions/${STATSAPI_COMPETITION_ID}/seasons/${STATSAPI_SEASON_ID}/groups`,
+  );
+  const arr = extractArray(payload);
+  statsapiGroupsMem = arr;
+  if (typeof window !== "undefined" && arr.length) {
+    try {
+      window.localStorage.setItem("statsapi_groups_static", JSON.stringify(arr));
+    } catch {
+      /* quota — in-memory only */
+    }
+  }
+  return arr;
+}
+
+// Find a team's group_label by its TheStatsAPI team_id.
+async function findTeamGroupLabel(teamId: string | null): Promise<string | null> {
+  if (!teamId) return null;
+  const groups = await getStatsApiGroupsStatic();
+  for (const g of groups) {
+    const label = String(
+      getField(g, ["group_label", "label", "name", "group"]) ?? "",
+    );
+    const teams = extractArray(
+      getField(g, ["teams", "standings", "table"]) ?? [],
+    );
+    for (const t of teams) {
+      const team = getField(t, ["team"]) ?? t;
+      const id = String(getField(team, ["id", "team_id"]) ?? "");
+      if (id && id === String(teamId)) return label || null;
+    }
+  }
+  return null;
+}
+
+// Standings for a single group, cached per group per day (group results are
+// final once the group concludes, but we still scope by day to be safe).
+const statsapiStandingsMem: Record<string, StandingRow[]> = {};
+async function getStatsApiStandings(groupLabel: string): Promise<StandingRow[]> {
+  if (statsapiStandingsMem[groupLabel]) return statsapiStandingsMem[groupLabel];
+  const lsKey = `statsapi_standings_${groupLabel}`;
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(lsKey);
+    if (raw) {
+      try {
+        const rows = JSON.parse(raw) as StandingRow[];
+        statsapiStandingsMem[groupLabel] = rows;
+        return rows;
+      } catch {
+        /* refetch */
+      }
+    }
+  }
+  const payload = await saGet(
+    `/football/competitions/${STATSAPI_COMPETITION_ID}/seasons/${STATSAPI_SEASON_ID}/standings?group=${encodeURIComponent(groupLabel)}`,
+  );
+  const rows = normalizeStandings(payload);
+  statsapiStandingsMem[groupLabel] = rows;
+  if (typeof window !== "undefined" && rows.length) {
+    try {
+      window.localStorage.setItem(lsKey, JSON.stringify(rows));
+    } catch {
+      /* quota — in-memory only */
+    }
+  }
+  return rows;
+}
+
+// Resolve the standings team_id for an opponent named in an API-Football
+// fixture, by normalized case-insensitive name match against the group table.
+function resolveOpponentStandingId(
+  opponentName: string,
+  standings: StandingRow[],
+): string | null {
+  const o = normalize(opponentName);
+  if (!o) return null;
+  const hit = standings.find((s) => {
+    const n = normalize(s.team_name);
+    return n && (n.includes(o) || o.includes(n));
+  });
+  return hit?.team_id ?? null;
+}
+
+// Per-team dead-rubber adjustment: parse last-5, flag dead rubbers using the
+// cached group standings, and produce recency-weighted adjusted averages.
+interface TeamDeadRubberResult {
+  adjustment: ReturnType<typeof applyDeadRubberDiscount>;
+  standings: StandingRow[] | null;
+  groupLabel: string | null;
+  groupFixtureCount: number;
+  triggered: boolean;
+  reason: string;
+}
+async function computeTeamDeadRubber(
+  c4List: unknown,
+  afTeamId: number,
+  statsApiTeamId: string | null,
+): Promise<TeamDeadRubberResult> {
+  const last5 = parseLast5(c4List, afTeamId);
+  const groupFixtures = last5.filter((f) => f.is_group_stage);
+
+  // TRIGGER CONDITION: if no last-5 fixture falls in the group-stage window,
+  // skip S6 entirely for this team — nothing to dead-rubber-check.
+  if (groupFixtures.length === 0) {
+    return {
+      adjustment: applyDeadRubberDiscount(last5),
+      standings: null,
+      groupLabel: null,
+      groupFixtureCount: 0,
+      triggered: false,
+      reason:
+        "NOT TRIGGERED — all last-5 fixtures are knockout stage for this team.",
+    };
+  }
+
+  const groupLabel = await findTeamGroupLabel(statsApiTeamId);
+  if (!groupLabel) {
+    return {
+      adjustment: applyDeadRubberDiscount(last5),
+      standings: null,
+      groupLabel: null,
+      groupFixtureCount: groupFixtures.length,
+      triggered: false,
+      reason:
+        "Group-stage fixtures present but team's group_label could not be resolved — proceeding without dead-rubber discount.",
+    };
+  }
+
+  const standings = await getStatsApiStandings(groupLabel);
+  for (const f of last5) {
+    if (!f.is_group_stage) continue;
+    const oppId = resolveOpponentStandingId(f.opponentName, standings);
+    if (!oppId) continue;
+    const r = detectDeadRubber({
+      fixture_matchday: f.matchday,
+      fixture_date: f.date,
+      opponent_team_id: oppId,
+      group_standings: standings,
+      group_total_matchdays: GROUP_TOTAL_MATCHDAYS,
+    });
+    f.is_dead_rubber = r.is_dead_rubber;
+  }
+
+  return {
+    adjustment: applyDeadRubberDiscount(last5),
+    standings,
+    groupLabel,
+    groupFixtureCount: groupFixtures.length,
+    triggered: true,
+    reason: `Group ${groupLabel} standings resolved — ${groupFixtures.length} group-stage fixture(s) checked.`,
+  };
+}
+
+
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
