@@ -30,8 +30,6 @@ export interface AnalysedMatch extends Fixture {
   status: MatchStatus;
 }
 
-const API_BASE = "https://v3.football.api-sports.io/fixtures";
-
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -53,26 +51,11 @@ interface ApiFixtureResponse {
   }>;
 }
 
-function normaliseErrors(errors: unknown): string | null {
-  if (!errors) return null;
-  if (Array.isArray(errors)) {
-    return errors.length ? errors.join(", ") : null;
-  }
-  if (typeof errors === "object") {
-    const values = Object.values(errors as Record<string, unknown>);
-    return values.length ? values.map(String).join(", ") : null;
-  }
-  if (typeof errors === "string") {
-    return errors.trim() ? errors : null;
-  }
-  return null;
-}
-
 async function fetchFixturesForDate(
   date: string,
   isTomorrow: boolean,
 ): Promise<Fixture[]> {
-  const path = `${API_BASE.replace("https://v3.football.api-sports.io", "")}?league=1&season=2026&date=${date}`;
+  const path = `/fixtures?league=1&season=2026&date=${date}`;
   const response = await apiFootballGet(path, {
     callLabel: isTomorrow ? "C1-tomorrow" : "C1-today",
   });

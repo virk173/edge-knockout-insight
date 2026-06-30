@@ -323,7 +323,9 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "S7", api: "TheStatsAPI", endpoint: "/matches/{id}/referee (career totals) + API-Football fouls/penalties enrichment", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     // ---- API-Football group ----
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-1", api: "API-Football", endpoint: "/fixtures (home last 5)", entryKey: "4-1", extracted: cr["4-1"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-2", api: "API-Football", endpoint: "/fixtures (away last 5)", entryKey: "4-2", extracted: cr["4-2"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-3", api: "API-Football", endpoint: "/fixtures (last-5 ids batch)", entryKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
     
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
@@ -2254,9 +2256,15 @@ interface AfFixtureItem {
 }
 
 export async function resolveDebugFixture(): Promise<AnalysedMatch> {
-  const response = await afGet(
-    `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
-  );
+  currentDebugCall = "C1";
+  let response: unknown;
+  try {
+    response = await afGet(
+      `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
+    );
+  } finally {
+    currentDebugCall = null;
+  }
   const items = extractArray(response) as AfFixtureItem[];
 
   const matches = (a: string, b: string) => {
