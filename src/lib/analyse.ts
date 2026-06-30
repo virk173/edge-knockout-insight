@@ -2175,8 +2175,9 @@ export async function collectMatchData(
   const lineupResolved = callResults["6"]?.status === "SUCCESS";
 
   // Gap 6 — penalty-shootout summary from the S0 lookup (final_score based).
-  const wentToPenalties = statsApiRef?.wentToPenalties ?? false;
-  const ps = statsApiRef?.penaltyShootout ?? null;
+  const finalRef = statsApiRef as StatsApiMatchRef | null;
+  const wentToPenalties = finalRef?.wentToPenalties ?? false;
+  const ps = finalRef?.penaltyShootout ?? null;
   const penaltyShootoutNote =
     wentToPenalties && ps
       ? `WENT TO PENALTIES — normal time ${ps.normal_time.home}-${ps.normal_time.away}, ` +
