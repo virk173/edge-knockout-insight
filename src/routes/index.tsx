@@ -1215,7 +1215,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
         </span>
 
         <span className="text-slate">
-          Dead rubber check:{" "}
+          Dead rubber check (3rd-place aware):{" "}
           {report.deadRubberTriggered ? (
             <span className="text-accent-amber">
               {report.deadRubberFlagged} fixture(s) flagged across both teams
@@ -1226,6 +1226,23 @@ function DebugReportView({ report }: { report: DebugReport }) {
             </span>
           )}
         </span>
+
+        <span className="text-slate">
+          Round of 32 historical caveat:{" "}
+          <span
+            className={
+              report.historicalCaveatEligible
+                ? "text-accent-amber"
+                : "text-slate"
+            }
+          >
+            {report.historicalCaveatEligible ? "TRIGGERED" : "NOT TRIGGERED"}
+          </span>
+          <span className="block pl-2 text-[11px] leading-snug text-slate">
+            {report.historicalCaveatReason}
+          </span>
+        </span>
+
 
         <span className="text-slate">
           Ready for Claude:{" "}
