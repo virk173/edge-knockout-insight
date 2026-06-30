@@ -286,7 +286,77 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
+function evConfidenceStyle(c?: "HIGH" | "MEDIUM" | "LOW"): string {
+  if (c === "HIGH")
+    return "border-signal-green/50 bg-signal-green/15 text-signal-green";
+  if (c === "MEDIUM")
+    return "border-accent-amber/50 bg-accent-amber/15 text-accent-amber";
+  if (c === "LOW")
+    return "border-signal-red/50 bg-signal-red/15 text-signal-red";
+  return "border-border bg-card text-slate";
+}
+
+function EvConfidenceNote({
+  confidence,
+  note,
+  rawEv,
+  adjustedEv,
+}: {
+  confidence?: "HIGH" | "MEDIUM" | "LOW";
+  note?: string;
+  rawEv?: number;
+  adjustedEv?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const adjusted =
+    rawEv !== undefined && adjustedEv !== undefined && rawEv !== adjustedEv;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate">
+            EV Confidence
+          </span>
+          {confidence && (
+            <span
+              className={cn(
+                "rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
+                evConfidenceStyle(confidence),
+              )}
+            >
+              {confidence}
+            </span>
+          )}
+        </div>
+        {note && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="flex items-center gap-1 text-xs font-medium text-accent-amber"
+          >
+            <Info size={13} />
+            {open ? "Hide" : "Why?"}
+          </button>
+        )}
+      </div>
+      {adjusted && (
+        <p className="text-[12px] text-slate">
+          Raw EV{" "}
+          <span className="font-semibold text-slate">{formatEv(rawEv)}</span> →
+          adjusted{" "}
+          <span className="font-semibold text-accent-amber">
+            {formatEv(adjustedEv)}
+          </span>
+        </p>
+      )}
+      {note && open && (
+        <p className="text-[12px] leading-relaxed text-slate">{note}</p>
+      )}
+    </div>
+  );
+}
+
+
 // Tier 1 — Anchor
 // ─────────────────────────────────────────────────────────────
 function Tier1Card({ result }: { result: AnalysisResult }) {
