@@ -911,11 +911,190 @@ function BottomBar({ result }: { result: AnalysisResult }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Top Bets — simple plain-language summary (above the detail cards)
+// ─────────────────────────────────────────────────────────────
+type EvLabel = { text: string; className: string };
+
+function evRatingLabel(rating?: string, numericEv?: number): EvLabel {
+  const v = (rating ?? "").toUpperCase();
+  if (v.includes("STRONG"))
+    return { text: "STRONG", className: "text-signal-green" };
+  if (v.includes("MARGINAL"))
+    return { text: "MARGINAL", className: "text-accent-amber" };
+  if (v) return { text: v, className: "text-accent-amber" };
+  // Fall back to the numeric EV when no rating string is provided.
+  if (typeof numericEv === "number" && Number.isFinite(numericEv)) {
+    return numericEv >= 0.05
+      ? { text: "STRONG", className: "text-signal-green" }
+      : { text: "MARGINAL", className: "text-accent-amber" };
+  }
+  return { text: "—", className: "text-slate" };
+}
+
+function fmtOdds(odds?: number | null): string {
+  return typeof odds === "number" && Number.isFinite(odds) ? odds.toFixed(2) : "—";
+}
+
+function parlayOdds(t?: { sgp_validation?: { stake_sgp_price?: number }; legs?: TierLeg[] }): number | undefined {
+  const sgp = t?.sgp_validation?.stake_sgp_price;
+  if (typeof sgp === "number" && Number.isFinite(sgp)) return sgp;
+  const legs = t?.legs ?? [];
+  const odds = legs
+    .map((l) => l.odds)
+    .filter((o): o is number => typeof o === "number" && Number.isFinite(o));
+  if (odds.length === 0) return undefined;
+  return odds.reduce((acc, o) => acc * o, 1);
+}
+
+interface TopBetRow {
+  key: string;
+  label: string;
+  selection: string;
+  odds: number | undefined;
+  stake?: string;
+  ev: EvLabel;
+  confidence?: "HIGH" | "MEDIUM" | "LOW";
+}
+
+function TopBetItem({ index, row }: { index: number; row: TopBetRow }) {
+  return (
+    <li className="flex gap-3">
+      <span className="text-base font-bold text-slate">{index}.</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="font-bold text-foreground">
+          {row.label} — <span className="text-foreground">{row.selection}</span>
+        </span>
+        <span className="text-sm text-slate">
+          Odds: <span className="font-bold text-accent-amber">{fmtOdds(row.odds)}</span>
+          {row.stake ? (
+            <>
+              {" "}
+              | Stake: <span className="font-bold text-accent-amber">{row.stake}</span>
+            </>
+          ) : null}
+        </span>
+        <span className="text-sm text-slate">
+          EV: <span className={cn("font-bold", row.ev.className)}>{row.ev.text}</span>
+          {row.confidence ? (
+            <span className="text-slate"> ({row.confidence} confidence)</span>
+          ) : null}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+function TopBets({ result }: { result: AnalysisResult }) {
+  const t1 = result.tier_1_anchor;
+  const t2 = result.tier_2_parlay;
+  const t3 = result.tier_3_jackpot;
+
+  const rows: TopBetRow[] = [];
+
+  if (t1?.active) {
+    rows.push({
+      key: "anchor",
+      label: "ANCHOR",
+      selection: t1.selection ?? t1.market ?? "—",
+      odds: t1.odds,
+      stake: t1.stake,
+      ev: evRatingLabel(t1.ev_rating, t1.ev),
+      confidence: t1.ev_confidence,
+    });
+  }
+
+  if (t2?.active) {
+    const legs = t2.legs ?? [];
+    const sel = legs
+      .map((l) => l.selection || l.market)
+      .filter(Boolean)
+      .join(" + ");
+    rows.push({
+      key: "parlay",
+      label: `${legs.length}-leg SGP`,
+      selection: sel || "Same Game Parlay",
+      odds: parlayOdds(t2),
+      stake: t2.stake,
+      ev: evRatingLabel(t2.ev_rating, t2.parlay_ev),
+    });
+  }
+
+  if (t3?.active) {
+    const legs = t3.legs ?? [];
+    rows.push({
+      key: "jackpot",
+      label: `${legs.length}-leg parlay`,
+      selection: "JACKPOT",
+      odds: t3.combined_odds,
+      stake: t3.stake,
+      ev: evRatingLabel(undefined, t3.jackpot_ev),
+    });
+  }
+
+  const noneActive = rows.length === 0;
+  const dq = (result.data_quality ?? "").toUpperCase();
+  const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
+  const subtitle = [result.match, result.round].filter(Boolean).join(" — ") || "—";
+
+  return (
+    <div className={cn(CARD, "flex flex-col gap-4 border-accent-amber/40")}>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-xl font-bold text-foreground">Top Bets</h2>
+        <p className="text-sm text-slate">{subtitle}</p>
+        {showDqWarning && (
+          <p className="text-xs font-semibold text-accent-amber">
+            ⚠️ Data quality: {dq.includes("THIN") ? "THIN" : "PARTIAL"} — some inputs
+            missing, treat with extra caution
+          </p>
+        )}
+      </div>
+
+      {noneActive ? (
+        <p className="text-sm text-slate">
+          No qualifying bets this match.{" "}
+          <span className="font-semibold text-accent-amber">
+            {result.unallocated_stake ?? "$50"} unallocated
+          </span>
+          {t1?.skip_reason ? ` — ${t1.skip_reason}` : ""}
+        </p>
+      ) : (
+        <>
+          <ol className="flex flex-col gap-3">
+            {rows.map((row, i) => (
+              <TopBetItem key={row.key} index={i + 1} row={row} />
+            ))}
+          </ol>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-slate">
+            <span>
+              Total staked:{" "}
+              <span className="font-bold text-foreground">
+                {result.total_staked ?? "—"}
+              </span>
+            </span>
+            {result.unallocated_stake &&
+              !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim()) && (
+                <span>
+                  <span className="font-bold text-accent-amber">
+                    {result.unallocated_stake}
+                  </span>{" "}
+                  unallocated
+                </span>
+              )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export function BettingDashboard({ result }: { result: AnalysisResult }) {
   return (
     <div className="flex flex-col gap-4">
+      <TopBets result={result} />
+
       <MatchHeader result={result} />
 
       <div className="grid gap-4 md:grid-cols-2">
