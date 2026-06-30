@@ -1079,6 +1079,18 @@ SECTION 10 — ABSOLUTE RULES
     appended to the existing analyst_note
     paragraph, only when (a)(b)(c) all
     hold — never a blanket disclaimer.
+34. ALWAYS output dimension_weights as
+    six individual numbers (D1 through
+    D6) that sum to 100, reflecting
+    whichever adjustment rule from
+    Section 4 actually applied to this
+    match's data conditions. This is
+    separate from and in addition to
+    confidence_inputs.dimension_weighted_raw.
+    Never omit this field. If no special
+    adjustment applies, use the default
+    35/25/20/10/5/5 split.
+
 
 
 
