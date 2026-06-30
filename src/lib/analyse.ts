@@ -1589,6 +1589,9 @@ export async function collectMatchData(
   // When debugging, capture every raw HTTP call made by afGet / saGet.
   const localDebug: DebugEntry[] = [];
   debugSink = opts.debug ? localDebug : null;
+  // Reset per-run lineup state; CALL 6 updates it as it retries.
+  lastLineupState = "NOT_ANNOUNCED";
+
 
   // TheStatsAPI match reference (id + team ids), resolved once as step S0 and
   // reused by S2A/S2B (team stats), S3 (lineups), S4 (player stats) and S5
