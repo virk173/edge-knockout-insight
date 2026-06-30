@@ -388,6 +388,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
       "NOT ELIGIBLE — round unknown.",
     wentToPenalties: result.wentToPenalties ?? false,
     penaltyShootoutNote: result.penaltyShootoutNote ?? "Not evaluated.",
+    lineupState: result.lineupState ?? "NOT_ANNOUNCED",
+    lineupResolved: result.lineupResolved ?? false,
   };
 }
 
