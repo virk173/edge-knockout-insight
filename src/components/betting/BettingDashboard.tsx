@@ -7,6 +7,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatMatchTime } from "@/lib/formatMatchTime";
 import {
   type AnalysisResult,
   type TierLeg,
