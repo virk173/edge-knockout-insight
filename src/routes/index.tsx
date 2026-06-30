@@ -257,10 +257,9 @@ function Index() {
   }, [now, collection, activeMatchId, matches]);
 
   async function handleRun() {
-    if (debugMode) {
-      await handleRunDebug();
-      return;
-    }
+    // Debug mode uses the two-step buttons (Run Data Pipeline / Send to Claude),
+    // not this single button.
+    if (debugMode) return;
     setLoading(true);
     setError(null);
     try {
