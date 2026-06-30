@@ -197,6 +197,7 @@ export async function runAnalysis(): Promise<AnalysisResult> {
         ...fixture,
         minutesUntilKickoff,
         status: computeStatus(minutesUntilKickoff, fixture.isTomorrow),
+        blocked: isMatchBlocked(fixture.statusShort, minutesUntilKickoff),
       };
     })
     .sort(
