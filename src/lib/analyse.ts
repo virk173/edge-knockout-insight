@@ -1352,7 +1352,7 @@ async function computeTeamDeadRubber(
   };
 }
 
-
+export async function collectMatchData(
   match: AnalysedMatch,
   onProgress: (p: ProgressUpdate) => void,
   opts: { debug?: boolean } = {},
