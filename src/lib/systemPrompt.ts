@@ -1319,6 +1319,15 @@ EXAMPLE OUTPUT:
       ]
     }
   },
+  "dimension_weights": {
+    "D1": 35,
+    "D2": 17,
+    "D3": 20,
+    "D4": 18,
+    "D5": 5,
+    "D6": 5,
+    "adjustment_reason": "CRITICAL ABSENCE confirmed (Mane) — D4 raised to 18, D2 reduced to 17 per Section 4 rules."
+  },
   "tactical_analysis": {
     "formation_home": "4-3-3",
     "formation_away": "4-4-2",
