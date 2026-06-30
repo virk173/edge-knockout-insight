@@ -947,6 +947,12 @@ Start your response with { and end with }.`;
                   </pre>
                 </details>
               )}
+
+              {analysisResult !== null && (
+                <ValidationChecksView
+                  result={analysisResult as AnalysisResult}
+                />
+              )}
             </div>
           )}
 
