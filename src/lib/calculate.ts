@@ -67,6 +67,61 @@ export function computeEv(
 }
 
 // ─────────────────────────────────────────────────────────────
+// 1b — Stake-anchoring bias correction.
+//   EV is computed against Stake's line. When a Pinnacle (sharp)
+//   reference is available, the gap between the two lines tells us
+//   whether an apparent "edge" is genuine probability mismatch or
+//   just Stake's line being soft. Adjust EV + confidence to reflect
+//   that, rather than trusting Stake's line at face value.
+// ─────────────────────────────────────────────────────────────
+export const adjustEVForPinnacleGap = (inputs: {
+  raw_ev: number;
+  stake_odds: number;
+  pinnacle_odds: number | null;
+}): {
+  adjusted_ev: number;
+  ev_confidence: "HIGH" | "MEDIUM" | "LOW";
+  note: string;
+} => {
+  if (!inputs.pinnacle_odds) {
+    return {
+      adjusted_ev: inputs.raw_ev,
+      ev_confidence: "MEDIUM",
+      note:
+        "No Pinnacle reference available. EV based on Stake line alone — unverified against sharp market.",
+    };
+  }
+
+  const gap_pct = (inputs.stake_odds / inputs.pinnacle_odds - 1) * 100;
+
+  if (gap_pct > 5) {
+    // Stake offers meaningfully better odds than Pinnacle — could be
+    // genuine value OR Stake mispricing. Flag for caution, don't kill it.
+    return {
+      adjusted_ev: round(inputs.raw_ev * 0.85),
+      ev_confidence: "MEDIUM",
+      note: `Stake odds ${gap_pct.toFixed(1)}% better than Pinnacle. EV reduced 15% — part of this "edge" may be Stake line inefficiency rather than true value. Cross-check before staking.`,
+    };
+  }
+
+  if (gap_pct < -3) {
+    // Stake is WORSE than Pinnacle, yet still EV positive — stronger signal.
+    return {
+      adjusted_ev: round(inputs.raw_ev * 1.1),
+      ev_confidence: "HIGH",
+      note: `Stake odds ${Math.abs(gap_pct).toFixed(1)}% worse than Pinnacle, yet still EV positive. Stronger confirmation of genuine edge — model disagrees with the sharper market in your favor.`,
+    };
+  }
+
+  return {
+    adjusted_ev: inputs.raw_ev,
+    ev_confidence: "HIGH",
+    note:
+      "Stake and Pinnacle aligned within 5%. EV reflects genuine model disagreement with an efficient market.",
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
 // 3 — Gap score
 //   gap = (goals × 8) + (assists × 5) + (shots_delta × 7)
 //       + (keypasses_delta × 5) + set_piece_weight
