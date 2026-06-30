@@ -576,6 +576,7 @@ export const validateDimensionWeights = (inputs: {
     expected_weights: expected,
     mismatch_flags: mismatchFlags,
     sum_valid: sumValid,
+    validation_ran: true,
   };
 };
 
