@@ -243,7 +243,7 @@ export const STATUS_META: Record<
     canAnalyse: false,
   },
   TOMORROW: {
-    label: "TOMORROW",
+    label: "SCHEDULED",
     emoji: "📅",
     className: "text-slate",
     canAnalyse: false,
