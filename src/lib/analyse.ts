@@ -570,25 +570,36 @@ function summariseOutcome(name: string, node: unknown) {
   return { name, opening, current, ...mv };
 }
 
-// Build a structured Pinnacle summary from a TheStatsAPI /matches/{id}/odds
-// response. Filters for the Pinnacle bookmaker and extracts 1X2, Over/Under
-// (total goals), BTTS, and corners markets with opening + last_seen prices and
-// line movement. Returns null if no Pinnacle data is present.
+// Build a structured odds summary from a TheStatsAPI /matches/{id}/odds
+// response. Prefers the Pinnacle bookmaker (sharp money); when Pinnacle is not
+// among the returned bookmakers — real WC2026 data frequently ships a single
+// bookmaker such as Bet365 — it falls back to the first bookmaker present so the
+// markets are not silently dropped. Extracts 1X2, BTTS, Total Goals, Corners and
+// Asian Handicap with opening + last_seen prices and line movement.
+//
+// CRITICAL (per authoritative spec at api.thestatsapi.com/llms.txt): for
+// total_goals, match_corners and asian_handicap the LINE VALUE is the object KEY
+// (e.g. "2.5", "9.5", "-0.5"), NOT a fixed field name like over_2_5. We iterate
+// the keys dynamically and keep whatever lines are actually present.
 function buildPinnacleSummary(
   oddsJson: unknown,
-): { markets: PinnacleMarketSummary[]; raw: unknown } | null {
+): { bookmaker: string; markets: PinnacleMarketSummary[]; raw: unknown } | null {
   const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
-  const pinnacle = bookmakers.find((b) => {
-    const name = getField(b, ["bookmaker", "name"]);
-    return typeof name === "string" && normalize(name).includes("pinnacle");
-  });
-  if (!pinnacle) return null;
-  const m = getField(pinnacle, ["markets"]);
+  if (!bookmakers.length) return null;
+  // Prefer Pinnacle; otherwise fall back to the first available bookmaker.
+  const chosen =
+    bookmakers.find((b) => {
+      const name = getField(b, ["bookmaker", "name"]);
+      return typeof name === "string" && normalize(name).includes("pinnacle");
+    }) ?? bookmakers[0];
+  const bookmakerName = (getField(chosen, ["bookmaker", "name"]) as string) ?? "UNKNOWN";
+  const m = getField(chosen, ["markets"]);
   if (!m || typeof m !== "object") return null;
 
   const markets: PinnacleMarketSummary[] = [];
 
-  // 1X2 — match_odds (home / draw / away).
+  // 1X2 — match_odds (home / draw / away). Each outcome is a flat
+  // { opening, last_seen } node.
   const matchOdds = getField(m, ["match_odds", "match_result", "1x2"]);
   if (matchOdds) {
     const outcomes = (
@@ -617,9 +628,18 @@ function buildPinnacleSummary(
     if (outcomes.length) markets.push({ market: "BTTS", outcomes });
   }
 
-  // Over/Under goals — total_goals, keyed by line (e.g. "2.5").
-  const flattenLines = (label: string, container: unknown) => {
+  // Over/Under goals + corners — dynamic line keys. `preferredLine` is the line
+  // we most want (2.5 goals, 9.5 corners); if it is absent we do NOT error, we
+  // keep whatever lines ARE returned and log which keys the match actually had.
+  const flattenLines = (label: string, container: unknown, preferredLine: number) => {
     if (!container || typeof container !== "object") return;
+    const keys = Object.keys(container as Record<string, unknown>);
+    console.log(`[analyse] ${label} lines returned:`, keys);
+    if (!keys.some((k) => parseFloat(k) === preferredLine)) {
+      console.log(
+        `[analyse] ${label}: preferred line ${preferredLine} not present — falling back to available lines.`,
+      );
+    }
     const outcomes: PinnacleMarketSummary["outcomes"] = [];
     for (const [line, node] of Object.entries(container as Record<string, unknown>)) {
       const over = getField(node, ["over"]);
@@ -629,24 +649,32 @@ function buildPinnacleSummary(
     }
     if (outcomes.length) markets.push({ market: label, outcomes });
   };
-  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]));
-  flattenLines("Corners", getField(m, ["match_corners", "corners"]));
+  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]), 2.5);
+  flattenLines("Corners", getField(m, ["match_corners", "corners"]), 9.5);
 
-  // Asian Handicap — home / away with opening + last_seen.
+  // Asian Handicap — { home: { "<line>": {opening,last_seen}, ... },
+  //                    away: { "<line>": {opening,last_seen}, ... } }.
+  // The handicap line is the nested object KEY, so iterate dynamically rather
+  // than reading opening/last_seen straight off home/away (which are containers,
+  // not price nodes — the old code did this and always got undefined).
   const ah = getField(m, ["asian_handicap", "handicap"]);
-  if (ah) {
-    const outcomes = (
-      [
-        ["Home", getField(ah, ["home"])],
-        ["Away", getField(ah, ["away"])],
-      ] as Array<[string, unknown]>
-    )
-      .filter(([, n]) => n != null)
-      .map(([name, n]) => summariseOutcome(name, n));
-    if (outcomes.length) markets.push({ market: "Asian Handicap", outcomes });
+  if (ah && typeof ah === "object") {
+    const ahOutcomes: PinnacleMarketSummary["outcomes"] = [];
+    for (const side of ["home", "away"] as const) {
+      const sideObj = getField(ah, [side]);
+      if (!sideObj || typeof sideObj !== "object") continue;
+      const lines = Object.keys(sideObj as Record<string, unknown>);
+      console.log(`[analyse] Asian Handicap ${side} lines returned:`, lines);
+      for (const [line, node] of Object.entries(sideObj as Record<string, unknown>)) {
+        ahOutcomes.push(
+          summariseOutcome(`${side === "home" ? "Home" : "Away"} ${line}`, node),
+        );
+      }
+    }
+    if (ahOutcomes.length) markets.push({ market: "Asian Handicap", outcomes: ahOutcomes });
   }
 
-  return markets.length ? { markets, raw: pinnacle } : null;
+  return markets.length ? { bookmaker: bookmakerName, markets, raw: chosen } : null;
 }
 
 // Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
