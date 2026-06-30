@@ -1598,6 +1598,8 @@ export async function collectMatchData(
       match_id: ref.id,
       home_team: { id: ref.homeTeamId, name: ref.homeTeamName },
       away_team: { id: ref.awayTeamId, name: ref.awayTeamName },
+      went_to_penalties: ref.wentToPenalties,
+      penalty_shootout: ref.penaltyShootout,
     };
   });
 
