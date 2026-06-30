@@ -1702,7 +1702,19 @@ export async function collectMatchData(
     let payload: unknown = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       payload = await saGet(`/football/matches/${matchId}/lineups`);
-      if (!isEmptyResponse(payload)) return payload;
+      // Diagnostic: TheStatsAPI sometimes returns confirmed=true with empty
+      // starting_xi arrays (spec says this state shouldn't exist). Log it so we
+      // can tell if it's a one-off or recurring for certain matches.
+      if (lineupConfirmedButEmpty(payload)) {
+        console.warn(
+          `[S3 lineups] MALFORMED confirmed-but-empty response for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, attempt ${attempt + 1}/${maxAttempts}). ` +
+            `Treating as LINEUP PENDING.`,
+        );
+      }
+      // Only accept a lineup that is genuinely populated on BOTH sides. An
+      // empty 404 OR a confirmed-but-empty payload both fall through to retry.
+      if (!isEmptyResponse(payload) && lineupsArePopulated(payload)) return payload;
       if (attempt < maxAttempts - 1) await sleep(60000);
     }
     throw new Error("LINEUP PENDING — lineups not yet announced (empty/404).");
