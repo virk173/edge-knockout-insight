@@ -999,17 +999,16 @@ Start your response with { and end with }.`;
                       </div>
                     </div>
 
-                    {/* Timing gate — warning banner only (never blocks pre-kickoff) */}
-                    {!m.isTomorrow && (
-                      <div
-                        className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
-                          band.tone,
-                        )}`}
-                      >
-                        {band.tone === "blocked" ? "🚫 " : ""}
-                        {band.label}
-                      </div>
-                    )}
+                    {/* Timing gate — warning banner only (never blocks pre-kickoff).
+                        Shown for every scheduled match, including tomorrow's. */}
+                    <div
+                      className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                        band.tone,
+                      )}`}
+                    >
+                      {band.tone === "blocked" ? "🚫 " : ""}
+                      {band.label}
+                    </div>
 
                     {/* Two-button flow: Run Calls + Analyse (normal mode) */}
                     {canAct && (
