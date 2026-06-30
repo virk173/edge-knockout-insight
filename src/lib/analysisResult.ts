@@ -59,8 +59,34 @@ export interface EnsembleCheck {
   signal_1_model?: number;
   signal_2_poisson?: number;
   signal_3_historical?: number;
-  alignment?: string; // "TRIPLE" | "MAJORITY" | "CONFLICT"
+  alignment?: string; // "TRIPLE ALIGNED" | "MAJORITY" | "CONFLICT"
   confidence_impact?: string;
+  note?: string;
+  max_pairwise_diff?: number;
+}
+
+export interface ModelProbabilities {
+  home: number;
+  draw: number;
+  away: number;
+  was_normalized?: boolean;
+  raw_sum?: number;
+}
+
+export interface DimensionWeights {
+  D1: number;
+  D2: number;
+  D3: number;
+  D4: number;
+  D5: number;
+  D6: number;
+}
+
+export interface DimensionWeightsValidation {
+  weights: DimensionWeights;
+  expected_weights: DimensionWeights;
+  mismatch_flags: string[];
+  sum_valid: boolean;
 }
 
 export interface ConfidenceAdjustment {
