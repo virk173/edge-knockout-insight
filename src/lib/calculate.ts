@@ -88,22 +88,120 @@ export function computeGapScore(inputs?: {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 4 — Ensemble alignment (single source of truth)
+//   Derived purely from the three signal probabilities so the
+//   alignment label and confidence_impact can never disagree with
+//   the confidence-score math (computeConfidence calls this).
+// ─────────────────────────────────────────────────────────────
+export const calculateEnsembleAlignment = (signals: {
+  signal_1_model: number;
+  signal_2_poisson: number;
+  signal_3_historical: number;
+}): {
+  alignment: "TRIPLE ALIGNED" | "MAJORITY" | "CONFLICT";
+  max_pairwise_diff: number;
+  confidence_impact: number;
+  note: string;
+} => {
+  const s1 = signals.signal_1_model;
+  const s2 = signals.signal_2_poisson;
+  const s3 = signals.signal_3_historical;
+
+  const diff12 = Math.abs(s1 - s2);
+  const diff13 = Math.abs(s1 - s3);
+  const diff23 = Math.abs(s2 - s3);
+  const maxDiff = Math.max(diff12, diff13, diff23);
+
+  if (maxDiff <= 0.3) {
+    return {
+      alignment: "TRIPLE ALIGNED",
+      max_pairwise_diff: maxDiff,
+      confidence_impact: 5,
+      note: `All three signals within 0.3 of each other (max diff ${maxDiff.toFixed(
+        2,
+      )}). Confidence +5.`,
+    };
+  }
+
+  // count how many pairs are within 0.3
+  const pairsAligned = [diff12, diff13, diff23].filter((d) => d <= 0.3).length;
+
+  if (pairsAligned >= 1) {
+    return {
+      alignment: "MAJORITY",
+      max_pairwise_diff: maxDiff,
+      confidence_impact: 0,
+      note: `2 of 3 signals aligned within 0.3 (max diff ${maxDiff.toFixed(
+        2,
+      )}). No confidence change.`,
+    };
+  }
+
+  return {
+    alignment: "CONFLICT",
+    max_pairwise_diff: maxDiff,
+    confidence_impact: -5,
+    note: `All signals diverge above 0.3 (max diff ${maxDiff.toFixed(
+      2,
+    )}). Confidence -5, data_quality forced PARTIAL.`,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
 // 4 — Confidence score
 //   post_adj = raw + Σ(deltas)
 //   if post_adj > 75:  final = 75 + (post_adj − 75) × 0.40
 //   else:              final = post_adj
+//
+//   The ensemble-alignment delta is NOT trusted from Claude. When the
+//   three ensemble signals are supplied, computeConfidence calls
+//   calculateEnsembleAlignment() and substitutes its confidence_impact
+//   for any Claude-provided "ensemble" adjustment, so the confidence
+//   math and ensemble_check.alignment share one source of truth.
 // ─────────────────────────────────────────────────────────────
-export function computeConfidence(inputs?: {
-  dimension_weighted_raw?: number;
-  adjustments?: ConfidenceAdjustment[];
-}): { post_adjustment: number; final_confidence: number; bayesian_applied: boolean } | undefined {
+export function computeConfidence(
+  inputs?: {
+    dimension_weighted_raw?: number;
+    adjustments?: ConfidenceAdjustment[];
+  },
+  ensembleSignals?: {
+    signal_1_model?: number;
+    signal_2_poisson?: number;
+    signal_3_historical?: number;
+  },
+): {
+  post_adjustment: number;
+  final_confidence: number;
+  bayesian_applied: boolean;
+  adjustments: ConfidenceAdjustment[];
+  ensemble_impact?: number;
+} | undefined {
   if (!inputs) return undefined;
   const raw = num(inputs.dimension_weighted_raw);
   if (raw === undefined) return undefined;
-  const sum = (inputs.adjustments ?? []).reduce(
-    (acc, a) => acc + (num(a?.delta) ?? 0),
-    0,
-  );
+
+  let adjustments: ConfidenceAdjustment[] = [...(inputs.adjustments ?? [])];
+  let ensembleImpact: number | undefined;
+
+  const s1 = num(ensembleSignals?.signal_1_model);
+  const s2 = num(ensembleSignals?.signal_2_poisson);
+  const s3 = num(ensembleSignals?.signal_3_historical);
+  if (s1 !== undefined && s2 !== undefined && s3 !== undefined) {
+    const ensemble = calculateEnsembleAlignment({
+      signal_1_model: s1,
+      signal_2_poisson: s2,
+      signal_3_historical: s3,
+    });
+    ensembleImpact = ensemble.confidence_impact;
+    // Drop any Claude-supplied ensemble adjustment, then inject the
+    // single-source-of-truth value so it can never double-count or diverge.
+    adjustments = adjustments.filter(
+      (a) => !(a?.type ?? "").toLowerCase().includes("ensemble"),
+    );
+    adjustments.push({ type: "ensemble_alignment", delta: ensembleImpact });
+  }
+
+  const sum = adjustments.reduce((acc, a) => acc + (num(a?.delta) ?? 0), 0);
   const postAdj = raw + sum;
   const bayesian = postAdj > 75;
   const final = bayesian ? 75 + (postAdj - 75) * 0.4 : postAdj;
@@ -111,6 +209,8 @@ export function computeConfidence(inputs?: {
     post_adjustment: round(postAdj, 1),
     final_confidence: round(final, 1),
     bayesian_applied: bayesian,
+    adjustments,
+    ensemble_impact: ensembleImpact,
   };
 }
 
