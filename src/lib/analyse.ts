@@ -1762,7 +1762,7 @@ export async function collectMatchData(
             "Pinnacle odds (TheStatsAPI)",
             "EMPTY",
             { matchId },
-            "Pinnacle data unavailable — no Pinnacle markets returned for this match.",
+            "Pinnacle/odds data unavailable — no bookmaker markets returned for this match.",
           );
         } else {
           // Gap check vs Stake (best-effort on 1X2).
@@ -1771,10 +1771,15 @@ export async function collectMatchData(
 
           record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
             matchId,
+            bookmaker: summary.bookmaker,
             markets: summary.markets,
             gap_check: gapCheck,
             note:
-              "movement_pct = (last_seen - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
+              `Odds source bookmaker: ${summary.bookmaker}. ` +
+              (normalize(summary.bookmaker).includes("pinnacle")
+                ? ""
+                : "Pinnacle not offered for this match; line-movement/sharp-money signals from this non-Pinnacle book are weaker — weight accordingly. ") +
+              "movement_pct = (last_seen - opening) / opening * 100. opening may be null (only last_seen captured) → movement UNKNOWN. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
           });
         }
       }
