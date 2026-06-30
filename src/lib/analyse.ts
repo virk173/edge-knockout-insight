@@ -327,6 +327,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     statsapiTotal: saCount.length,
     readyForClaude,
     call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
+    deadRubberTriggered: result.deadRubberTriggered ?? false,
+    deadRubberFlagged: result.deadRubberFlagged ?? 0,
   };
 }
 
