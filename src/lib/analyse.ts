@@ -123,6 +123,12 @@ let debugSink: DebugEntry[] | null = null;
 // HTTP calls under their logical CALL number (e.g. "2A", "6", "matches").
 let currentDebugCall: string | null = null;
 
+// Last observed lineup state from CALL 6 (S3) of the current run. Read when
+// building the CollectionResult so the warning + confidence penalty can
+// distinguish "not yet announced" from "announced but propagating".
+let lastLineupState: LineupState = "NOT_ANNOUNCED";
+
+
 // Maps internal call keys to the endpoint labels used in the Claude prompt.
 // Keys mirror the order the system prompt expects (CALL 2A ... CALL 10).
 const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
