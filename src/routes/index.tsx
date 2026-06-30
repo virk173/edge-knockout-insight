@@ -5,7 +5,10 @@ import { toast } from "sonner";
 import {
   runAnalysis,
   STATUS_META,
+  timingBand,
+  isMatchBlocked,
   type AnalysedMatch,
+  type TimingBand,
 } from "@/lib/fixtures";
 import {
   collectMatchData,
@@ -150,6 +153,137 @@ Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C ma
 
 Total stake per match: $50
 Do not bet unallocated amounts.`;
+
+// ---- Minimal "Run Calls" status summary (normal mode only) ----------------
+
+interface CallSummary {
+  callsLabel: string;
+  lineupsLabel: string;
+  lineupsTone: "green" | "amber" | "red";
+  quality: "FULL" | "PARTIAL" | "THIN";
+  injuries: string;
+  ready: boolean;
+}
+
+function extractInjuryItems(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const resp = (data as { response?: unknown }).response;
+    if (Array.isArray(resp)) return resp;
+  }
+  return [];
+}
+
+function buildCallSummary(result: CollectionResult): CallSummary {
+  const entries = Object.values(result.callResults);
+  const total = entries.filter((c) => c.status !== "SKIPPED").length;
+  const completed = result.succeeded;
+
+  const lineupMap: Record<
+    string,
+    { label: string; tone: "green" | "amber" | "red" }
+  > = {
+    POPULATED: { label: "CONFIRMED", tone: "green" },
+    PROPAGATING: { label: "PROPAGATING", tone: "amber" },
+    NOT_ANNOUNCED: { label: "NOT ANNOUNCED", tone: "red" },
+  };
+  const lineup = lineupMap[result.lineupState] ?? lineupMap.NOT_ANNOUNCED;
+
+  const ratio = total > 0 ? completed / total : 0;
+  const quality: CallSummary["quality"] =
+    ratio >= 0.8 ? "FULL" : ratio >= 0.5 ? "PARTIAL" : "THIN";
+
+  const injuryCall = result.callResults["5"];
+  let injuries: string;
+  if (!injuryCall || injuryCall.status === "FAILED" || injuryCall.status === "SKIPPED") {
+    injuries = "data unavailable";
+  } else {
+    const items = extractInjuryItems(injuryCall.data);
+    injuries =
+      items.length > 0
+        ? `${items.length} absence${items.length === 1 ? "" : "s"}`
+        : "none reported";
+  }
+
+  return {
+    callsLabel: `${completed}/${total} complete`,
+    lineupsLabel: lineup.label,
+    lineupsTone: lineup.tone,
+    quality,
+    injuries,
+    ready: quality !== "THIN",
+  };
+}
+
+function toneClass(tone: "green" | "amber" | "red"): string {
+  if (tone === "green") return "text-signal-green";
+  if (tone === "amber") return "text-accent-amber";
+  return "text-signal-red";
+}
+
+function CallSummaryPanel({ summary }: { summary: CallSummary }) {
+  return (
+    <div className="flex w-full flex-col gap-1.5 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
+      <Row label="API calls" value={summary.callsLabel} valueClass="text-accent-amber" />
+      <Row
+        label="Lineups"
+        value={summary.lineupsLabel}
+        valueClass={toneClass(summary.lineupsTone)}
+      />
+      <Row
+        label="Data quality"
+        value={summary.quality}
+        valueClass={
+          summary.quality === "FULL"
+            ? "text-signal-green"
+            : summary.quality === "PARTIAL"
+              ? "text-accent-amber"
+              : "text-signal-red"
+        }
+      />
+      <Row label="Injuries" value={summary.injuries} valueClass="text-slate" />
+      <Row
+        label="Ready to analyse"
+        value={summary.ready ? "YES" : "NO"}
+        valueClass={summary.ready ? "text-signal-green" : "text-signal-red"}
+      />
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-slate">{label}</span>
+      <span className={`font-semibold ${valueClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function timingBannerClass(tone: TimingBand["tone"]): string {
+  switch (tone) {
+    case "green":
+      return "border-signal-green/50 bg-signal-green/10 text-signal-green";
+    case "amber":
+      return "border-accent-amber/50 bg-accent-amber/10 text-accent-amber";
+    case "red":
+      return "border-signal-red/60 bg-signal-red/10 text-signal-red";
+    case "blocked":
+      return "border-signal-red/60 bg-signal-red/10 text-signal-red";
+    default:
+      return "border-border bg-card/40 text-slate";
+  }
+}
+
+
 
 
 
@@ -442,7 +576,9 @@ Start your response with { and end with }.`;
     }
   }
 
-  async function handleAnalyseMatch(match: AnalysedMatch) {
+  // BUTTON 1 (normal mode) — Run Calls. Runs the full API pipeline only and
+  // caches the result for Button 2. Does NOT call Claude / consume any tokens.
+  async function handleRunCalls(match: AnalysedMatch) {
     setActiveMatchId(match.id);
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
@@ -452,6 +588,7 @@ Start your response with { and end with }.`;
     setAnalysisError(null);
     setAnalysisRaw(null);
     setFormattedDebug(null);
+    setTokenUsage(null);
     setProgress({ step: 0, total: 11, label: "Starting data collection…" });
 
     try {
@@ -461,12 +598,23 @@ Start your response with { and end with }.`;
       setCollection(result);
       setProgress(null);
       setApiCalls(getApiCallCount());
-      await runClaudeAnalysis(match, result);
+      toast.success("Calls complete — ready to analyse");
     } catch (e) {
       setCollectError(friendlyError(e instanceof Error ? e.message : "Data collection failed."));
       setProgress(null);
       setApiCalls(getApiCallCount());
     }
+  }
+
+  // BUTTON 2 (normal mode) — Analyse. Sends the cached pipeline data to Claude.
+  // Does NOT re-run any API calls; can be clicked repeatedly against the same
+  // cached dataset.
+  async function handleAnalyseCached(match: AnalysedMatch) {
+    if (activeMatchId !== match.id || !collection) {
+      toast.error("Run calls first.");
+      return;
+    }
+    await runClaudeAnalysis(match, collection);
   }
 
   // Debug Mode: run the full pipeline against a fixed real fixture
@@ -791,23 +939,30 @@ Start your response with { and end with }.`;
             matches.filter((m) => !m.isTomorrow).length > 0 &&
             matches
               .filter((m) => !m.isTomorrow)
-              .every((m) => m.status === "SKIP") && (
+              .every((m) => m.blocked) && (
               <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
-                All of today's matches have already kicked off. Come back
+                All of today's matches are in progress or finished. Come back
                 tomorrow.
                 {"\n"}Next matches: {nextMatchesText(matches, now)}
               </div>
             )}
+
 
           {matches && matches.length > 0 && (
             <ul className="flex w-full flex-col gap-3">
               {matches.map((m) => {
                 const meta = STATUS_META[m.status];
                 const isActive = activeMatchId === m.id;
-                const showCountdown =
-                  m.status === "OPTIMAL" || m.status === "VALID";
                 const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+                const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
+                const band = timingBand(minsToKickoff, blocked);
+                const showCountdown = !m.isTomorrow && !blocked;
                 const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
+                // Normal-mode two-button flow only (debug uses top buttons).
+                const canAct = !debugMode && !m.isTomorrow && !blocked;
+                const runningThis = isActive && progress !== null;
+                const callsReady =
+                  isActive && collection !== null && !collectError;
                 return (
                   <li
                     key={m.id}
@@ -834,11 +989,6 @@ Start your response with { and end with }.`;
                             </span>
                           </span>
                         )}
-                        {m.status === "OPTIMAL" && (
-                          <span className="rounded-md border border-accent-amber/40 bg-accent-amber/10 px-2 py-1 font-mono text-xs font-semibold text-accent-amber">
-                            ✅ Optimal window — Lineups drop at T-75min via TheStatsAPI
-                          </span>
-                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span
@@ -846,18 +996,46 @@ Start your response with { and end with }.`;
                         >
                           {meta.emoji} {meta.label}
                         </span>
-                        {meta.canAnalyse && (
-                          <button
-                            type="button"
-                            onClick={() => handleAnalyseMatch(m)}
-                            disabled={progress !== null || analysing}
-                            className="rounded-md border border-accent-amber px-3 py-1.5 text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Analyse this match
-                          </button>
-                        )}
                       </div>
                     </div>
+
+                    {/* Timing gate — warning banner only (never blocks pre-kickoff) */}
+                    {!m.isTomorrow && (
+                      <div
+                        className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                          band.tone,
+                        )}`}
+                      >
+                        {band.tone === "blocked" ? "🚫 " : ""}
+                        {band.label}
+                      </div>
+                    )}
+
+                    {/* Two-button flow: Run Calls + Analyse (normal mode) */}
+                    {canAct && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRunCalls(m)}
+                          disabled={runningThis || analysing}
+                          className="rounded-md bg-accent-amber px-4 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {runningThis ? "Running calls…" : "Run Calls"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAnalyseCached(m)}
+                          disabled={!callsReady || runningThis || analysing}
+                          className="rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {analysing && isActive
+                            ? "Analysing…"
+                            : callsReady
+                              ? "Analyse ▶"
+                              : "Run calls first"}
+                        </button>
+                      </div>
+                    )}
 
                     {isActive && progress && (
                       <div className="rounded-md border border-border bg-background/60 px-3 py-3">
@@ -881,9 +1059,15 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
-                    {isActive && collection && (
+                    {/* Normal mode: minimal status summary. Debug mode keeps the
+                        full per-call CollectionPanel + raw debug panels below. */}
+                    {isActive && collection && !debugMode && (
+                      <CallSummaryPanel summary={buildCallSummary(collection)} />
+                    )}
+                    {isActive && collection && debugMode && (
                       <CollectionPanel result={collection} />
                     )}
+
 
                     {isActive && analysing && (
                       <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
