@@ -358,6 +358,11 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     call10ExpectedEmpty: cr["10"]?.status === "EXPECTED_EMPTY",
     deadRubberTriggered: result.deadRubberTriggered ?? false,
     deadRubberFlagged: result.deadRubberFlagged ?? 0,
+    historicalCaveatEligible: result.historicalCaveatEligible ?? false,
+    historicalCaveatReason:
+      result.historicalCaveatReason ??
+      "NOT ELIGIBLE — round unknown.",
+
   };
 }
 
