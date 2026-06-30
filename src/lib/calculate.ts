@@ -915,30 +915,107 @@ export const detectDeadRubber = (
 ): {
   is_dead_rubber: boolean;
   reason: string;
+  // The actual numbers compared, so the boolean can be audited rather than
+  // taken on trust. Populated as far as the logic progresses before returning.
+  comparison: {
+    is_final_matchday: boolean;
+    fixture_matchday: number;
+    group_total_matchdays: number;
+    opponent: {
+      team_id: string;
+      position: number;
+      points: number;
+      matches_played: number;
+      goal_difference: number;
+      goals_for: number;
+    } | null;
+    own_group_rivals: Array<{
+      team_id: string;
+      position: number;
+      points: number;
+      matches_played: number;
+      max_possible_points: number;
+    }>;
+    clinched_top2: boolean | null;
+    third_place_check: {
+      opponent_position: number;
+      cutoff_rank: number;
+      cutoff_third_place_points: number;
+      best_case_opponent_points: number;
+      mathematically_eliminated: boolean;
+      third_place_field: Array<{
+        team_id: string;
+        group_label: string;
+        points: number;
+        goal_difference: number;
+        goals_for: number;
+      }>;
+    } | null;
+  };
 } => {
   const opponent = inputs.opponent_group_standings.find(
     (s) => s.team_id === inputs.opponent_team_id,
   );
+
+  const isFinalMatchday =
+    inputs.fixture_matchday === inputs.group_total_matchdays;
+
+  const baseComparison = {
+    is_final_matchday: isFinalMatchday,
+    fixture_matchday: inputs.fixture_matchday,
+    group_total_matchdays: inputs.group_total_matchdays,
+    opponent: opponent
+      ? {
+          team_id: opponent.team_id,
+          position: opponent.position,
+          points: opponent.points,
+          matches_played: opponent.matches_played,
+          goal_difference: opponent.goal_difference,
+          goals_for: opponent.goals_for,
+        }
+      : null,
+    own_group_rivals: [] as Array<{
+      team_id: string;
+      position: number;
+      points: number;
+      matches_played: number;
+      max_possible_points: number;
+    }>,
+    clinched_top2: null as boolean | null,
+    third_place_check: null as {
+      opponent_position: number;
+      cutoff_rank: number;
+      cutoff_third_place_points: number;
+      best_case_opponent_points: number;
+      mathematically_eliminated: boolean;
+      third_place_field: Array<{
+        team_id: string;
+        group_label: string;
+        points: number;
+        goal_difference: number;
+        goals_for: number;
+      }>;
+    } | null,
+  };
 
   if (!opponent) {
     return {
       is_dead_rubber: false,
       reason:
         "Opponent not found in group standings — default to not dead rubber.",
+      comparison: baseComparison,
     };
   }
 
   // Only the FINAL group matchday can produce a dead rubber in a 3-match group
   // stage, since elimination or qualification is rarely mathematically certain
   // before the last round.
-  const isFinalMatchday =
-    inputs.fixture_matchday === inputs.group_total_matchdays;
-
   if (!isFinalMatchday) {
     return {
       is_dead_rubber: false,
       reason:
         "Not the final group matchday — standings not yet settled.",
+      comparison: baseComparison,
     };
   }
 
@@ -947,18 +1024,28 @@ export const detectDeadRubber = (
   const rivalsInGroup = inputs.opponent_group_standings.filter(
     (s) => s.team_id !== inputs.opponent_team_id,
   );
-  const maxPossibleRivalPoints = rivalsInGroup.map(
-    (s) => s.points + (inputs.group_total_matchdays - s.matches_played) * 3,
+  baseComparison.own_group_rivals = rivalsInGroup.map((s) => ({
+    team_id: s.team_id,
+    position: s.position,
+    points: s.points,
+    matches_played: s.matches_played,
+    max_possible_points:
+      s.points + (inputs.group_total_matchdays - s.matches_played) * 3,
+  }));
+  const maxPossibleRivalPoints = baseComparison.own_group_rivals.map(
+    (s) => s.max_possible_points,
   );
   const clinchedTop2 =
     opponent.position <= 2 &&
     maxPossibleRivalPoints.filter((p) => p > opponent.points).length <= 1;
+  baseComparison.clinched_top2 = clinchedTop2;
 
   if (clinchedTop2) {
     return {
       is_dead_rubber: true,
       reason:
         "Opponent clinched top 2 in group before this fixture — guaranteed advancement.",
+      comparison: baseComparison,
     };
   }
 
@@ -994,10 +1081,29 @@ export const detectDeadRubber = (
     const mathematicallyEliminated =
       bestCaseOpponentPoints < cutoffThirdPlacePoints;
 
+    baseComparison.third_place_check = {
+      opponent_position: opponent.position,
+      cutoff_rank: WC2026_QUALIFICATION.best_third_place_advancing,
+      cutoff_third_place_points: cutoffThirdPlacePoints,
+      best_case_opponent_points: bestCaseOpponentPoints,
+      mathematically_eliminated: mathematicallyEliminated,
+      third_place_field: thirdPlaceField
+        .slice()
+        .sort((a, b) => b.points - a.points)
+        .map((t) => ({
+          team_id: t.team_id,
+          group_label: t.group_label,
+          points: t.points,
+          goal_difference: t.goal_difference,
+          goals_for: t.goals_for,
+        })),
+    };
+
     if (mathematicallyEliminated) {
       return {
         is_dead_rubber: true,
         reason: `Opponent at position ${opponent.position} cannot reach the top ${WC2026_QUALIFICATION.best_third_place_advancing} third-place qualifiers even with a win — mathematically eliminated from advancement via any pathway.`,
+        comparison: baseComparison,
       };
     }
   }
@@ -1006,6 +1112,7 @@ export const detectDeadRubber = (
     is_dead_rubber: false,
     reason:
       "Final matchday, but advancement (via group position or 3rd-place cross-group ranking) was not yet mathematically settled — opponent had a meaningful stake in the result.",
+    comparison: baseComparison,
   };
 };
 

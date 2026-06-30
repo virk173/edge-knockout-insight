@@ -1316,6 +1316,7 @@ interface TeamDeadRubberResult {
     matchday: number;
     is_dead_rubber: boolean;
     reason: string;
+    comparison: ReturnType<typeof detectDeadRubber>["comparison"];
   }>;
   groupFixtureCount: number;
   triggered: boolean;
@@ -1375,6 +1376,7 @@ async function computeTeamDeadRubber(
       matchday: f.matchday,
       is_dead_rubber: r.is_dead_rubber,
       reason: r.reason,
+      comparison: r.comparison,
     });
   }
 
