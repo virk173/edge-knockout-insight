@@ -194,10 +194,63 @@ function MatchHeader({ result }: { result: AnalysisResult }) {
               {dq.label}
             </span>
           </div>
+          <ContextFlags result={result} />
         </div>
         <ConfidenceMeter value={result.confidence_scores?.final_confidence} />
       </div>
       <SignalStrip result={result} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Context flags — altitude / rest / travel (only when relevant)
+// ─────────────────────────────────────────────────────────────
+function ContextFlags({ result }: { result: AnalysisResult }) {
+  const flags: { key: string; label: string }[] = [];
+
+  const alt = result.altitude_adjustment;
+  if (alt?.applies_to) {
+    flags.push({
+      key: "altitude",
+      label: `⛰️ Altitude: ${alt.applies_to} disadvantaged`,
+    });
+  }
+
+  const rest = result.rest_disparity;
+  if (rest?.fatigued_team) {
+    flags.push({
+      key: "rest",
+      label: `😴 Rest: ${rest.fatigued_team} -${Math.round(
+        rest.disparity_hours,
+      )}h`,
+    });
+  }
+
+  const travel = result.travel_burden;
+  if (travel?.burdened_team) {
+    const shift = Math.max(
+      travel.home_timezone_shift,
+      travel.away_timezone_shift,
+    );
+    flags.push({
+      key: "travel",
+      label: `✈️ Travel: ${travel.burdened_team} ${shift}tz`,
+    });
+  }
+
+  if (flags.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {flags.map((f) => (
+        <span
+          key={f.key}
+          className="w-fit rounded-full border border-accent-amber/40 bg-accent-amber/10 px-3 py-1 text-xs font-semibold text-accent-amber"
+        >
+          {f.label}
+        </span>
+      ))}
     </div>
   );
 }

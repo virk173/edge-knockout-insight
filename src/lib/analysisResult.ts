@@ -199,6 +199,46 @@ export interface MarketRejected {
   reason?: string;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Contextual factors (computed in app code from context_inputs +
+// static venue data). See src/lib/calculate.ts.
+// ─────────────────────────────────────────────────────────────
+export interface ContextInputs {
+  venue_name?: string;
+  home_last_fixture_date?: string;
+  away_last_fixture_date?: string;
+  home_avg_altitude?: number;
+  away_avg_altitude?: number;
+  home_last_venue_tz?: number;
+  away_last_venue_tz?: number;
+}
+
+export interface AltitudeAdjustment {
+  applies_to: "home" | "away" | null;
+  pressing_multiplier: number;
+  et_probability_delta: number;
+  note: string;
+}
+
+export interface RestDisparity {
+  rest_hours_home: number;
+  rest_hours_away: number;
+  disparity_hours: number;
+  fatigued_team: "home" | "away" | null;
+  goals_multiplier: number;
+  upset_probability_delta: number;
+  note: string;
+}
+
+export interface TravelBurden {
+  home_timezone_shift: number;
+  away_timezone_shift: number;
+  disparity: number;
+  burdened_team: "home" | "away" | null;
+  pressing_multiplier: number;
+  note: string;
+}
+
 export interface AnalysisResult {
   match?: string;
   kickoff_UTC?: string;
@@ -224,6 +264,11 @@ export interface AnalysisResult {
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
   analyst_note?: string;
+  // Contextual factor inputs from Claude + computed adjustments (app code).
+  context_inputs?: ContextInputs;
+  altitude_adjustment?: AltitudeAdjustment;
+  rest_disparity?: RestDisparity;
+  travel_burden?: TravelBurden;
   log_entry?: import("@/lib/backtestLog").RawLogEntry;
 }
 
