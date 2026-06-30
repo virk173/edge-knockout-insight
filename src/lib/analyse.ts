@@ -1215,6 +1215,64 @@ export function lineupConfirmedButEmpty(payload: unknown): boolean {
   return confirmed && !lineupsArePopulated(payload);
 }
 
+// Count the players listed in one side's substitutes/bench array.
+function sideSubsCount(side: unknown): number {
+  const subs = getField(side, ["substitutes", "subs", "bench"]);
+  return extractArray(subs).length;
+}
+
+// Total squad size (substitutes) across both sides. When starting_xi is empty
+// but TheStatsAPI has dumped the full ~26-man squad into `substitutes`, that is
+// the tell-tale "announced but propagating" signature observed live for
+// France vs Sweden (mt_401944555): confirmed=true ~T-90, full squad in subs,
+// starting_xi only split out at ~T-0 (kickoff).
+function totalSquadCount(payload: unknown): number {
+  const node = getField(payload, ["data"]) ?? payload;
+  let total = sideSubsCount(getField(node, ["home"])) + sideSubsCount(getField(node, ["away"]));
+  for (const s of extractArray(node)) total += sideSubsCount(s);
+  return total;
+}
+
+// The three meaningfully-different lineup states (see STEP 3 of the lineup
+// investigation). These drive both the debug log wording AND the confidence
+// penalty — they are NOT interchangeable:
+//   NOT_ANNOUNCED  — 404 / empty payload: data doesn't exist yet at all.
+//   PROPAGATING    — confirmed=true (or a full squad sitting in substitutes)
+//                    but starting_xi still empty: the lineup IS known to exist,
+//                    TheStatsAPI just hasn't split the XI out of the squad yet.
+//   POPULATED      — starting_xi has real players on both sides.
+export type LineupState = "NOT_ANNOUNCED" | "PROPAGATING" | "POPULATED";
+
+export function classifyLineupState(payload: unknown): LineupState {
+  if (lineupsArePopulated(payload)) return "POPULATED";
+  const node = getField(payload, ["data"]) ?? payload;
+  const confirmed = getField(node, ["confirmed"]) === true;
+  // "Announced but propagating" = the lineup is known to exist. Two signatures:
+  //   1. confirmed=true with empty starting_xi, or
+  //   2. a substantial squad already populated in `substitutes` (>= 11 total).
+  if (confirmed || totalSquadCount(payload) >= 11) return "PROPAGATING";
+  return "NOT_ANNOUNCED";
+}
+
+// Human-readable label + the actionable note for each lineup state.
+export const LINEUP_STATE_INFO: Record<
+  LineupState,
+  { label: string; note: string }
+> = {
+  NOT_ANNOUNCED: {
+    label: "LINEUP NOT YET ANNOUNCED",
+    note: "Official lineups have not been published yet (endpoint empty/404). Analysis proceeds on historical/expected XI.",
+  },
+  PROPAGATING: {
+    label: "LINEUP ANNOUNCED BUT PROPAGATING",
+    note: "The lineup is confirmed to exist (full squad present) but TheStatsAPI has not split the starting XI out yet. This often only resolves at ~kickoff. A final re-check is scheduled near kickoff.",
+  },
+  POPULATED: {
+    label: "LINEUP CONFIRMED AND POPULATED",
+    note: "Starting XI available for both teams.",
+  },
+};
+
 // Extract the player-stat fields the GAP formula needs from a TheStatsAPI
 // /players/{id}/stats response.
 function extractPlayerStats(raw: unknown): Record<string, unknown> {
