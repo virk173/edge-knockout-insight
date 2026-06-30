@@ -373,7 +373,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     historicalCaveatReason:
       result.historicalCaveatReason ??
       "NOT ELIGIBLE — round unknown.",
-
+    wentToPenalties: result.wentToPenalties ?? false,
+    penaltyShootoutNote: result.penaltyShootoutNote ?? "Not evaluated.",
   };
 }
 
