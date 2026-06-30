@@ -153,6 +153,137 @@ Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C ma
 Total stake per match: $50
 Do not bet unallocated amounts.`;
 
+// ---- Minimal "Run Calls" status summary (normal mode only) ----------------
+
+interface CallSummary {
+  callsLabel: string;
+  lineupsLabel: string;
+  lineupsTone: "green" | "amber" | "red";
+  quality: "FULL" | "PARTIAL" | "THIN";
+  injuries: string;
+  ready: boolean;
+}
+
+function extractInjuryItems(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const resp = (data as { response?: unknown }).response;
+    if (Array.isArray(resp)) return resp;
+  }
+  return [];
+}
+
+function buildCallSummary(result: CollectionResult): CallSummary {
+  const entries = Object.values(result.callResults);
+  const total = entries.filter((c) => c.status !== "SKIPPED").length;
+  const completed = result.succeeded;
+
+  const lineupMap: Record<
+    string,
+    { label: string; tone: "green" | "amber" | "red" }
+  > = {
+    POPULATED: { label: "CONFIRMED", tone: "green" },
+    PROPAGATING: { label: "PROPAGATING", tone: "amber" },
+    NOT_ANNOUNCED: { label: "NOT ANNOUNCED", tone: "red" },
+  };
+  const lineup = lineupMap[result.lineupState] ?? lineupMap.NOT_ANNOUNCED;
+
+  const ratio = total > 0 ? completed / total : 0;
+  const quality: CallSummary["quality"] =
+    ratio >= 0.8 ? "FULL" : ratio >= 0.5 ? "PARTIAL" : "THIN";
+
+  const injuryCall = result.callResults["5"];
+  let injuries: string;
+  if (!injuryCall || injuryCall.status === "FAILED" || injuryCall.status === "SKIPPED") {
+    injuries = "data unavailable";
+  } else {
+    const items = extractInjuryItems(injuryCall.data);
+    injuries =
+      items.length > 0
+        ? `${items.length} absence${items.length === 1 ? "" : "s"}`
+        : "none reported";
+  }
+
+  return {
+    callsLabel: `${completed}/${total} complete`,
+    lineupsLabel: lineup.label,
+    lineupsTone: lineup.tone,
+    quality,
+    injuries,
+    ready: quality !== "THIN",
+  };
+}
+
+function toneClass(tone: "green" | "amber" | "red"): string {
+  if (tone === "green") return "text-signal-green";
+  if (tone === "amber") return "text-accent-amber";
+  return "text-signal-red";
+}
+
+function CallSummaryPanel({ summary }: { summary: CallSummary }) {
+  return (
+    <div className="flex w-full flex-col gap-1.5 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
+      <Row label="API calls" value={summary.callsLabel} valueClass="text-accent-amber" />
+      <Row
+        label="Lineups"
+        value={summary.lineupsLabel}
+        valueClass={toneClass(summary.lineupsTone)}
+      />
+      <Row
+        label="Data quality"
+        value={summary.quality}
+        valueClass={
+          summary.quality === "FULL"
+            ? "text-signal-green"
+            : summary.quality === "PARTIAL"
+              ? "text-accent-amber"
+              : "text-signal-red"
+        }
+      />
+      <Row label="Injuries" value={summary.injuries} valueClass="text-slate" />
+      <Row
+        label="Ready to analyse"
+        value={summary.ready ? "YES" : "NO"}
+        valueClass={summary.ready ? "text-signal-green" : "text-signal-red"}
+      />
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-slate">{label}</span>
+      <span className={`font-semibold ${valueClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function timingBannerClass(tone: TimingBand["tone"]): string {
+  switch (tone) {
+    case "green":
+      return "border-signal-green/50 bg-signal-green/10 text-signal-green";
+    case "amber":
+      return "border-accent-amber/50 bg-accent-amber/10 text-accent-amber";
+    case "red":
+      return "border-signal-red/60 bg-signal-red/10 text-signal-red";
+    case "blocked":
+      return "border-signal-red/60 bg-signal-red/10 text-signal-red";
+    default:
+      return "border-border bg-card/40 text-slate";
+  }
+}
+
+
+
 
 
 function Index() {
