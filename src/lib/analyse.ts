@@ -1181,6 +1181,40 @@ function extractLineupPlayerIds(lineup: unknown): string[] {
   return [...ids];
 }
 
+// Count the players listed in one side's starting_xi (handles the nested
+// `data.home/away` envelope and bare `home/away` shapes).
+function sideXICount(side: unknown): number {
+  const xi = getField(side, ["starting_xi", "startingXi", "startingXI", "lineup"]);
+  return extractArray(xi).length;
+}
+
+// A TheStatsAPI lineups response is only a REAL confirmed lineup when BOTH
+// teams' starting_xi arrays are actually populated. TheStatsAPI has been
+// observed (e.g. Côte d'Ivoire vs Norway, mt_740177219) returning
+// `confirmed: true` with empty starting_xi/substitutes arrays — a malformed
+// state the spec says should not exist. This helper is the single source of
+// truth for "are the lineups genuinely populated?", used by both the main
+// pipeline (CALL 6 / S3) and the refetch path so the behaviour can't drift.
+function lineupsArePopulated(payload: unknown): boolean {
+  const node = getField(payload, ["data"]) ?? payload;
+  const homeXI = sideXICount(getField(node, ["home"]));
+  const awayXI = sideXICount(getField(node, ["away"]));
+  if (homeXI > 0 && awayXI > 0) return true;
+  // Array-shaped responses (one entry per team): require at least two
+  // populated sides.
+  const sides = extractArray(node).filter((s) => sideXICount(s) > 0);
+  return sides.length >= 2;
+}
+
+// Detect the specific malformed pattern: the API claims confirmed=true but at
+// least one starting_xi is empty. Used purely for diagnostic logging so we can
+// tell whether this recurs for certain matches/competitions.
+function lineupConfirmedButEmpty(payload: unknown): boolean {
+  const node = getField(payload, ["data"]) ?? payload;
+  const confirmed = getField(node, ["confirmed"]) === true;
+  return confirmed && !lineupsArePopulated(payload);
+}
+
 // Extract the player-stat fields the GAP formula needs from a TheStatsAPI
 // /players/{id}/stats response.
 function extractPlayerStats(raw: unknown): Record<string, unknown> {
