@@ -2426,17 +2426,31 @@ export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> 
       const info = LINEUP_STATE_INFO[state];
       console.warn(
         `[S3 lineups/refetch] ${info.label} for matchId=${matchId} ` +
-          `(${match.home} vs ${match.away}).`,
+          `(${match.home} vs ${match.away}) — trying API-Football fallback.`,
       );
+      // Per spec: State 2 PROPAGATING (or 1 NOT_ANNOUNCED) → fall back to AF.
+      const afLineup = await fetchApiFootballLineupFallback(match);
+      if (afLineup) {
+        console.log(
+          `[S3 lineups/refetch] State 3 LINEUP CONFIRMED via API-Football fallback ` +
+            `for ${match.home} vs ${match.away}.`,
+        );
+        return {
+          key: "6",
+          label: "Confirmed lineups",
+          status: "SUCCESS",
+          data: replaceNulls(afLineup),
+        };
+      }
       return {
         key: "6",
         label: "Confirmed lineups",
         status: "EMPTY",
-        error: `${info.label} — ${info.note}`,
+        error: `${info.label} — ${info.note} API-Football fallback also empty.`,
       };
     }
     console.log(
-      `[S3 lineups/refetch] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
+      `[S3 lineups/refetch] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
         `(${match.home} vs ${match.away}).`,
     );
     return {
