@@ -1751,9 +1751,15 @@ export async function collectMatchData(
 
   // 6 (S3): confirmed lineups (TheStatsAPI).
   // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
-  // TheStatsAPI publishes lineups at ~T-75min (earlier than API-Football's
-  // ~T-20min); until then the endpoint 404s (saGet returns null). If null/empty,
-  // flag LINEUP PENDING. Retry up to 3 times with 60s gaps when within 90 min.
+  //
+  // LIVE-OBSERVED PROPAGATION BEHAVIOUR (France vs Sweden, mt_401944555):
+  // TheStatsAPI sets confirmed=true ~T-90 and dumps the FULL ~26-man squad into
+  // `substitutes`, but does NOT split the starting XI out of the squad until
+  // ~T-0 (kickoff). The delay between confirmed=true and a populated
+  // starting_xi is therefore tens of minutes and unpredictable — far longer
+  // than any 3-5 minute retry window can bridge. This is Option B: do a short
+  // burst of in-line retries (5 x 60s), and if still PROPAGATING, hand off to a
+  // final near-kickoff (T-15) background re-check in the UI.
   await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
     const matchId = await ensureStatsApiMatchId();
     if (!matchId) {
@@ -1762,27 +1768,46 @@ export async function collectMatchData(
       );
     }
     const withinWindow = match.minutesUntilKickoff <= 90;
-    const maxAttempts = withinWindow ? 3 : 1;
+    // Option A bump folded in: 5 x 60s (5 minutes) inside the pre-kickoff window
+    // instead of 3 x 60s. Wider window, still cheap.
+    const maxAttempts = withinWindow ? 5 : 1;
     let payload: unknown = null;
+    let state: LineupState = "NOT_ANNOUNCED";
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       payload = await saGet(`/football/matches/${matchId}/lineups`);
-      // Diagnostic: TheStatsAPI sometimes returns confirmed=true with empty
-      // starting_xi arrays (spec says this state shouldn't exist). Log it so we
-      // can tell if it's a one-off or recurring for certain matches.
-      if (lineupConfirmedButEmpty(payload)) {
+      state = classifyLineupState(payload);
+      lastLineupState = state;
+      const tag = `attempt ${attempt + 1}/${maxAttempts}`;
+      if (state === "POPULATED") {
+        console.log(
+          `[S3 lineups] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}).`,
+        );
+        return payload;
+      }
+      if (state === "PROPAGATING") {
         console.warn(
-          `[S3 lineups] MALFORMED confirmed-but-empty response for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, attempt ${attempt + 1}/${maxAttempts}). ` +
-            `Treating as LINEUP PENDING.`,
+          `[S3 lineups] LINEUP ANNOUNCED BUT PROPAGATING for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — confirmed/full squad present ` +
+            `but starting_xi not split out yet. Will re-check near kickoff (T-15).`,
+        );
+      } else {
+        console.warn(
+          `[S3 lineups] LINEUP NOT YET ANNOUNCED for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — endpoint empty/404.`,
         );
       }
-      // Only accept a lineup that is genuinely populated on BOTH sides. An
-      // empty 404 OR a confirmed-but-empty payload both fall through to retry.
-      if (!isEmptyResponse(payload) && lineupsArePopulated(payload)) return payload;
       if (attempt < maxAttempts - 1) await sleep(60000);
     }
-    throw new Error("LINEUP PENDING — lineups not yet announced (empty/404).");
+    // Carry the resolved state in the thrown message so the caller knows whether
+    // this is NOT_ANNOUNCED vs PROPAGATING.
+    throw new Error(
+      state === "PROPAGATING"
+        ? "LINEUP ANNOUNCED BUT PROPAGATING — confirmed but starting_xi not yet populated."
+        : "LINEUP NOT YET ANNOUNCED — lineups not published yet (empty/404).",
+    );
   });
+
 
 
   // NOTE: CALL 6B / S4 (player stats for absences) runs LAST, after the
