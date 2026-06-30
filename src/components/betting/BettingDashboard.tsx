@@ -1041,7 +1041,10 @@ function TopBets({ result }: { result: AnalysisResult }) {
   const noneActive = rows.length === 0;
   const dq = (result.data_quality ?? "").toUpperCase();
   const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
-  const subtitle = [result.match, result.round].filter(Boolean).join(" — ") || "—";
+  const subtitle =
+    [result.match, result.round, formatMatchTime(result.kickoff_UTC)]
+      .filter(Boolean)
+      .join(" — ") || "—";
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4 border-accent-amber/40")}>
