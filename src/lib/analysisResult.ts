@@ -126,6 +126,7 @@ export interface TacticalAnalysis {
   expected_cards_range?: string;
   goals_model_direction?: string; // "OVER" | "UNDER" | "NEUTRAL"
   formation_change_impact?: string;
+  call4_fixture_count?: number;
 }
 
 export interface Absence {
