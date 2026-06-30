@@ -1147,21 +1147,42 @@ function parseLast5(list: unknown, teamId: number): ParsedLast5Fixture[] {
   });
 }
 
-// Normalize a TheStatsAPI standings payload into {team_id, team_name, points,
-// position, matches_played} rows. Defensive against several shapes.
+// Normalize a TheStatsAPI all-groups standings payload into typed rows.
+// The endpoint returns 12 groups of 4 (each row carries group_label A..L) PLUS
+// a 12-row cross-group third-place ranking table (group_label is null, position
+// is the cross-group rank). We keep the group rows for per-group settlement
+// logic and derive our own third-place table from them.
 interface StandingRow {
   team_id: string;
   team_name: string;
   points: number;
   position: number;
   matches_played: number;
+  goal_difference: number;
+  goals_for: number;
+  group_label: string | null;
 }
-function normalizeStandings(payload: unknown): StandingRow[] {
+interface ThirdPlaceRow {
+  team_id: string;
+  team_name: string;
+  group_label: string;
+  points: number;
+  goal_difference: number;
+  goals_for: number;
+}
+interface AllStandings {
+  groupRows: StandingRow[];
+  thirdPlaceTable: ThirdPlaceRow[];
+  raw: StandingRow[];
+}
+
+function normalizeStandingRows(payload: unknown): StandingRow[] {
   const arr = extractArray(
-    getField(payload, ["standings", "table", "rows"]) ?? payload,
+    getField(payload, ["data", "standings", "table", "rows"]) ?? payload,
   );
   return arr.map((row) => {
     const team = getField(row, ["team"]) ?? row;
+    const gl = getField(row, ["group_label", "group", "label"]);
     return {
       team_id: String(
         getField(team, ["id", "team_id"]) ?? getField(row, ["team_id"]) ?? "",
@@ -1179,115 +1200,104 @@ function normalizeStandings(payload: unknown): StandingRow[] {
             "games_played",
           ]) ?? 0,
         ) || 0,
+      goal_difference:
+        Number(getField(row, ["goal_difference", "goalDifference", "gd"]) ?? 0) ||
+        0,
+      goals_for:
+        Number(getField(row, ["goals_for", "goalsFor", "gf"]) ?? 0) || 0,
+      group_label:
+        gl === null || gl === undefined || gl === "" ? null : String(gl),
     };
   });
 }
 
-// Static groups lookup — never changes, cached forever as "statsapi_groups_static".
-let statsapiGroupsMem: unknown[] | null = null;
-async function getStatsApiGroupsStatic(): Promise<unknown[]> {
-  if (statsapiGroupsMem) return statsapiGroupsMem;
+// All-groups standings — fetched ONCE and cached forever as
+// "statsapi_all_standings_static" (group stage is final and immutable). This
+// single call replaces the previous per-group standings calls.
+let statsapiAllStandingsMem: AllStandings | null = null;
+async function getStatsApiAllStandings(): Promise<AllStandings> {
+  if (statsapiAllStandingsMem) return statsapiAllStandingsMem;
   if (typeof window !== "undefined") {
-    const raw = window.localStorage.getItem("statsapi_groups_static");
+    const raw = window.localStorage.getItem("statsapi_all_standings_static");
     if (raw) {
       try {
-        const arr = JSON.parse(raw) as unknown[];
-        statsapiGroupsMem = arr;
-        return arr;
+        const cached = JSON.parse(raw) as AllStandings;
+        if (cached?.groupRows?.length) {
+          statsapiAllStandingsMem = cached;
+          return cached;
+        }
       } catch {
         /* refetch */
       }
     }
   }
   const payload = await saGet(
-    `/football/competitions/${STATSAPI_COMPETITION_ID}/seasons/${STATSAPI_SEASON_ID}/groups`,
+    `/football/competitions/${STATSAPI_COMPETITION_ID}/seasons/${STATSAPI_SEASON_ID}/standings`,
   );
-  const arr = extractArray(payload);
-  statsapiGroupsMem = arr;
-  if (typeof window !== "undefined" && arr.length) {
+  const all = buildAllStandings(payload);
+  statsapiAllStandingsMem = all;
+  if (typeof window !== "undefined" && all.groupRows.length) {
     try {
-      window.localStorage.setItem("statsapi_groups_static", JSON.stringify(arr));
+      window.localStorage.setItem(
+        "statsapi_all_standings_static",
+        JSON.stringify(all),
+      );
     } catch {
       /* quota — in-memory only */
     }
   }
-  return arr;
+  return all;
 }
 
-// Find a team's group_label by its TheStatsAPI team_id.
-async function findTeamGroupLabel(teamId: string | null): Promise<string | null> {
-  if (!teamId) return null;
-  const groups = await getStatsApiGroupsStatic();
-  for (const g of groups) {
-    const label = String(
-      getField(g, ["group_label", "label", "name", "group"]) ?? "",
+// Derive group rows (group_label A..L) and the cross-group third-place table
+// (position === 3 across all groups, sorted points -> goal_diff -> goals_for).
+function buildAllStandings(payload: unknown): AllStandings {
+  const raw = normalizeStandingRows(payload);
+  const groupRows = raw.filter((r) => r.group_label !== null);
+  const thirdPlaceTable: ThirdPlaceRow[] = groupRows
+    .filter((r) => r.position === 3)
+    .map((r) => ({
+      team_id: r.team_id,
+      team_name: r.team_name,
+      group_label: r.group_label as string,
+      points: r.points,
+      goal_difference: r.goal_difference,
+      goals_for: r.goals_for,
+    }))
+    .sort(
+      (a, b) =>
+        b.points - a.points ||
+        b.goal_difference - a.goal_difference ||
+        b.goals_for - a.goals_for,
     );
-    const teams = extractArray(
-      getField(g, ["teams", "standings", "table"]) ?? [],
-    );
-    for (const t of teams) {
-      const team = getField(t, ["team"]) ?? t;
-      const id = String(getField(team, ["id", "team_id"]) ?? "");
-      if (id && id === String(teamId)) return label || null;
-    }
-  }
-  return null;
+  return { groupRows, thirdPlaceTable, raw };
 }
 
-// Standings for a single group, cached per group per day (group results are
-// final once the group concludes, but we still scope by day to be safe).
-const statsapiStandingsMem: Record<string, StandingRow[]> = {};
-async function getStatsApiStandings(groupLabel: string): Promise<StandingRow[]> {
-  if (statsapiStandingsMem[groupLabel]) return statsapiStandingsMem[groupLabel];
-  const lsKey = `statsapi_standings_${groupLabel}`;
-  if (typeof window !== "undefined") {
-    const raw = window.localStorage.getItem(lsKey);
-    if (raw) {
-      try {
-        const rows = JSON.parse(raw) as StandingRow[];
-        statsapiStandingsMem[groupLabel] = rows;
-        return rows;
-      } catch {
-        /* refetch */
-      }
-    }
-  }
-  const payload = await saGet(
-    `/football/competitions/${STATSAPI_COMPETITION_ID}/seasons/${STATSAPI_SEASON_ID}/standings?group=${encodeURIComponent(groupLabel)}`,
-  );
-  const rows = normalizeStandings(payload);
-  statsapiStandingsMem[groupLabel] = rows;
-  if (typeof window !== "undefined" && rows.length) {
-    try {
-      window.localStorage.setItem(lsKey, JSON.stringify(rows));
-    } catch {
-      /* quota — in-memory only */
-    }
-  }
-  return rows;
-}
-
-// Resolve the standings team_id for an opponent named in an API-Football
-// fixture, by normalized case-insensitive name match against the group table.
-function resolveOpponentStandingId(
+// Resolve a standings row for an opponent named in an API-Football fixture, by
+// normalized case-insensitive (bidirectional contains) match across ALL groups.
+function resolveOpponentStandingRow(
   opponentName: string,
-  standings: StandingRow[],
-): string | null {
+  rows: StandingRow[],
+): StandingRow | null {
   const o = normalize(opponentName);
   if (!o) return null;
-  const hit = standings.find((s) => {
+  const hit = rows.find((s) => {
     const n = normalize(s.team_name);
     return n && (n.includes(o) || o.includes(n));
   });
-  return hit?.team_id ?? null;
+  return hit ?? null;
 }
 
 // Per-team dead-rubber adjustment: parse last-5, flag dead rubbers using the
-// cached group standings, and produce recency-weighted adjusted averages.
+// cached all-groups standings, and produce recency-weighted adjusted averages.
 interface TeamDeadRubberResult {
   adjustment: ReturnType<typeof applyDeadRubberDiscount>;
-  standings: StandingRow[] | null;
-  groupLabel: string | null;
+  fixtureChecks: Array<{
+    opponent: string;
+    matchday: number;
+    is_dead_rubber: boolean;
+    reason: string;
+  }>;
   groupFixtureCount: number;
   triggered: boolean;
   reason: string;
@@ -1295,7 +1305,7 @@ interface TeamDeadRubberResult {
 async function computeTeamDeadRubber(
   c4List: unknown,
   afTeamId: number,
-  statsApiTeamId: string | null,
+  all: AllStandings | null,
 ): Promise<TeamDeadRubberResult> {
   const last5 = parseLast5(c4List, afTeamId);
   const groupFixtures = last5.filter((f) => f.is_group_stage);
@@ -1305,8 +1315,7 @@ async function computeTeamDeadRubber(
   if (groupFixtures.length === 0) {
     return {
       adjustment: applyDeadRubberDiscount(last5),
-      standings: null,
-      groupLabel: null,
+      fixtureChecks: [],
       groupFixtureCount: 0,
       triggered: false,
       reason:
@@ -1314,43 +1323,51 @@ async function computeTeamDeadRubber(
     };
   }
 
-  const groupLabel = await findTeamGroupLabel(statsApiTeamId);
-  if (!groupLabel) {
+  if (!all || all.groupRows.length === 0) {
     return {
       adjustment: applyDeadRubberDiscount(last5),
-      standings: null,
-      groupLabel: null,
+      fixtureChecks: [],
       groupFixtureCount: groupFixtures.length,
       triggered: false,
       reason:
-        "Group-stage fixtures present but team's group_label could not be resolved — proceeding without dead-rubber discount.",
+        "Group-stage fixtures present but all-groups standings unavailable — proceeding without dead-rubber discount.",
     };
   }
 
-  const standings = await getStatsApiStandings(groupLabel);
+  const fixtureChecks: TeamDeadRubberResult["fixtureChecks"] = [];
   for (const f of last5) {
     if (!f.is_group_stage) continue;
-    const oppId = resolveOpponentStandingId(f.opponentName, standings);
-    if (!oppId) continue;
+    const oppRow = resolveOpponentStandingRow(f.opponentName, all.groupRows);
+    if (!oppRow || oppRow.group_label === null) continue;
+    const opponentGroupStandings = all.groupRows.filter(
+      (r) => r.group_label === oppRow.group_label,
+    );
     const r = detectDeadRubber({
       fixture_matchday: f.matchday,
       fixture_date: f.date,
-      opponent_team_id: oppId,
-      group_standings: standings,
+      opponent_team_id: oppRow.team_id,
+      opponent_group_standings: opponentGroupStandings,
+      all_groups_third_place_table: all.thirdPlaceTable,
       group_total_matchdays: GROUP_TOTAL_MATCHDAYS,
     });
     f.is_dead_rubber = r.is_dead_rubber;
+    fixtureChecks.push({
+      opponent: f.opponentName,
+      matchday: f.matchday,
+      is_dead_rubber: r.is_dead_rubber,
+      reason: r.reason,
+    });
   }
 
   return {
     adjustment: applyDeadRubberDiscount(last5),
-    standings,
-    groupLabel,
+    fixtureChecks,
     groupFixtureCount: groupFixtures.length,
     triggered: true,
-    reason: `Group ${groupLabel} standings resolved — ${groupFixtures.length} group-stage fixture(s) checked.`,
+    reason: `All-groups standings resolved — ${groupFixtures.length} group-stage fixture(s) checked against cross-group 3rd-place table.`,
   };
 }
+
 
 export async function collectMatchData(
   match: AnalysedMatch,
