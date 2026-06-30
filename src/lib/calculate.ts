@@ -846,33 +846,69 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
  * or all of a team's last-5 fixtures will be knockout matches where dead rubbers
  * cannot occur (every knockout match is won or the team is eliminated).
  *
- * This means S6 (standings) and the groups lookup become unnecessary calls
- * automatically as the tournament progresses — no code change needed to "turn
- * this off" later. The trigger condition in the pipeline (any fixture in the
- * group-stage window) naturally stops firing once all five fixtures are
- * knockout-stage.
+ * This means S6 (standings) becomes an unnecessary call automatically as the
+ * tournament progresses — no code change needed to "turn this off" later. The
+ * trigger condition in the pipeline (any fixture in the group-stage window)
+ * naturally stops firing once all five fixtures are knockout-stage.
  *
- * Call cost: at most 2 new calls per match (one groups lookup, cached forever;
- * one standings lookup per team's group, cached per group per day) and only
- * during the early knockout rounds where group-stage fixtures still appear in
- * the last-5 window. By Quarter-Finals onward, expect zero additional calls.
+ * Call cost: at most ONE new call per match (all-groups standings, cached once
+ * forever as "statsapi_all_standings_static" — the group stage is final and
+ * immutable). This single call replaces the previous per-group standings calls.
+ * By Quarter-Finals onward, expect zero additional calls.
  */
+
+/*
+ * WC2026 QUALIFICATION FORMAT (confirmed against the official FIFA 48-team
+ * format and verified against the live TheStatsAPI standings response, which
+ * returns 12 groups of 4 plus a 12-row cross-group third-place ranking table):
+ *
+ *   12 groups x 2 auto-advance        = 24 qualifiers
+ *   + 8 best third-place finishers    =  8 qualifiers
+ *   ----------------------------------------------------
+ *   = 32 teams advancing to Round of 32
+ *
+ * Third-place teams are ranked across all 12 groups by points, then goal
+ * difference, then goals scored; the best 8 advance alongside the 24 group
+ * winners and runners-up. This is the critical difference from the pre-2026
+ * 32-team format, where finishing 3rd in a group meant elimination.
+ */
+export const WC2026_QUALIFICATION = {
+  groups_count: 12,
+  top_per_group_auto_advance: 2,
+  best_third_place_advancing: 8,
+  // 12 groups x 2 = 24 auto qualifiers
+  // + 8 best 3rd place = 32 total advancing to Round of 32
+} as const;
 
 /**
  * Determine whether a specific group-stage fixture was a "dead rubber" — a game
  * the opponent had no sporting incentive in because their advancement (or
  * elimination) was already mathematically settled before kickoff.
+ *
+ * WC2026-aware: a team sitting 3rd in its group is NOT automatically eliminated.
+ * It can still advance as one of the 8 best third-place finishers, so a 3rd-place
+ * team's final group match is only a dead rubber when it is mathematically
+ * eliminated from the cross-group third-place race as well.
  */
 export const detectDeadRubber = (
   inputs: {
     fixture_matchday: number;
     fixture_date: string;
     opponent_team_id: string;
-    group_standings: Array<{
+    opponent_group_standings: Array<{
       team_id: string;
       points: number;
       position: number;
       matches_played: number;
+      goal_difference: number;
+      goals_for: number;
+    }>;
+    all_groups_third_place_table: Array<{
+      team_id: string;
+      group_label: string;
+      points: number;
+      goal_difference: number;
+      goals_for: number;
     }>;
     group_total_matchdays: number;
   },
@@ -880,7 +916,7 @@ export const detectDeadRubber = (
   is_dead_rubber: boolean;
   reason: string;
 } => {
-  const opponent = inputs.group_standings.find(
+  const opponent = inputs.opponent_group_standings.find(
     (s) => s.team_id === inputs.opponent_team_id,
   );
 
@@ -888,7 +924,7 @@ export const detectDeadRubber = (
     return {
       is_dead_rubber: false,
       reason:
-        "Opponent not found in group standings — cannot determine, default to not dead rubber.",
+        "Opponent not found in group standings — default to not dead rubber.",
     };
   }
 
@@ -902,45 +938,77 @@ export const detectDeadRubber = (
     return {
       is_dead_rubber: false,
       reason:
-        "Not the final group matchday — standings not yet mathematically settled.",
+        "Not the final group matchday — standings not yet settled.",
     };
   }
 
-  // Top positions advance (varies by format, WC2026 top 2 per group of 4 plus
-  // some 3rd-place teams advance — use a conservative top-2-locked threshold).
-  const pointsAfterThisMatch = opponent.points;
-  const maxPossiblePointsForRivals = inputs.group_standings
-    .filter((s) => s.team_id !== inputs.opponent_team_id)
-    .map(
-      (s) =>
-        s.points + (inputs.group_total_matchdays - s.matches_played) * 3,
-    );
-
+  // CASE A: Clinched top 2 in own group — guaranteed advancement regardless of
+  // the 3rd-place race.
+  const rivalsInGroup = inputs.opponent_group_standings.filter(
+    (s) => s.team_id !== inputs.opponent_team_id,
+  );
+  const maxPossibleRivalPoints = rivalsInGroup.map(
+    (s) => s.points + (inputs.group_total_matchdays - s.matches_played) * 3,
+  );
   const clinchedTop2 =
     opponent.position <= 2 &&
-    maxPossiblePointsForRivals.filter((p) => p > pointsAfterThisMatch).length <=
-      1;
+    maxPossibleRivalPoints.filter((p) => p > opponent.points).length <= 1;
 
-  const mathematicallyEliminated =
-    opponent.position >= 3 &&
-    maxPossiblePointsForRivals.filter((p) => p <= pointsAfterThisMatch)
-      .length === 0;
-
-  if (clinchedTop2 || mathematicallyEliminated) {
+  if (clinchedTop2) {
     return {
       is_dead_rubber: true,
-      reason: clinchedTop2
-        ? "Opponent had already clinched advancement before this fixture."
-        : "Opponent was already mathematically eliminated before this fixture.",
+      reason:
+        "Opponent clinched top 2 in group before this fixture — guaranteed advancement.",
     };
+  }
+
+  // CASE B: Sitting 3rd or lower — must check the cross-group 3rd-place table,
+  // not just the own group, since the 8 best 3rd-place teams advance under the
+  // WC2026 48-team format.
+  if (opponent.position >= 3) {
+    // The opponent's own group is already accounted for by the top-2 logic
+    // above; exclude its 3rd-place entry from the comparison field so we measure
+    // the opponent against OTHER groups' third-place finishers.
+    const opponentOwnGroup = inputs.all_groups_third_place_table.find(
+      (x) => x.team_id === opponent.team_id,
+    )?.group_label;
+
+    const thirdPlaceField = inputs.all_groups_third_place_table.filter(
+      (t) => t.group_label !== opponentOwnGroup,
+    );
+
+    // With the opponent's own group excluded, 7 other groups' third-place teams
+    // are guaranteed ahead-or-equal slots; the cutoff is the (N-1)th best of the
+    // remaining field that the opponent must out-rank to claim a top-N slot.
+    const cutoffIndex = WC2026_QUALIFICATION.best_third_place_advancing - 1;
+    const cutoffThirdPlacePoints =
+      thirdPlaceField
+        .map((t) => t.points)
+        .sort((a, b) => b - a)[cutoffIndex] ?? 0;
+
+    // Best case for the opponent: they win their final match (+3 points). If
+    // that still cannot reach the qualifying third-place cutoff, they were
+    // already eliminated via every pathway before kickoff.
+    const bestCaseOpponentPoints = opponent.points + 3;
+
+    const mathematicallyEliminated =
+      bestCaseOpponentPoints < cutoffThirdPlacePoints;
+
+    if (mathematicallyEliminated) {
+      return {
+        is_dead_rubber: true,
+        reason: `Opponent at position ${opponent.position} cannot reach the top ${WC2026_QUALIFICATION.best_third_place_advancing} third-place qualifiers even with a win — mathematically eliminated from advancement via any pathway.`,
+      };
+    }
   }
 
   return {
     is_dead_rubber: false,
     reason:
-      "Final matchday but standings were not yet mathematically settled — both sides had something to play for.",
+      "Final matchday, but advancement (via group position or 3rd-place cross-group ranking) was not yet mathematically settled — opponent had a meaningful stake in the result.",
   };
 };
+
 
 /**
  * Recency-weight a team's last-5 fixtures, discounting group-stage games (0.4x)
