@@ -169,7 +169,159 @@ export function computeOverround(
 }
 
 // ─────────────────────────────────────────────────────────────
-// Orchestrator
+// 7 — Altitude adjustment (uses static venue altitude + team history)
+// ─────────────────────────────────────────────────────────────
+export const calculateAltitudeAdjustment = (inputs: {
+  venue_altitude_m: number;
+  home_team_last5_avg_altitude: number;
+  away_team_last5_avg_altitude: number;
+}): AltitudeAdjustment => {
+  const HIGH_ALTITUDE_THRESHOLD = 1500;
+  const ADAPTATION_THRESHOLD = 1000;
+
+  if (inputs.venue_altitude_m < HIGH_ALTITUDE_THRESHOLD) {
+    return {
+      applies_to: null,
+      pressing_multiplier: 1.0,
+      et_probability_delta: 0,
+      note: "Venue below altitude threshold, no adjustment.",
+    };
+  }
+
+  const homeAdapted =
+    inputs.home_team_last5_avg_altitude > ADAPTATION_THRESHOLD;
+  const awayAdapted =
+    inputs.away_team_last5_avg_altitude > ADAPTATION_THRESHOLD;
+
+  if (!homeAdapted && !awayAdapted) {
+    return {
+      applies_to: null,
+      pressing_multiplier: 0.95,
+      et_probability_delta: 3,
+      note: `Both teams unadapted to ${inputs.venue_altitude_m}m. Neutral disadvantage applied to both equally — net effect on relative probabilities is minimal.`,
+    };
+  }
+
+  if (!awayAdapted && homeAdapted) {
+    return {
+      applies_to: "away",
+      pressing_multiplier: 0.9,
+      et_probability_delta: 5,
+      note: `Away team unadapted to ${inputs.venue_altitude_m}m altitude. Second-half pressing intensity reduced.`,
+    };
+  }
+
+  if (!homeAdapted && awayAdapted) {
+    return {
+      applies_to: "home",
+      pressing_multiplier: 0.9,
+      et_probability_delta: 5,
+      note: `Home team unadapted to ${inputs.venue_altitude_m}m altitude despite home venue.`,
+    };
+  }
+
+  return {
+    applies_to: null,
+    pressing_multiplier: 1.0,
+    et_probability_delta: 0,
+    note: "Both teams adapted to altitude. No adjustment.",
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
+// 8 — Rest disparity (arithmetic on existing C4 fixture dates)
+// ─────────────────────────────────────────────────────────────
+export const calculateRestDisparity = (inputs: {
+  home_last_fixture_date: string;
+  away_last_fixture_date: string;
+  kickoff_utc: string;
+  current_round: string;
+}): RestDisparity => {
+  const kickoff = new Date(inputs.kickoff_utc).getTime();
+  const homeRest =
+    (kickoff - new Date(inputs.home_last_fixture_date).getTime()) / 3600000;
+  const awayRest =
+    (kickoff - new Date(inputs.away_last_fixture_date).getTime()) / 3600000;
+  const disparity = Math.abs(homeRest - awayRest);
+
+  const isLateStage = [
+    "Round of 16",
+    "Quarter-Finals",
+    "Semi-Finals",
+    "Final",
+  ].some((r) => (inputs.current_round ?? "").includes(r));
+
+  if (!Number.isFinite(disparity) || disparity < 24) {
+    return {
+      rest_hours_home: homeRest,
+      rest_hours_away: awayRest,
+      disparity_hours: Number.isFinite(disparity) ? disparity : 0,
+      fatigued_team: null,
+      goals_multiplier: 1.0,
+      upset_probability_delta: 0,
+      note: "Rest disparity under 24h threshold. No adjustment.",
+    };
+  }
+
+  const fatiguedTeam = homeRest < awayRest ? "home" : "away";
+  const multiplier = isLateStage ? 0.9 : 0.95;
+  const upsetDelta = isLateStage ? 5 : 3;
+
+  return {
+    rest_hours_home: homeRest,
+    rest_hours_away: awayRest,
+    disparity_hours: disparity,
+    fatigued_team: fatiguedTeam,
+    goals_multiplier: multiplier,
+    upset_probability_delta: upsetDelta,
+    note: `${fatiguedTeam} team has ${disparity.toFixed(0)}h less rest. ${
+      isLateStage ? "Late tournament stage amplifies fatigue impact." : ""
+    }`.trim(),
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
+// 9 — Travel timezone burden (static venue tz offsets)
+// ─────────────────────────────────────────────────────────────
+export const calculateTravelBurden = (inputs: {
+  venue_timezone_offset: number;
+  home_last_venue_timezone: number;
+  away_last_venue_timezone: number;
+}): TravelBurden => {
+  const homeShift = Math.abs(
+    inputs.venue_timezone_offset - inputs.home_last_venue_timezone,
+  );
+  const awayShift = Math.abs(
+    inputs.venue_timezone_offset - inputs.away_last_venue_timezone,
+  );
+
+  if (homeShift < 3 && awayShift < 3) {
+    return {
+      home_timezone_shift: homeShift,
+      away_timezone_shift: awayShift,
+      disparity: Math.abs(homeShift - awayShift),
+      burdened_team: null,
+      pressing_multiplier: 1.0,
+      note: "Neither team crossed 3+ timezones. No adjustment.",
+    };
+  }
+
+  const burdenedTeam = homeShift > awayShift ? "home" : "away";
+
+  return {
+    home_timezone_shift: homeShift,
+    away_timezone_shift: awayShift,
+    disparity: Math.abs(homeShift - awayShift),
+    burdened_team: burdenedTeam,
+    pressing_multiplier: 0.92,
+    note: `${burdenedTeam} team crossed ${Math.max(
+      homeShift,
+      awayShift,
+    )} timezones since last fixture.`,
+  };
+};
+
+
 // ─────────────────────────────────────────────────────────────
 /**
  * Takes Claude's raw JSON output and returns an enriched copy where every
