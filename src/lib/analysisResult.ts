@@ -83,10 +83,11 @@ export interface DimensionWeights {
 }
 
 export interface DimensionWeightsValidation {
-  weights: DimensionWeights;
-  expected_weights: DimensionWeights;
+  weights: DimensionWeights | null;
+  expected_weights: DimensionWeights | null;
   mismatch_flags: string[];
   sum_valid: boolean;
+  validation_ran?: boolean;
 }
 
 export interface ConfidenceAdjustment {
