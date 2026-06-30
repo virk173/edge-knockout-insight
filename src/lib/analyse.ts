@@ -92,6 +92,9 @@ export interface CollectionResult {
   warning: string | null;
   counterWarning: boolean;
   debugEntries?: DebugEntry[];
+  // S6 dead-rubber detection summary (group-stage games in last-5 form).
+  deadRubberTriggered: boolean;
+  deadRubberFlagged: number;
 }
 
 
