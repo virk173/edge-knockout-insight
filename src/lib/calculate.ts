@@ -17,9 +17,13 @@
  */
 
 import type {
+  AltitudeAdjustment,
   AnalysisResult,
   ConfidenceAdjustment,
+  RestDisparity,
+  TravelBurden,
 } from "@/lib/analysisResult";
+import { getVenueData } from "@/lib/venueData";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
