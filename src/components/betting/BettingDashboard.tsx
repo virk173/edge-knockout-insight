@@ -917,17 +917,22 @@ type EvLabel = { text: string; className: string };
 
 function evRatingLabel(rating?: string, numericEv?: number): EvLabel {
   const v = (rating ?? "").toUpperCase();
+  // Numeric EV is authoritative when present — it cannot disagree with the
+  // computed value the way a stale Claude-supplied label can.
+  if (typeof numericEv === "number" && Number.isFinite(numericEv)) {
+    if (numericEv < 0) return { text: "NEGATIVE", className: "text-signal-red" };
+    if (numericEv < 0.05) return { text: "SKIP", className: "text-signal-red" };
+    if (numericEv < 0.08)
+      return { text: "MARGINAL", className: "text-accent-amber" };
+    return { text: "STRONG", className: "text-signal-green" };
+  }
   if (v.includes("STRONG"))
     return { text: "STRONG", className: "text-signal-green" };
   if (v.includes("MARGINAL"))
     return { text: "MARGINAL", className: "text-accent-amber" };
+  if (v.includes("NEGATIVE") || v.includes("SKIP"))
+    return { text: v, className: "text-signal-red" };
   if (v) return { text: v, className: "text-accent-amber" };
-  // Fall back to the numeric EV when no rating string is provided.
-  if (typeof numericEv === "number" && Number.isFinite(numericEv)) {
-    return numericEv >= 0.05
-      ? { text: "STRONG", className: "text-signal-green" }
-      : { text: "MARGINAL", className: "text-accent-amber" };
-  }
   return { text: "—", className: "text-slate" };
 }
 

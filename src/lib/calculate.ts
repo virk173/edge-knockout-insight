@@ -845,6 +845,34 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // ── EV GATE (single source of truth, runs LAST) ───────────────
+  // Re-derive ev_rating from the ACTUAL computed EV for every tier and enforce
+  // the absolute rule "Never recommend negative EV bets": any tier whose
+  // computed EV is negative is forced inactive and labelled NEGATIVE — no
+  // matter what Claude originally proposed. The gate only ever DOWNGRADES
+  // (forces active=false); it never flips an inactive tier active, so states
+  // like the jackpot's "insufficient signals" skip are preserved.
+  const gateTier = (
+    evValue: number | undefined,
+    tier: { active?: boolean; ev_rating?: string } | undefined,
+  ) => {
+    if (!tier || evValue === undefined || !Number.isFinite(evValue)) return;
+    if (evValue < 0) {
+      tier.ev_rating = "NEGATIVE";
+      tier.active = false;
+    } else if (evValue < 0.05) {
+      tier.ev_rating = "SKIP";
+      tier.active = false;
+    } else if (evValue < 0.08) {
+      tier.ev_rating = "MARGINAL";
+    } else {
+      tier.ev_rating = "STRONG";
+    }
+  };
+  gateTier(num(result.tier_1_anchor?.ev), result.tier_1_anchor);
+  gateTier(num(result.tier_2_parlay?.parlay_ev), result.tier_2_parlay);
+  gateTier(num(result.tier_3_jackpot?.jackpot_ev), result.tier_3_jackpot);
+
   return result;
 }
 
