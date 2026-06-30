@@ -2352,22 +2352,24 @@ export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> 
       };
     }
     const payload = await saGet(`/football/matches/${matchId}/lineups`);
-    if (lineupConfirmedButEmpty(payload)) {
+    const state = classifyLineupState(payload);
+    if (state !== "POPULATED") {
+      const info = LINEUP_STATE_INFO[state];
       console.warn(
-        `[S3 lineups/refetch] MALFORMED confirmed-but-empty response for matchId=${matchId} ` +
-          `(${match.home} vs ${match.away}). Treating as LINEUP PENDING.`,
+        `[S3 lineups/refetch] ${info.label} for matchId=${matchId} ` +
+          `(${match.home} vs ${match.away}).`,
       );
-    }
-    // Accept only genuinely populated lineups; empty 404s and confirmed-but-
-    // empty payloads both stay in the LINEUP PENDING state.
-    if (isEmptyResponse(payload) || !lineupsArePopulated(payload)) {
       return {
         key: "6",
         label: "Confirmed lineups",
         status: "EMPTY",
-        error: "LINEUP PENDING — lineups not yet announced (empty/404).",
+        error: `${info.label} — ${info.note}`,
       };
     }
+    console.log(
+      `[S3 lineups/refetch] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
+        `(${match.home} vs ${match.away}).`,
+    );
     return {
       key: "6",
       label: "Confirmed lineups",
