@@ -2140,7 +2140,7 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
 
   if (!item || !item.fixture?.id || !item.teams?.home?.id || !item.teams?.away?.id) {
     throw new Error(
-      `Debug fixture "South Africa vs Canada" not found in API-Football for ${DEBUG_FIXTURE_DATE}.`,
+      `Debug fixture "Germany vs Paraguay" not found in API-Football for ${DEBUG_FIXTURE_DATE}.`,
     );
   }
 
