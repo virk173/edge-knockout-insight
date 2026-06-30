@@ -89,6 +89,10 @@ export interface DebugReport {
   historicalCaveatReason: string;
   wentToPenalties: boolean;
   penaltyShootoutNote: string;
+  // Three-state lineup classification for this run + whether the XI was resolved
+  // (from TheStatsAPI or the API-Football fallback).
+  lineupState: LineupState;
+  lineupResolved: boolean;
 }
 
 
