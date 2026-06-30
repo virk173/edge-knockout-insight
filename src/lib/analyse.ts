@@ -88,6 +88,8 @@ export interface DebugReport {
   deadRubberFlagged: number;
   historicalCaveatEligible: boolean;
   historicalCaveatReason: string;
+  wentToPenalties: boolean;
+  penaltyShootoutNote: string;
 }
 
 
@@ -106,6 +108,9 @@ export interface CollectionResult {
   // Rule 33 — Round of 32 historical base-rate staleness flag.
   historicalCaveatEligible: boolean;
   historicalCaveatReason: string;
+  // Gap 6 — penalty-shootout detection from score.final_score (S0 lookup).
+  wentToPenalties: boolean;
+  penaltyShootoutNote: string;
 }
 
 
@@ -314,13 +319,14 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "S2B", api: "TheStatsAPI", endpoint: "/teams/{away}/stats", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
     { callLabel: "S3", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "S4", api: "TheStatsAPI", endpoint: "/players/{id}/stats (if absences)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
-    { callLabel: "S5", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    { callLabel: "S5", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle → first-bookmaker fallback)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "S6", api: "TheStatsAPI", endpoint: "/standings (all groups, 3rd-place-aware dead-rubber check)", entryKey: "S6", extracted: cr["S6"]?.status === "SUCCESS", count: false },
+    { callLabel: "S7", api: "TheStatsAPI", endpoint: "/matches/{id}/referee (career totals) + API-Football fouls/penalties enrichment", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     // ---- API-Football group ----
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 7", api: "API-Football", endpoint: "/fixtures (referee history)", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
+    
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
@@ -367,7 +373,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     historicalCaveatReason:
       result.historicalCaveatReason ??
       "NOT ELIGIBLE — round unknown.",
-
+    wentToPenalties: result.wentToPenalties ?? false,
+    penaltyShootoutNote: result.penaltyShootoutNote ?? "Not evaluated.",
   };
 }
 
@@ -570,25 +577,36 @@ function summariseOutcome(name: string, node: unknown) {
   return { name, opening, current, ...mv };
 }
 
-// Build a structured Pinnacle summary from a TheStatsAPI /matches/{id}/odds
-// response. Filters for the Pinnacle bookmaker and extracts 1X2, Over/Under
-// (total goals), BTTS, and corners markets with opening + last_seen prices and
-// line movement. Returns null if no Pinnacle data is present.
+// Build a structured odds summary from a TheStatsAPI /matches/{id}/odds
+// response. Prefers the Pinnacle bookmaker (sharp money); when Pinnacle is not
+// among the returned bookmakers — real WC2026 data frequently ships a single
+// bookmaker such as Bet365 — it falls back to the first bookmaker present so the
+// markets are not silently dropped. Extracts 1X2, BTTS, Total Goals, Corners and
+// Asian Handicap with opening + last_seen prices and line movement.
+//
+// CRITICAL (per authoritative spec at api.thestatsapi.com/llms.txt): for
+// total_goals, match_corners and asian_handicap the LINE VALUE is the object KEY
+// (e.g. "2.5", "9.5", "-0.5"), NOT a fixed field name like over_2_5. We iterate
+// the keys dynamically and keep whatever lines are actually present.
 function buildPinnacleSummary(
   oddsJson: unknown,
-): { markets: PinnacleMarketSummary[]; raw: unknown } | null {
+): { bookmaker: string; markets: PinnacleMarketSummary[]; raw: unknown } | null {
   const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
-  const pinnacle = bookmakers.find((b) => {
-    const name = getField(b, ["bookmaker", "name"]);
-    return typeof name === "string" && normalize(name).includes("pinnacle");
-  });
-  if (!pinnacle) return null;
-  const m = getField(pinnacle, ["markets"]);
+  if (!bookmakers.length) return null;
+  // Prefer Pinnacle; otherwise fall back to the first available bookmaker.
+  const chosen =
+    bookmakers.find((b) => {
+      const name = getField(b, ["bookmaker", "name"]);
+      return typeof name === "string" && normalize(name).includes("pinnacle");
+    }) ?? bookmakers[0];
+  const bookmakerName = (getField(chosen, ["bookmaker", "name"]) as string) ?? "UNKNOWN";
+  const m = getField(chosen, ["markets"]);
   if (!m || typeof m !== "object") return null;
 
   const markets: PinnacleMarketSummary[] = [];
 
-  // 1X2 — match_odds (home / draw / away).
+  // 1X2 — match_odds (home / draw / away). Each outcome is a flat
+  // { opening, last_seen } node.
   const matchOdds = getField(m, ["match_odds", "match_result", "1x2"]);
   if (matchOdds) {
     const outcomes = (
@@ -617,9 +635,18 @@ function buildPinnacleSummary(
     if (outcomes.length) markets.push({ market: "BTTS", outcomes });
   }
 
-  // Over/Under goals — total_goals, keyed by line (e.g. "2.5").
-  const flattenLines = (label: string, container: unknown) => {
+  // Over/Under goals + corners — dynamic line keys. `preferredLine` is the line
+  // we most want (2.5 goals, 9.5 corners); if it is absent we do NOT error, we
+  // keep whatever lines ARE returned and log which keys the match actually had.
+  const flattenLines = (label: string, container: unknown, preferredLine: number) => {
     if (!container || typeof container !== "object") return;
+    const keys = Object.keys(container as Record<string, unknown>);
+    console.log(`[analyse] ${label} lines returned:`, keys);
+    if (!keys.some((k) => parseFloat(k) === preferredLine)) {
+      console.log(
+        `[analyse] ${label}: preferred line ${preferredLine} not present — falling back to available lines.`,
+      );
+    }
     const outcomes: PinnacleMarketSummary["outcomes"] = [];
     for (const [line, node] of Object.entries(container as Record<string, unknown>)) {
       const over = getField(node, ["over"]);
@@ -629,24 +656,32 @@ function buildPinnacleSummary(
     }
     if (outcomes.length) markets.push({ market: label, outcomes });
   };
-  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]));
-  flattenLines("Corners", getField(m, ["match_corners", "corners"]));
+  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]), 2.5);
+  flattenLines("Corners", getField(m, ["match_corners", "corners"]), 9.5);
 
-  // Asian Handicap — home / away with opening + last_seen.
+  // Asian Handicap — { home: { "<line>": {opening,last_seen}, ... },
+  //                    away: { "<line>": {opening,last_seen}, ... } }.
+  // The handicap line is the nested object KEY, so iterate dynamically rather
+  // than reading opening/last_seen straight off home/away (which are containers,
+  // not price nodes — the old code did this and always got undefined).
   const ah = getField(m, ["asian_handicap", "handicap"]);
-  if (ah) {
-    const outcomes = (
-      [
-        ["Home", getField(ah, ["home"])],
-        ["Away", getField(ah, ["away"])],
-      ] as Array<[string, unknown]>
-    )
-      .filter(([, n]) => n != null)
-      .map(([name, n]) => summariseOutcome(name, n));
-    if (outcomes.length) markets.push({ market: "Asian Handicap", outcomes });
+  if (ah && typeof ah === "object") {
+    const ahOutcomes: PinnacleMarketSummary["outcomes"] = [];
+    for (const side of ["home", "away"] as const) {
+      const sideObj = getField(ah, [side]);
+      if (!sideObj || typeof sideObj !== "object") continue;
+      const lines = Object.keys(sideObj as Record<string, unknown>);
+      console.log(`[analyse] Asian Handicap ${side} lines returned:`, lines);
+      for (const [line, node] of Object.entries(sideObj as Record<string, unknown>)) {
+        ahOutcomes.push(
+          summariseOutcome(`${side === "home" ? "Home" : "Away"} ${line}`, node),
+        );
+      }
+    }
+    if (ahOutcomes.length) markets.push({ market: "Asian Handicap", outcomes: ahOutcomes });
   }
 
-  return markets.length ? { markets, raw: pinnacle } : null;
+  return markets.length ? { bookmaker: bookmakerName, markets, raw: chosen } : null;
 }
 
 // Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
@@ -834,6 +869,51 @@ interface RefereeProfile {
   avg_fouls_per_game: number | string;
   penalties_awarded: number | string;
   sample_fixtures_with_stats: number;
+  source?: string;
+  career_totals?: {
+    games: number | null;
+    yellow_cards: number | null;
+    red_cards: number | null;
+    yellow_red_cards: number | null;
+  };
+}
+
+// ---- S7: dedicated TheStatsAPI referee endpoint ----
+//
+// GET /football/matches/{match_id}/referee returns the assigned referee with
+// CAREER TOTALS (games, yellow_cards, red_cards, yellow_red_cards) — NOT
+// averages. We derive avg_yellow_cards_per_game = yellow_cards / games. The
+// endpoint does NOT expose fouls-per-game or penalties-per-game, so those stay
+// NOT_AVAILABLE here and are filled (when possible) from API-Football. `referee`
+// is null when no referee is assigned yet — caller falls back to API-Football.
+function buildRefereeProfileFromStatsApi(refNode: unknown): RefereeProfile | null {
+  const name = getField(refNode, ["name"]);
+  if (!name) return null;
+  const career = getField(refNode, ["career"]);
+  const games = toNum(getField(career, ["games"]));
+  const yellows = toNum(getField(career, ["yellow_cards"]));
+  const reds = toNum(getField(career, ["red_cards"]));
+  const yellowReds = toNum(getField(career, ["yellow_red_cards"]));
+  const avgYellow =
+    games && games > 0 && yellows != null
+      ? Math.round((yellows / games) * 100) / 100
+      : "NOT_AVAILABLE";
+  return {
+    referee: String(name),
+    matches_officiated: games ?? 0,
+    seasons_used: [],
+    avg_yellow_cards_per_game: avgYellow,
+    avg_fouls_per_game: "NOT_AVAILABLE",
+    penalties_awarded: "NOT_AVAILABLE",
+    sample_fixtures_with_stats: games ?? 0,
+    source: "TheStatsAPI /matches/{id}/referee (career totals)",
+    career_totals: {
+      games,
+      yellow_cards: yellows,
+      red_cards: reds,
+      yellow_red_cards: yellowReds,
+    },
+  };
 }
 
 // Build a referee profile from cached completed fixtures, optionally enriching
@@ -987,12 +1067,23 @@ async function getStatsApiMatches(date: string): Promise<unknown[]> {
   return arr;
 }
 
+export interface PenaltyShootout {
+  aggregate: { home: number | null; away: number | null }; // SofaScore final_score
+  normal_time: { home: number | null; away: number | null };
+  shootout_score: { home: number | null; away: number | null };
+}
+
 export interface StatsApiMatchRef {
   id: string;
   homeTeamId: string | null;
   awayTeamId: string | null;
   homeTeamName: string | null;
   awayTeamName: string | null;
+  // Gap 6: derived from score.final_score vs score.home/away. When final_score
+  // differs from normal-time goals the match went to penalties (status strings
+  // are NOT used for this — only the score fields per the authoritative spec).
+  wentToPenalties: boolean;
+  penaltyShootout: PenaltyShootout | null;
   raw: unknown;
 }
 
@@ -1030,12 +1121,36 @@ async function resolveStatsApiMatch(
   if (!found) return null;
   const id = getField(found, ["id", "match_id"]);
   if (id == null) return null;
+
+  // Gap 6: penalty-shootout detection from score.final_score vs normal time.
+  const score = getField(found, ["score"]);
+  const ntHome = toNum(getField(score, ["home"]));
+  const ntAway = toNum(getField(score, ["away"]));
+  const fs = getField(score, ["final_score"]);
+  const fsHome = toNum(getField(fs, ["home"]));
+  const fsAway = toNum(getField(fs, ["away"]));
+  let wentToPenalties = false;
+  let penaltyShootout: PenaltyShootout | null = null;
+  if (fs && fsHome != null && fsAway != null && (fsHome !== ntHome || fsAway !== ntAway)) {
+    wentToPenalties = true;
+    penaltyShootout = {
+      aggregate: { home: fsHome, away: fsAway },
+      normal_time: { home: ntHome, away: ntAway },
+      shootout_score: {
+        home: ntHome != null ? fsHome - ntHome : null,
+        away: ntAway != null ? fsAway - ntAway : null,
+      },
+    };
+  }
+
   return {
     id: String(id),
     homeTeamId: idOrNull(getField(getField(found, ["home_team"]), ["id", "team_id"])),
     awayTeamId: idOrNull(getField(getField(found, ["away_team"]), ["id", "team_id"])),
     homeTeamName: (getField(getField(found, ["home_team"]), ["name"]) as string) ?? null,
     awayTeamName: (getField(getField(found, ["away_team"]), ["name"]) as string) ?? null,
+    wentToPenalties,
+    penaltyShootout,
     raw: found,
   };
 }
@@ -1490,6 +1605,8 @@ export async function collectMatchData(
       match_id: ref.id,
       home_team: { id: ref.homeTeamId, name: ref.homeTeamName },
       away_team: { id: ref.awayTeamId, name: ref.awayTeamName },
+      went_to_penalties: ref.wentToPenalties,
+      penalty_shootout: ref.penaltyShootout,
     };
   });
 
@@ -1591,67 +1708,94 @@ export async function collectMatchData(
   // limit. Running the player-stat burst first would starve S5. See below.
 
 
-  // 7: referee profile.
-  // API-Football does NOT support a `referee` query filter ("The Referee field
-  // do not exist"). Instead we pull all completed World Cup fixtures for the
-  // season once (cached for the day), then filter client-side by the referee
-  // name extracted from CALL 1. Falls back to 2022 when <3 matches found, and
-  // marks UNKNOWN when no fixtures match either season.
+  // 7 (S7): referee profile.
+  // PRIMARY = S7: TheStatsAPI dedicated endpoint /football/matches/{id}/referee,
+  // which returns CAREER TOTALS (games, yellow_cards, red_cards). We derive
+  // avg_yellow_cards_per_game = yellow_cards / games from it. This single call
+  // is spaced by STATSAPI_DELAY_MS inside saGet, so it sits in the sequential
+  // TheStatsAPI throttle order like every other S-call.
+  // fouls-per-game and penalties-per-game are NOT in the referee endpoint, so we
+  // enrich those two fields (when the budget allows) from API-Football's
+  // completed-fixture history. FALLBACK: if S7 returns a null referee (none
+  // assigned) or fails, fall back entirely to the API-Football-derived profile.
   {
     stepKeys.push("7");
     onProgress({
       step: stepKeys.length,
       total: TOTAL_STEPS,
-      label: "Fetching referee profile... (9/11)",
+      label: "Fetching referee profile (S7)... (9/11)",
     });
-    if (counterCritical) {
-      record(
-        "7",
-        "Referee profile",
-        "SKIPPED",
-        undefined,
-        "Skipped — daily API budget critical (>=95). Referee strictness: UNKNOWN.",
-      );
-    } else if (!match.referee) {
-      record(
-        "7",
-        "Referee profile",
-        "EMPTY",
-        undefined,
-        "Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.",
-      );
-    } else {
-      currentDebugCall = "7";
-      try {
-        // Skip the (per-fixture) statistics enrichment when the budget is near
-        // its limit — the completed-fixtures list itself is cheap + cached.
-        const profile = await buildRefereeProfile(match.referee, !counterWarning);
-        if (profile) {
-          record("7", "Referee profile", "SUCCESS", profile);
-        } else {
-          record(
-            "7",
-            "Referee profile",
-            "EMPTY",
-            undefined,
-            `Referee strictness: UNKNOWN. No WC2026/2022 fixtures found for referee "${match.referee}" — cards market estimates use historical base rate only.`,
-          );
+    currentDebugCall = "7";
+    try {
+      let profile: RefereeProfile | null = null;
+
+      // --- S7: TheStatsAPI dedicated referee endpoint (career totals) ---
+      const matchId = await ensureStatsApiMatchId();
+      if (matchId) {
+        try {
+          const refJson = await saGet(`/football/matches/${matchId}/referee`);
+          const refNode = getField(getField(refJson, ["data"]) ?? refJson, ["referee"]);
+          profile = buildRefereeProfileFromStatsApi(refNode);
+        } catch (e) {
+          console.warn("[analyse] S7 referee endpoint failed", e);
         }
-      } catch (e) {
+      }
+
+      // --- API-Football enrichment / fallback ---
+      // When S7 gave us a referee, only run the (costly) API-Football history if
+      // the budget allows, and use it solely to fill fouls/penalties (and yellows
+      // if S7 lacked games). When S7 had no referee, use API-Football entirely.
+      const afName =
+        (typeof profile?.referee === "string" && profile.referee) || match.referee;
+      if (afName && !counterCritical) {
+        try {
+          const afProfile = await buildRefereeProfile(afName, !counterWarning);
+          if (afProfile) {
+            if (!profile) {
+              profile = afProfile; // FALLBACK: S7 null → API-Football profile.
+            } else {
+              profile.avg_fouls_per_game = afProfile.avg_fouls_per_game;
+              profile.penalties_awarded = afProfile.penalties_awarded;
+              if (profile.avg_yellow_cards_per_game === "NOT_AVAILABLE") {
+                profile.avg_yellow_cards_per_game = afProfile.avg_yellow_cards_per_game;
+              }
+              profile.source =
+                "TheStatsAPI /referee (yellows from career) + API-Football history (fouls/penalties)";
+            }
+          }
+        } catch (e) {
+          console.warn("[analyse] CALL 7 API-Football referee enrichment failed", e);
+        }
+      }
+
+      if (profile) {
+        record("7", "Referee profile (S7 + API-Football)", "SUCCESS", profile);
+      } else {
         record(
           "7",
           "Referee profile",
           "EMPTY",
           undefined,
-          `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
-            e instanceof Error ? e.message : String(e)
-          })`,
+          `Referee strictness: UNKNOWN. S7 returned no referee and no API-Football fixtures matched "${
+            match.referee ?? "unknown"
+          }" — cards market estimates use historical base rate only.`,
         );
-      } finally {
-        currentDebugCall = null;
       }
+    } catch (e) {
+      record(
+        "7",
+        "Referee profile",
+        "EMPTY",
+        undefined,
+        `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+    } finally {
+      currentDebugCall = null;
     }
   }
+
 
   // 8: predictions (skipped if near daily cap)
   await runStep(
@@ -1734,7 +1878,7 @@ export async function collectMatchData(
             "Pinnacle odds (TheStatsAPI)",
             "EMPTY",
             { matchId },
-            "Pinnacle data unavailable — no Pinnacle markets returned for this match.",
+            "Pinnacle/odds data unavailable — no bookmaker markets returned for this match.",
           );
         } else {
           // Gap check vs Stake (best-effort on 1X2).
@@ -1743,10 +1887,15 @@ export async function collectMatchData(
 
           record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
             matchId,
+            bookmaker: summary.bookmaker,
             markets: summary.markets,
             gap_check: gapCheck,
             note:
-              "movement_pct = (last_seen - opening) / opening * 100. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
+              `Odds source bookmaker: ${summary.bookmaker}. ` +
+              (normalize(summary.bookmaker).includes("pinnacle")
+                ? ""
+                : "Pinnacle not offered for this match; line-movement/sharp-money signals from this non-Pinnacle book are weaker — weight accordingly. ") +
+              "movement_pct = (last_seen - opening) / opening * 100. opening may be null (only last_seen captured) → movement UNKNOWN. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
           });
         }
       }
@@ -2025,6 +2174,18 @@ export async function collectMatchData(
 
   const lineupResolved = callResults["6"]?.status === "SUCCESS";
 
+  // Gap 6 — penalty-shootout summary from the S0 lookup (final_score based).
+  const finalRef = statsApiRef as StatsApiMatchRef | null;
+  const wentToPenalties = finalRef?.wentToPenalties ?? false;
+  const ps = finalRef?.penaltyShootout ?? null;
+  const penaltyShootoutNote =
+    wentToPenalties && ps
+      ? `WENT TO PENALTIES — normal time ${ps.normal_time.home}-${ps.normal_time.away}, ` +
+        `shootout ${ps.shootout_score.home}-${ps.shootout_score.away}, ` +
+        `aggregate (final_score) ${ps.aggregate.home}-${ps.aggregate.away}. ` +
+        `Detected via score.final_score differing from normal-time score (NOT a status string).`
+      : "Not a penalty shootout (final_score matches normal-time score, or no final_score present).";
+
   // Detach the debug sink so later non-debug runs are not recorded into it.
   debugSink = null;
 
@@ -2043,7 +2204,8 @@ export async function collectMatchData(
     deadRubberFlagged,
     historicalCaveatEligible,
     historicalCaveatReason,
-
+    wentToPenalties,
+    penaltyShootoutNote,
   };
 }
 

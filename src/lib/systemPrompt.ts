@@ -1,4 +1,4 @@
-// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.3
+// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.6
 //
 // IMPORTANT: This file is the single source of truth for the Claude system
 // prompt. It is intentionally a large template literal. The string contains no
@@ -52,7 +52,7 @@ uses it in any calculation.
 
 ════════════════════════════════════════
 FIFA WORLD CUP 2026 — KNOCKOUT STAGE
-BETTING ENGINE v3.3
+BETTING ENGINE v3.6
 ════════════════════════════════════════
 
 ROLE
@@ -1109,6 +1109,32 @@ SECTION 10 — ABSOLUTE RULES
     Never omit this field. If no special
     adjustment applies, use the default
     35/25/20/10/5/5 split.
+
+35. STATUS VOCABULARY DISCIPLINE.
+    Only use status values that actually
+    appear verbatim in the injected CALL
+    N data. Never infer, translate, or
+    invent a status code. Status short
+    codes in API-Football calls (C1, C3,
+    C4, C7, C10) use API-Football's OWN
+    vocabulary — e.g. NS, 1H, HT, FT,
+    AET, PEN (penalty shootout), PST,
+    CANC — and are valid only when that
+    exact code is present in the data.
+    Do NOT apply API-Football codes to
+    TheStatsAPI calls (S0/C6/C9B), whose
+    only valid statuses are scheduled,
+    live, finished, postponed, cancelled.
+    To state that a match went to a
+    penalty shootout, do NOT rely on a
+    status string: cite the injected
+    "went_to_penalties" / penalty_shootout
+    field (derived from score.final_score
+    differing from normal-time score). If
+    that field is absent or false, do not
+    claim a shootout occurred.
+
+
 
 
 
