@@ -67,6 +67,61 @@ export function computeEv(
 }
 
 // ─────────────────────────────────────────────────────────────
+// 1b — Stake-anchoring bias correction.
+//   EV is computed against Stake's line. When a Pinnacle (sharp)
+//   reference is available, the gap between the two lines tells us
+//   whether an apparent "edge" is genuine probability mismatch or
+//   just Stake's line being soft. Adjust EV + confidence to reflect
+//   that, rather than trusting Stake's line at face value.
+// ─────────────────────────────────────────────────────────────
+export const adjustEVForPinnacleGap = (inputs: {
+  raw_ev: number;
+  stake_odds: number;
+  pinnacle_odds: number | null;
+}): {
+  adjusted_ev: number;
+  ev_confidence: "HIGH" | "MEDIUM" | "LOW";
+  note: string;
+} => {
+  if (!inputs.pinnacle_odds) {
+    return {
+      adjusted_ev: inputs.raw_ev,
+      ev_confidence: "MEDIUM",
+      note:
+        "No Pinnacle reference available. EV based on Stake line alone — unverified against sharp market.",
+    };
+  }
+
+  const gap_pct = (inputs.stake_odds / inputs.pinnacle_odds - 1) * 100;
+
+  if (gap_pct > 5) {
+    // Stake offers meaningfully better odds than Pinnacle — could be
+    // genuine value OR Stake mispricing. Flag for caution, don't kill it.
+    return {
+      adjusted_ev: round(inputs.raw_ev * 0.85),
+      ev_confidence: "MEDIUM",
+      note: `Stake odds ${gap_pct.toFixed(1)}% better than Pinnacle. EV reduced 15% — part of this "edge" may be Stake line inefficiency rather than true value. Cross-check before staking.`,
+    };
+  }
+
+  if (gap_pct < -3) {
+    // Stake is WORSE than Pinnacle, yet still EV positive — stronger signal.
+    return {
+      adjusted_ev: round(inputs.raw_ev * 1.1),
+      ev_confidence: "HIGH",
+      note: `Stake odds ${Math.abs(gap_pct).toFixed(1)}% worse than Pinnacle, yet still EV positive. Stronger confirmation of genuine edge — model disagrees with the sharper market in your favor.`,
+    };
+  }
+
+  return {
+    adjusted_ev: inputs.raw_ev,
+    ev_confidence: "HIGH",
+    note:
+      "Stake and Pinnacle aligned within 5%. EV reflects genuine model disagreement with an efficient market.",
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
 // 3 — Gap score
 //   gap = (goals × 8) + (assists × 5) + (shots_delta × 7)
 //       + (keypasses_delta × 5) + set_piece_weight
@@ -556,6 +611,30 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // 1b — Stake-anchoring bias correction for the Tier 1 anchor.
+  if (t1?.ev !== undefined && t1.odds !== undefined) {
+    const pinnacleOdds = num(t1.pinnacle_odds) ?? null;
+    const adjustment = adjustEVForPinnacleGap({
+      raw_ev: t1.ev,
+      stake_odds: t1.odds,
+      pinnacle_odds: pinnacleOdds,
+    });
+
+    t1.raw_ev = t1.ev;
+    t1.ev = adjustment.adjusted_ev;
+    t1.ev_confidence = adjustment.ev_confidence;
+    t1.pinnacle_check_note = adjustment.note;
+
+    // Re-apply EV rating thresholds to the ADJUSTED ev, not raw.
+    t1.ev_rating =
+      adjustment.adjusted_ev >= 0.08
+        ? "STRONG"
+        : adjustment.adjusted_ev >= 0.05
+          ? "MARGINAL"
+          : "SKIP";
+    t1.active = adjustment.adjusted_ev >= 0.05;
+  }
+
   // 2 — Parlay EV
   const t2 = result.tier_2_parlay;
   if (t2?.parlay_ev_inputs) {
@@ -564,6 +643,28 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       t2.parlay_ev_inputs.effective_sgp_price,
     );
     if (ev !== undefined) t2.parlay_ev = ev;
+  }
+
+  // 2b — Stake-anchoring bias correction for any Tier 2 leg that has a
+  // corresponding Pinnacle market available.
+  if (Array.isArray(t2?.legs)) {
+    for (const leg of t2.legs) {
+      const legOdds = num(leg.odds);
+      const legProb = num(leg.model_probability);
+      if (legOdds === undefined || legProb === undefined) continue;
+      const legRawEv = computeEv(legProb, legOdds);
+      if (legRawEv === undefined) continue;
+      const legPinnacle = num(leg.pinnacle_odds) ?? null;
+      const legAdjustment = adjustEVForPinnacleGap({
+        raw_ev: legRawEv,
+        stake_odds: legOdds,
+        pinnacle_odds: legPinnacle,
+      });
+      leg.raw_ev = legRawEv;
+      leg.ev = legAdjustment.adjusted_ev;
+      leg.ev_confidence = legAdjustment.ev_confidence;
+      leg.pinnacle_check_note = legAdjustment.note;
+    }
   }
 
   // 2 — Jackpot EV
