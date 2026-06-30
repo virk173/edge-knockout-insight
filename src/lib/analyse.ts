@@ -80,6 +80,8 @@ export interface DebugReport {
   statsapiTotal: number;
   readyForClaude: boolean;
   call10ExpectedEmpty: boolean;
+  deadRubberTriggered: boolean;
+  deadRubberFlagged: number;
 }
 
 
