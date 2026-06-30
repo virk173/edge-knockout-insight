@@ -593,34 +593,88 @@ Start your response with { and end with }.`;
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleRun}
-                disabled={loading || analysing}
-                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading
-                  ? "Analysing…"
-                  : debugMode
-                    ? "Run Debug Analysis"
-                    : "Run Analysis"}
-              </button>
+            {debugMode ? (
+              <>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunDebugPipeline}
+                    disabled={pipelineRunning || analysing}
+                    className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pipelineRunning ? "Running pipeline…" : "Run Data Pipeline"}
+                  </button>
 
-              {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
-              <div className="group relative">
+                  <button
+                    type="button"
+                    onClick={handleSendDebugToClaude}
+                    disabled={!pipelineReady || pipelineRunning || analysing}
+                    className="rounded-md border border-signal-blue bg-signal-blue/15 px-6 py-3 text-sm font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {analysing
+                      ? "Sending to Claude…"
+                      : pipelineReady
+                        ? "Send to Claude (data ready)"
+                        : "Run pipeline first"}
+                  </button>
+
+                  {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      aria-label="How to use this tool"
+                      className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                    >
+                      <HelpCircle size={16} />
+                    </button>
+                    <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                      {HOW_TO_TEXT}
+                    </div>
+                  </div>
+                </div>
+                <span className="font-mono text-xs">
+                  Pipeline data:{" "}
+                  <span
+                    className={pipelineReady ? "text-signal-green" : "text-slate"}
+                  >
+                    {pipelineReady ? "READY" : "NOT READY"}
+                  </span>
+                  {pipelineFetchedAt && (
+                    <>
+                      {" "}
+                      <span className="text-slate">
+                        · Last fetched: {pipelineFetchedAt.toLocaleTimeString()}
+                      </span>
+                    </>
+                  )}
+                </span>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  aria-label="How to use this tool"
-                  className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                  onClick={handleRun}
+                  disabled={loading || analysing}
+                  className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <HelpCircle size={16} />
+                  {loading ? "Analysing…" : "Run Analysis"}
                 </button>
-                <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                  {HOW_TO_TEXT}
+
+                {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+                <div className="group relative">
+                  <button
+                    type="button"
+                    aria-label="How to use this tool"
+                    className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                  >
+                    <HelpCircle size={16} />
+                  </button>
+                  <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                    {HOW_TO_TEXT}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
               <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
