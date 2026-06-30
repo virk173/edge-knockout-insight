@@ -2543,7 +2543,7 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
     round: item.league?.round ?? null,
     venueName: item.fixture.venue?.name ?? null,
     venueCity: item.fixture.venue?.city ?? null,
-    statusShort: item.fixture.status?.short ?? "FT",
+    statusShort: "FT",
     minutesUntilKickoff,
     status: computeStatus(minutesUntilKickoff, false),
     // Debug fixtures are finished matches; never block the debug pipeline on it.
