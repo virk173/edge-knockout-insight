@@ -952,10 +952,16 @@ Start your response with { and end with }.`;
               {matches.map((m) => {
                 const meta = STATUS_META[m.status];
                 const isActive = activeMatchId === m.id;
-                const showCountdown =
-                  m.status === "OPTIMAL" || m.status === "VALID";
                 const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+                const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
+                const band = timingBand(minsToKickoff, blocked);
+                const showCountdown = !m.isTomorrow && !blocked;
                 const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
+                // Normal-mode two-button flow only (debug uses top buttons).
+                const canAct = !debugMode && !m.isTomorrow && !blocked;
+                const runningThis = isActive && progress !== null;
+                const callsReady =
+                  isActive && collection !== null && !collectError;
                 return (
                   <li
                     key={m.id}
@@ -982,11 +988,6 @@ Start your response with { and end with }.`;
                             </span>
                           </span>
                         )}
-                        {m.status === "OPTIMAL" && (
-                          <span className="rounded-md border border-accent-amber/40 bg-accent-amber/10 px-2 py-1 font-mono text-xs font-semibold text-accent-amber">
-                            ✅ Optimal window — Lineups drop at T-75min via TheStatsAPI
-                          </span>
-                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span
@@ -994,18 +995,46 @@ Start your response with { and end with }.`;
                         >
                           {meta.emoji} {meta.label}
                         </span>
-                        {meta.canAnalyse && (
-                          <button
-                            type="button"
-                            onClick={() => handleAnalyseMatch(m)}
-                            disabled={progress !== null || analysing}
-                            className="rounded-md border border-accent-amber px-3 py-1.5 text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Analyse this match
-                          </button>
-                        )}
                       </div>
                     </div>
+
+                    {/* Timing gate — warning banner only (never blocks pre-kickoff) */}
+                    {!m.isTomorrow && (
+                      <div
+                        className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                          band.tone,
+                        )}`}
+                      >
+                        {band.tone === "blocked" ? "🚫 " : ""}
+                        {band.label}
+                      </div>
+                    )}
+
+                    {/* Two-button flow: Run Calls + Analyse (normal mode) */}
+                    {canAct && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRunCalls(m)}
+                          disabled={runningThis || analysing}
+                          className="rounded-md bg-accent-amber px-4 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {runningThis ? "Running calls…" : "Run Calls"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAnalyseCached(m)}
+                          disabled={!callsReady || runningThis || analysing}
+                          className="rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {analysing && isActive
+                            ? "Analysing…"
+                            : callsReady
+                              ? "Analyse ▶"
+                              : "Run calls first"}
+                        </button>
+                      </div>
+                    )}
 
                     {isActive && progress && (
                       <div className="rounded-md border border-border bg-background/60 px-3 py-3">
@@ -1029,9 +1058,15 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
-                    {isActive && collection && (
+                    {/* Normal mode: minimal status summary. Debug mode keeps the
+                        full per-call CollectionPanel + raw debug panels below. */}
+                    {isActive && collection && !debugMode && (
+                      <CallSummaryPanel summary={buildCallSummary(collection)} />
+                    )}
+                    {isActive && collection && debugMode && (
                       <CollectionPanel result={collection} />
                     )}
+
 
                     {isActive && analysing && (
                       <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
