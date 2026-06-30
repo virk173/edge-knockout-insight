@@ -44,6 +44,7 @@ import {
 } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
+import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
