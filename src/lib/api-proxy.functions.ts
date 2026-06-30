@@ -100,6 +100,7 @@ export const apiFetch = createServerFn({ method: "POST" })
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
+      retryAfter: response.headers.get("retry-after"),
       json,
     };
   });

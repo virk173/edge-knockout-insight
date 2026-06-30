@@ -1,8 +1,7 @@
 // API-Football fixtures fetching + status logic. API key lives server-side
 // (APIFOOTBALL_KEY) and is used by the api-proxy server function.
 
-import { incrementApiCallCount } from "./apiCounter";
-import { apiFetch } from "./api-proxy.functions";
+import { apiFootballGet } from "./apiFootball";
 
 export interface Fixture {
   id: number;
@@ -73,22 +72,13 @@ async function fetchFixturesForDate(
   date: string,
   isTomorrow: boolean,
 ): Promise<Fixture[]> {
-  const url = `${API_BASE}?league=1&season=2026&date=${date}`;
-  const result = await apiFetch({ data: { provider: "apifootball", url } });
+  const path = `${API_BASE.replace("https://v3.football.api-sports.io", "")}?league=1&season=2026&date=${date}`;
+  const response = await apiFootballGet(path, {
+    callLabel: isTomorrow ? "C1-tomorrow" : "C1-today",
+  });
+  const items = (response ?? []) as NonNullable<ApiFixtureResponse["response"]>;
 
-  if (!result.ok) {
-    throw new Error(
-      `API returned ${result.status} ${result.statusText ?? ""}`.trim(),
-    );
-  }
-
-  const json = (result.json ?? {}) as ApiFixtureResponse;
-  const apiError = normaliseErrors(json.errors);
-  if (apiError) {
-    throw new Error(apiError);
-  }
-
-  return (json.response ?? []).map((item) => ({
+  return items.map((item) => ({
     id: item.fixture.id,
     home: item.teams.home.name,
     away: item.teams.away.name,
@@ -127,10 +117,8 @@ export async function runAnalysis(): Promise<AnalysisResult> {
   let apiCallsUsed = 0;
   const todayFixtures = await fetchFixturesForDate(isoDate(now), false);
   apiCallsUsed += 1;
-  incrementApiCallCount();
   const tomorrowFixtures = await fetchFixturesForDate(isoDate(tomorrow), true);
   apiCallsUsed += 1;
-  incrementApiCallCount();
 
   const reference = new Date();
   const matches: AnalysedMatch[] = [...todayFixtures, ...tomorrowFixtures]
