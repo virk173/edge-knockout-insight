@@ -238,8 +238,11 @@ function Index() {
     };
   }, [analysing]);
 
-  // Auto re-fetch CALL 6 (lineups) once the lineup-drop time passes, if the
-  // analysis already ran and lineups came back PENDING (empty).
+  // Auto re-fetch CALL 6 (lineups) when the analysis ran but lineups came back
+  // PENDING (NOT_ANNOUNCED or PROPAGATING). Two distinct attempts per match:
+  //   1. At the lineup-drop window (~T-75) — catches normal on-time publication.
+  //   2. Option B final re-check at ~T-15 — last meaningful chance to catch the
+  //      slow-propagation case (France vs Sweden only split the XI out at ~T-0).
   useEffect(() => {
     if (!collection || activeMatchId == null || !matches) return;
     const match = matches.find((m) => m.id === activeMatchId);
@@ -248,11 +251,9 @@ function Index() {
     const pending = !c6 || c6.status !== "SUCCESS";
     if (!pending) return;
     const mins = minutesUntil(match.kickoffUtc, now);
-    // Lineups drop ~75 min out; only refetch inside that window, pre-kickoff.
-    if (mins > LINEUP_DROP_MIN || mins <= 0) return;
-    if (lineupRefetchedRef.current.has(match.id)) return;
-    lineupRefetchedRef.current.add(match.id);
-    (async () => {
+    if (mins <= 0) return;
+
+    const runRefetch = async (phase: "drop" | "final") => {
       const updated = await refetchLineups(match);
       setCollection((prev) =>
         prev
@@ -262,9 +263,34 @@ function Index() {
       setApiCalls(getApiCallCount());
       if (updated.status === "SUCCESS") {
         toast.success("Confirmed lineups now available — re-analyse for full data.");
+      } else if (phase === "final") {
+        toast.warning(
+          "Final lineup re-check at T-15: starting XI still not populated by TheStatsAPI. Proceeding without confirmed XI.",
+        );
       }
-    })();
+    };
+
+    // Final near-kickoff re-check (T-15 .. T-0) — highest priority, runs once.
+    if (
+      mins <= LINEUP_FINAL_RECHECK_MIN &&
+      !lineupFinalRecheckRef.current.has(match.id)
+    ) {
+      lineupFinalRecheckRef.current.add(match.id);
+      void runRefetch("final");
+      return;
+    }
+
+    // Initial lineup-drop refetch (T-75 .. T-15), runs once.
+    if (
+      mins <= LINEUP_DROP_MIN &&
+      mins > LINEUP_FINAL_RECHECK_MIN &&
+      !lineupRefetchedRef.current.has(match.id)
+    ) {
+      lineupRefetchedRef.current.add(match.id);
+      void runRefetch("drop");
+    }
   }, [now, collection, activeMatchId, matches]);
+
 
   async function handleRun() {
     // Debug mode uses the two-step buttons (Run Data Pipeline / Send to Claude),
