@@ -1274,16 +1274,16 @@ export const LINEUP_STATE_INFO: Record<
   { label: string; note: string }
 > = {
   NOT_ANNOUNCED: {
-    label: "LINEUP NOT YET ANNOUNCED",
-    note: "Official lineups have not been published yet (endpoint empty/404). Analysis proceeds on historical/expected XI.",
+    label: "LINEUP NOT ANNOUNCED",
+    note: "Endpoint returned 404 — the team sheet has genuinely not been published yet. Expected before T-60min. Analysis proceeds on historical/expected XI.",
   },
   PROPAGATING: {
-    label: "LINEUP ANNOUNCED BUT PROPAGATING",
-    note: "The lineup is confirmed to exist (full squad present) but TheStatsAPI has not split the starting XI out yet. This often only resolves at ~kickoff. A final re-check is scheduled near kickoff.",
+    label: "LINEUP PROPAGATING",
+    note: "confirmed=true but starting_xi arrays are still empty — the lineup is known to exist and the data is being ingested. Retried up to 5×60s, then fell back to API-Football.",
   },
   POPULATED: {
-    label: "LINEUP CONFIRMED AND POPULATED",
-    note: "Starting XI available for both teams.",
+    label: "LINEUP CONFIRMED",
+    note: "confirmed=true with a populated starting_xi for both teams. Source: TheStatsAPI (or API-Football fallback).",
   },
 };
 
