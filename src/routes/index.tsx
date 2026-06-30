@@ -1284,6 +1284,20 @@ function DebugReportView({ report }: { report: DebugReport }) {
           </span>
         </span>
 
+        <span className="text-slate">
+          Penalty shootout (score.final_score):{" "}
+          <span
+            className={
+              report.wentToPenalties ? "text-accent-amber" : "text-slate"
+            }
+          >
+            {report.wentToPenalties ? "WENT TO PENALTIES" : "NO"}
+          </span>
+          <span className="block pl-2 text-[11px] leading-snug text-slate">
+            {report.penaltyShootoutNote}
+          </span>
+        </span>
+
 
         <span className="text-slate">
           Ready for Claude:{" "}
