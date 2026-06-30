@@ -264,6 +264,11 @@ export interface AnalysisResult {
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
   analyst_note?: string;
+  // Contextual factor inputs from Claude + computed adjustments (app code).
+  context_inputs?: ContextInputs;
+  altitude_adjustment?: AltitudeAdjustment;
+  rest_disparity?: RestDisparity;
+  travel_burden?: TravelBurden;
   log_entry?: import("@/lib/backtestLog").RawLogEntry;
 }
 
