@@ -1060,12 +1060,23 @@ async function getStatsApiMatches(date: string): Promise<unknown[]> {
   return arr;
 }
 
+export interface PenaltyShootout {
+  aggregate: { home: number | null; away: number | null }; // SofaScore final_score
+  normal_time: { home: number | null; away: number | null };
+  shootout_score: { home: number | null; away: number | null };
+}
+
 export interface StatsApiMatchRef {
   id: string;
   homeTeamId: string | null;
   awayTeamId: string | null;
   homeTeamName: string | null;
   awayTeamName: string | null;
+  // Gap 6: derived from score.final_score vs score.home/away. When final_score
+  // differs from normal-time goals the match went to penalties (status strings
+  // are NOT used for this — only the score fields per the authoritative spec).
+  wentToPenalties: boolean;
+  penaltyShootout: PenaltyShootout | null;
   raw: unknown;
 }
 
