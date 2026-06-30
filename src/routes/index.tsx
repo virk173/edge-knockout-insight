@@ -952,10 +952,14 @@ Start your response with { and end with }.`;
                 const minsToKickoff = minutesUntil(m.kickoffUtc, now);
                 const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
                 const band = timingBand(minsToKickoff, blocked);
-                const showCountdown = !m.isTomorrow && !blocked;
+                const showCountdown = !blocked;
                 const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
                 // Normal-mode two-button flow only (debug uses top buttons).
-                const canAct = !debugMode && !m.isTomorrow && !blocked;
+                // Availability is driven ONLY by the live/finished block — a
+                // scheduled match is actionable regardless of how far out it is
+                // (incl. tomorrow's fixtures) or whether it's outside the
+                // optimal lineup window.
+                const canAct = !debugMode && !blocked;
                 const runningThis = isActive && progress !== null;
                 const callsReady =
                   isActive && collection !== null && !collectError;
@@ -995,17 +999,16 @@ Start your response with { and end with }.`;
                       </div>
                     </div>
 
-                    {/* Timing gate — warning banner only (never blocks pre-kickoff) */}
-                    {!m.isTomorrow && (
-                      <div
-                        className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
-                          band.tone,
-                        )}`}
-                      >
-                        {band.tone === "blocked" ? "🚫 " : ""}
-                        {band.label}
-                      </div>
-                    )}
+                    {/* Timing gate — warning banner only (never blocks pre-kickoff).
+                        Shown for every scheduled match, including tomorrow's. */}
+                    <div
+                      className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                        band.tone,
+                      )}`}
+                    >
+                      {band.tone === "blocked" ? "🚫 " : ""}
+                      {band.label}
+                    </div>
 
                     {/* Two-button flow: Run Calls + Analyse (normal mode) */}
                     {canAct && (
