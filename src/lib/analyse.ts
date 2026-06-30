@@ -95,6 +95,8 @@ export interface DebugReport {
 export interface CollectionResult {
   callResults: Record<string, CallResult>;
   lineupResolved: boolean;
+  // Three-state lineup classification (NOT_ANNOUNCED / PROPAGATING / POPULATED).
+  lineupState: LineupState;
   succeeded: number;
   emptyOrFailed: number;
   failedCalls: string[];
