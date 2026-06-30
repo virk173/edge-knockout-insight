@@ -172,8 +172,9 @@ function MatchHeader({ result }: { result: AnalysisResult }) {
             {result.match ?? "Match"}
           </h2>
           <p className="text-sm text-slate">
-            {[result.round, result.kickoff_local].filter(Boolean).join(" · ") ||
-              "—"}
+            {[result.round, formatMatchTime(result.kickoff_UTC) ?? result.kickoff_local]
+              .filter(Boolean)
+              .join(" · ") || "—"}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <span
