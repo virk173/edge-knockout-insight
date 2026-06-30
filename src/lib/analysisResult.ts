@@ -158,6 +158,13 @@ export interface TierLeg {
   odds?: number;
   model_probability?: number;
   correlation_logic?: string;
+  // Pinnacle-gap EV adjustment (computed app-side when a leg has both a
+  // model_probability and a Pinnacle reference price).
+  pinnacle_odds?: number | null;
+  raw_ev?: number;
+  ev?: number;
+  ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
+  pinnacle_check_note?: string;
 }
 
 export interface Tier1Anchor {
@@ -173,6 +180,11 @@ export interface Tier1Anchor {
   books_true_implied?: number;
   ev?: number;
   ev_rating?: string;
+  // Pinnacle-gap EV adjustment (computed app-side, see calculate.ts).
+  pinnacle_odds?: number | null;
+  raw_ev?: number;
+  ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
+  pinnacle_check_note?: string;
 
   reasoning?: string;
 }
