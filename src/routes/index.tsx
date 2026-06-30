@@ -856,6 +856,22 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
+                    {isActive && billingError && (
+                      <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
+                        <p className="text-base font-bold">
+                          ⚠️ Anthropic Billing Issue
+                        </p>
+                        <p className="mt-1 text-sm">
+                          Your account credit balance is too low to run analysis.
+                          Add credits at{" "}
+                          <span className="font-semibold underline">
+                            console.anthropic.com
+                          </span>{" "}
+                          before trying again.
+                        </p>
+                      </div>
+                    )}
+
                     {isActive && analysisError && (
                       <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
                         {analysisError}
