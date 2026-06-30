@@ -21,6 +21,13 @@ const STATSAPI_SEASON_ID = "sn_118868";
 // strictly sequentially (never Promise.all) — see saGet below.
 const STATSAPI_DELAY_MS = 400;
 
+// WC2026 group stage concluded the day before the Round of 32 began. Any last-5
+// fixture whose UTC date is strictly before this falls inside the group-stage
+// window and is a candidate for dead-rubber detection (see S6 below).
+const WC2026_GROUP_STAGE_END = "2026-06-28";
+// 3-match group stage (each team plays 3 group games in a group of 4).
+const GROUP_TOTAL_MATCHDAYS = 3;
+
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
