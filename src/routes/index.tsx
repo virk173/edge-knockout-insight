@@ -14,6 +14,7 @@ import {
   buildDebugReport,
   refetchLineups,
   DEBUG_FIXTURE_DATE,
+  LINEUP_STATE_INFO,
   type CollectionResult,
   type DebugReport,
   type ProgressUpdate,
@@ -84,6 +85,12 @@ function formatLocal(iso: string): string {
 
 // Lineups for WC2026 are expected to drop ~75 min before kickoff.
 const LINEUP_DROP_MIN = 75;
+
+// Option B — final near-kickoff re-check. Live observation (France vs Sweden)
+// showed TheStatsAPI only splits the starting XI out of the squad at ~T-0, long
+// after confirmed=true. T-15 is the latest point where a populated lineup still
+// meaningfully changes the analysis, so we fire one last re-check there.
+const LINEUP_FINAL_RECHECK_MIN = 15;
 
 // Minutes from now until kickoff for a fixture (can be negative).
 function minutesUntil(iso: string, now: Date): number {
@@ -190,6 +197,9 @@ function Index() {
   // Tracks fixtures we've already auto-refetched lineups for, so the timer
   // effect only fires one refetch per match once the lineup-drop time passes.
   const lineupRefetchedRef = useRef<Set<number>>(new Set());
+  // Separate guard for the Option B final T-15 near-kickoff re-check, which is
+  // independent of the earlier lineup-drop refetch above.
+  const lineupFinalRecheckRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -229,8 +239,11 @@ function Index() {
     };
   }, [analysing]);
 
-  // Auto re-fetch CALL 6 (lineups) once the lineup-drop time passes, if the
-  // analysis already ran and lineups came back PENDING (empty).
+  // Auto re-fetch CALL 6 (lineups) when the analysis ran but lineups came back
+  // PENDING (NOT_ANNOUNCED or PROPAGATING). Two distinct attempts per match:
+  //   1. At the lineup-drop window (~T-75) — catches normal on-time publication.
+  //   2. Option B final re-check at ~T-15 — last meaningful chance to catch the
+  //      slow-propagation case (France vs Sweden only split the XI out at ~T-0).
   useEffect(() => {
     if (!collection || activeMatchId == null || !matches) return;
     const match = matches.find((m) => m.id === activeMatchId);
@@ -239,11 +252,9 @@ function Index() {
     const pending = !c6 || c6.status !== "SUCCESS";
     if (!pending) return;
     const mins = minutesUntil(match.kickoffUtc, now);
-    // Lineups drop ~75 min out; only refetch inside that window, pre-kickoff.
-    if (mins > LINEUP_DROP_MIN || mins <= 0) return;
-    if (lineupRefetchedRef.current.has(match.id)) return;
-    lineupRefetchedRef.current.add(match.id);
-    (async () => {
+    if (mins <= 0) return;
+
+    const runRefetch = async (phase: "drop" | "final") => {
       const updated = await refetchLineups(match);
       setCollection((prev) =>
         prev
@@ -253,9 +264,34 @@ function Index() {
       setApiCalls(getApiCallCount());
       if (updated.status === "SUCCESS") {
         toast.success("Confirmed lineups now available — re-analyse for full data.");
+      } else if (phase === "final") {
+        toast.warning(
+          "Final lineup re-check at T-15: starting XI still not populated by TheStatsAPI. Proceeding without confirmed XI.",
+        );
       }
-    })();
+    };
+
+    // Final near-kickoff re-check (T-15 .. T-0) — highest priority, runs once.
+    if (
+      mins <= LINEUP_FINAL_RECHECK_MIN &&
+      !lineupFinalRecheckRef.current.has(match.id)
+    ) {
+      lineupFinalRecheckRef.current.add(match.id);
+      void runRefetch("final");
+      return;
+    }
+
+    // Initial lineup-drop refetch (T-75 .. T-15), runs once.
+    if (
+      mins <= LINEUP_DROP_MIN &&
+      mins > LINEUP_FINAL_RECHECK_MIN &&
+      !lineupRefetchedRef.current.has(match.id)
+    ) {
+      lineupRefetchedRef.current.add(match.id);
+      void runRefetch("drop");
+    }
   }, [now, collection, activeMatchId, matches]);
+
 
   async function handleRun() {
     // Debug mode uses the two-step buttons (Run Data Pipeline / Send to Claude),
@@ -302,6 +338,7 @@ KICKOFF UTC: ${match.kickoffUtc}
 CURRENT TIME UTC: ${new Date().toISOString()}
 VENUE: ${match.venueName ?? "NOT_AVAILABLE"}
 VENUE CITY: ${match.venueCity ?? "NOT_AVAILABLE"}
+LINEUP STATUS: ${LINEUP_STATE_INFO[result.lineupState].label} — ${LINEUP_STATE_INFO[result.lineupState].note}${result.lineupState === "POPULATED" ? "" : " Apply the LINEUP-UNAVAILABLE confidence penalty; a PROPAGATING state (lineup confirmed to exist but XI not yet split out) warrants a SMALLER penalty than NOT_ANNOUNCED."}
 
 INJECTED API DATA:
 
@@ -408,6 +445,7 @@ Start your response with { and end with }.`;
   async function handleAnalyseMatch(match: AnalysedMatch) {
     setActiveMatchId(match.id);
     lineupRefetchedRef.current.delete(match.id);
+    lineupFinalRecheckRef.current.delete(match.id);
     setCollection(null);
     setCollectError(null);
     setAnalysisResult(null);
