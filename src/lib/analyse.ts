@@ -1841,7 +1841,105 @@ export async function collectMatchData(
     }
   }
 
-  // ---- Summary over the 11 progress steps ----
+  // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
+  // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists.
+  // Triggers per team ONLY when a last-5 fixture falls in the group-stage
+  // window; otherwise S6 (groups + standings) is skipped entirely. By the QFs,
+  // when every last-5 fixture is knockout-stage, this makes zero new calls.
+  let deadRubberTriggered = false;
+  let deadRubberFlagged = 0;
+  {
+    currentDebugCall = "S6";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Checking for dead-rubber group games (TheStatsAPI)...",
+    });
+    try {
+      const ref = await ensureStatsApiMatch();
+      const homeList = callResults["4-1"]?.data ?? null;
+      const awayList = callResults["4-2"]?.data ?? null;
+
+      const homeDr = await computeTeamDeadRubber(
+        homeList,
+        match.homeId,
+        ref?.homeTeamId ?? null,
+      );
+      const awayDr = await computeTeamDeadRubber(
+        awayList,
+        match.awayId,
+        ref?.awayTeamId ?? null,
+      );
+
+      deadRubberFlagged =
+        homeDr.adjustment.dead_rubber_count +
+        awayDr.adjustment.dead_rubber_count;
+      deadRubberTriggered = homeDr.triggered || awayDr.triggered;
+
+      // Adjusted averages injected into the [CALL 4] block sent to Claude.
+      callResults["4-deadrubber"] = {
+        key: "4-deadrubber",
+        label: "Recency-weighted & dead-rubber-adjusted form",
+        status: "SUCCESS",
+        data: {
+          home: {
+            team: match.home,
+            adjusted_goals_avg: homeDr.adjustment.adjusted_goals_avg,
+            adjusted_shots_avg: homeDr.adjustment.adjusted_shots_avg,
+            dead_rubber_count: homeDr.adjustment.dead_rubber_count,
+            note: homeDr.adjustment.note,
+          },
+          away: {
+            team: match.away,
+            adjusted_goals_avg: awayDr.adjustment.adjusted_goals_avg,
+            adjusted_shots_avg: awayDr.adjustment.adjusted_shots_avg,
+            dead_rubber_count: awayDr.adjustment.dead_rubber_count,
+            note: awayDr.adjustment.note,
+          },
+          dead_rubber_count: deadRubberFlagged,
+        },
+      };
+
+      if (!deadRubberTriggered) {
+        record(
+          "S6",
+          "Group standings (dead-rubber check)",
+          "SKIPPED",
+          undefined,
+          "NOT TRIGGERED — all last-5 fixtures are knockout stage for both teams.",
+        );
+      } else {
+        record("S6", "Group standings (dead-rubber check)", "SUCCESS", {
+          home: {
+            group_label: homeDr.groupLabel,
+            group_fixtures_in_last5: homeDr.groupFixtureCount,
+            dead_rubbers_flagged: homeDr.adjustment.dead_rubber_count,
+            reason: homeDr.reason,
+            standings: homeDr.standings,
+          },
+          away: {
+            group_label: awayDr.groupLabel,
+            group_fixtures_in_last5: awayDr.groupFixtureCount,
+            dead_rubbers_flagged: awayDr.adjustment.dead_rubber_count,
+            reason: awayDr.reason,
+            standings: awayDr.standings,
+          },
+        });
+      }
+    } catch (e) {
+      record(
+        "S6",
+        "Group standings (dead-rubber check)",
+        "EMPTY",
+        undefined,
+        `Dead-rubber check unavailable — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      currentDebugCall = null;
+    }
+  }
+
+
   const succeeded = stepKeys.filter(
     (k) => callResults[k]?.status === "SUCCESS",
   ).length;
