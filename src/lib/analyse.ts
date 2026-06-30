@@ -2151,8 +2151,8 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
 
   return {
     id: item.fixture.id,
-    home: item.teams.home.name ?? "South Africa",
-    away: item.teams.away.name ?? "Canada",
+    home: item.teams.home.name ?? "Germany",
+    away: item.teams.away.name ?? "Paraguay",
     homeId: item.teams.home.id,
     awayId: item.teams.away.id,
     kickoffUtc,
