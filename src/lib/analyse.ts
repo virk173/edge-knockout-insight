@@ -1860,9 +1860,10 @@ export async function collectMatchData(
 
   // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
   // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists.
-  // Triggers per team ONLY when a last-5 fixture falls in the group-stage
-  // window; otherwise S6 (groups + standings) is skipped entirely. By the QFs,
-  // when every last-5 fixture is knockout-stage, this makes zero new calls.
+  // Triggers ONLY when a last-5 fixture falls in the group-stage window; when it
+  // fires, it makes exactly ONE new call (all-groups standings, cached once).
+  // WC2026-aware: uses the cross-group 3rd-place table so a 3rd-placed team that
+  // could still advance as a best-third finisher is NOT mis-flagged.
   let deadRubberTriggered = false;
   let deadRubberFlagged = 0;
   {
@@ -1873,20 +1874,24 @@ export async function collectMatchData(
       label: "Checking for dead-rubber group games (TheStatsAPI)...",
     });
     try {
-      const ref = await ensureStatsApiMatch();
       const homeList = callResults["4-1"]?.data ?? null;
       const awayList = callResults["4-2"]?.data ?? null;
 
-      const homeDr = await computeTeamDeadRubber(
-        homeList,
-        match.homeId,
-        ref?.homeTeamId ?? null,
+      // Decide whether the single all-groups standings call is needed at all.
+      const homeNeeds = parseLast5(homeList, match.homeId).some(
+        (f) => f.is_group_stage,
       );
-      const awayDr = await computeTeamDeadRubber(
-        awayList,
-        match.awayId,
-        ref?.awayTeamId ?? null,
+      const awayNeeds = parseLast5(awayList, match.awayId).some(
+        (f) => f.is_group_stage,
       );
+
+      let all: AllStandings | null = null;
+      if (homeNeeds || awayNeeds) {
+        all = await getStatsApiAllStandings();
+      }
+
+      const homeDr = await computeTeamDeadRubber(homeList, match.homeId, all);
+      const awayDr = await computeTeamDeadRubber(awayList, match.awayId, all);
 
       deadRubberFlagged =
         homeDr.adjustment.dead_rubber_count +
@@ -1920,33 +1925,45 @@ export async function collectMatchData(
       if (!deadRubberTriggered) {
         record(
           "S6",
-          "Group standings (dead-rubber check)",
+          "All-groups standings (3rd-place-aware dead-rubber check)",
           "SKIPPED",
           undefined,
           "NOT TRIGGERED — all last-5 fixtures are knockout stage for both teams.",
         );
       } else {
-        record("S6", "Group standings (dead-rubber check)", "SUCCESS", {
-          home: {
-            group_label: homeDr.groupLabel,
-            group_fixtures_in_last5: homeDr.groupFixtureCount,
-            dead_rubbers_flagged: homeDr.adjustment.dead_rubber_count,
-            reason: homeDr.reason,
-            standings: homeDr.standings,
+        record(
+          "S6",
+          "All-groups standings (3rd-place-aware dead-rubber check)",
+          all && all.groupRows.length ? "SUCCESS" : "EMPTY",
+          {
+            wc2026_qualification: WC2026_QUALIFICATION,
+            all_groups_standings: all?.groupRows ?? [],
+            cross_group_third_place_table: (all?.thirdPlaceTable ?? []).map(
+              (t, i) => ({
+                rank: i + 1,
+                advances: i < WC2026_QUALIFICATION.best_third_place_advancing,
+                ...t,
+              }),
+            ),
+            home: {
+              group_fixtures_in_last5: homeDr.groupFixtureCount,
+              dead_rubbers_flagged: homeDr.adjustment.dead_rubber_count,
+              reason: homeDr.reason,
+              fixture_checks: homeDr.fixtureChecks,
+            },
+            away: {
+              group_fixtures_in_last5: awayDr.groupFixtureCount,
+              dead_rubbers_flagged: awayDr.adjustment.dead_rubber_count,
+              reason: awayDr.reason,
+              fixture_checks: awayDr.fixtureChecks,
+            },
           },
-          away: {
-            group_label: awayDr.groupLabel,
-            group_fixtures_in_last5: awayDr.groupFixtureCount,
-            dead_rubbers_flagged: awayDr.adjustment.dead_rubber_count,
-            reason: awayDr.reason,
-            standings: awayDr.standings,
-          },
-        });
+        );
       }
     } catch (e) {
       record(
         "S6",
-        "Group standings (dead-rubber check)",
+        "All-groups standings (3rd-place-aware dead-rubber check)",
         "EMPTY",
         undefined,
         `Dead-rubber check unavailable — ${e instanceof Error ? e.message : String(e)}`,
@@ -1955,6 +1972,18 @@ export async function collectMatchData(
       currentDebugCall = null;
     }
   }
+
+  // ---- Round of 32 historical base-rate staleness flag (system-prompt rule
+  // 33). Only the structural precondition (round === Round of 32) is knowable
+  // at pipeline time; Claude evaluates conditions (a)/(b) on signal alignment.
+  const roundLabel = (match.round ?? "").toLowerCase();
+  const isRoundOf32 =
+    /round of 32/.test(roundLabel) || /\br32\b/.test(roundLabel);
+  const historicalCaveatEligible = isRoundOf32;
+  const historicalCaveatReason = isRoundOf32
+    ? "ELIGIBLE — match is Round of 32; rule 33 caveat applies if ensemble alignment is CONFLICT/MAJORITY and signal_3_historical is the outlier or materially drives the recommendation."
+    : `NOT ELIGIBLE — round is "${match.round ?? "unknown"}"; Round of 16+ existed in the pre-2026 format so historical base rates remain structurally comparable.`;
+
 
 
   const succeeded = stepKeys.filter(
