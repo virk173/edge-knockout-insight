@@ -811,6 +811,25 @@ confidence_scores:
       type and delta
   (app computes post_adjustment,
    bayesian_applied and final_confidence)
+dimension_weights:
+  D1: number
+  D2: number
+  D3: number
+  D4: number
+  D5: number
+  D6: number
+  adjustment_reason: string or null
+  (these SIX numbers MUST sum to 100;
+   these are OUTPUT INPUTS — you
+   determine which dimension weights
+   apply per the Section 4 rules
+   (default 35/25/20/10/5/5, with
+   adjustments for fewer than 3 fixtures
+   in C4, a failed H2H gate, a critical
+   absence, or all players confirmed
+   fit) and output the SIX INDIVIDUAL
+   NUMBERS you actually used — not just
+   the blended dimension_weighted_raw)
 tactical_analysis:
   formation_home, formation_away,
   formation_home_assumed,
@@ -1079,6 +1098,18 @@ SECTION 10 — ABSOLUTE RULES
     appended to the existing analyst_note
     paragraph, only when (a)(b)(c) all
     hold — never a blanket disclaimer.
+34. ALWAYS output dimension_weights as
+    six individual numbers (D1 through
+    D6) that sum to 100, reflecting
+    whichever adjustment rule from
+    Section 4 actually applied to this
+    match's data conditions. This is
+    separate from and in addition to
+    confidence_inputs.dimension_weighted_raw.
+    Never omit this field. If no special
+    adjustment applies, use the default
+    35/25/20/10/5/5 split.
+
 
 
 
@@ -1318,6 +1349,15 @@ EXAMPLE OUTPUT:
         {"type": "Over_2.5_drift", "delta": -3}
       ]
     }
+  },
+  "dimension_weights": {
+    "D1": 35,
+    "D2": 17,
+    "D3": 20,
+    "D4": 18,
+    "D5": 5,
+    "D6": 5,
+    "adjustment_reason": "CRITICAL ABSENCE confirmed (Mane) — D4 raised to 18, D2 reduced to 17 per Section 4 rules."
   },
   "tactical_analysis": {
     "formation_home": "4-3-3",

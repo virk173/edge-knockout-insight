@@ -171,6 +171,7 @@ function Index() {
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
   const [analysisResult, setAnalysisResult] = useState<unknown>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [billingError, setBillingError] = useState(false);
   const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
   const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
@@ -280,6 +281,7 @@ function Index() {
     setAnalysing(true);
     setAnalysisResult(null);
     setAnalysisError(null);
+    setBillingError(false);
     setAnalysisRaw(null);
     setTokenUsage(null);
 
@@ -321,6 +323,13 @@ Start your response with { and end with }.`;
       // `res.ok` directly in that case throws "Cannot read properties of
       // undefined (reading 'ok')".
       if (!res || !res.ok) {
+        if ((res as { error_type?: string } | null)?.error_type === "BILLING") {
+          setBillingError(true);
+          toast.error("Anthropic billing issue", {
+            description: "Account credit balance is too low.",
+          });
+          return;
+        }
         const msg =
           res?.error ??
           "The analysis service did not return a response. It may have timed out — please try again.";
@@ -847,6 +856,22 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
+                    {isActive && billingError && (
+                      <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
+                        <p className="text-base font-bold">
+                          ⚠️ Anthropic Billing Issue
+                        </p>
+                        <p className="mt-1 text-sm">
+                          Your account credit balance is too low to run analysis.
+                          Add credits at{" "}
+                          <span className="font-semibold underline">
+                            console.anthropic.com
+                          </span>{" "}
+                          before trying again.
+                        </p>
+                      </div>
+                    )}
+
                     {isActive && analysisError && (
                       <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
                         {analysisError}
@@ -1096,19 +1121,35 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
         {/* GAP 3 */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
-            dimension_weights_validation.mismatch_flags
+            dimension_weights_validation
           </div>
           {dw ? (
-            dw.mismatch_flags.length === 0 ? (
-              <div className="text-signal-blue">
-                [] — all weights matched expected conditions
+            dw.validation_ran === false ? (
+              <div className="space-y-1">
+                <span className="inline-block rounded bg-destructive/20 px-2 py-0.5 font-semibold text-destructive">
+                  NOT RUN — field missing from Claude output
+                </span>
+                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
+                  {dw.mismatch_flags.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
               </div>
+            ) : dw.mismatch_flags.length === 0 ? (
+              <span className="inline-block rounded bg-signal-blue/20 px-2 py-0.5 font-semibold text-signal-blue">
+                PASSED — weights match expected conditions
+              </span>
             ) : (
-              <ul className="list-disc space-y-0.5 pl-5 text-destructive">
-                {dw.mismatch_flags.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
+              <div className="space-y-1">
+                <span className="inline-block rounded bg-accent-amber/20 px-2 py-0.5 font-semibold text-accent-amber">
+                  MISMATCH DETECTED
+                </span>
+                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
+                  {dw.mismatch_flags.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
             )
           ) : (
             <div className="text-slate">not present in output</div>

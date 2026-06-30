@@ -576,6 +576,7 @@ export const validateDimensionWeights = (inputs: {
     expected_weights: expected,
     mismatch_flags: mismatchFlags,
     sum_valid: sumValid,
+    validation_ran: true,
   };
 };
 
@@ -789,6 +790,18 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
         validation.mismatch_flags.join(" ") +
         "]";
     }
+  } else {
+    // Field missing from Claude output — flag this explicitly rather than
+    // silently skipping validation, so the UI can show a NOT RUN state.
+    result.dimension_weights_validation = {
+      weights: null,
+      expected_weights: null,
+      mismatch_flags: [
+        "dimension_weights field was missing from Claude output — validation could not run. This indicates the system prompt instruction may not be reaching Claude correctly, or Claude omitted a required field.",
+      ],
+      sum_valid: false,
+      validation_ran: false,
+    };
   }
 
   // 6 — Overround + true implied per outcome

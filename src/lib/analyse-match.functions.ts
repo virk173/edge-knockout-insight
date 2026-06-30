@@ -84,6 +84,21 @@ export const analyseMatch = createServerFn({ method: "POST" })
 
     if (!response.ok) {
       console.error("analyse-match: Anthropic API error", response.status, payload);
+      const apiError = (payload as { error?: { type?: string; message?: string } } | null)?.error;
+      if (
+        response.status === 400 &&
+        apiError?.type === "invalid_request_error" &&
+        typeof apiError?.message === "string" &&
+        apiError.message.toLowerCase().includes("credit balance")
+      ) {
+        return {
+          ok: false as const,
+          error_type: "BILLING" as const,
+          error:
+            "Anthropic account credit balance is too low. Add credits at console.anthropic.com/settings/billing before running analysis.",
+          status: 400,
+        };
+      }
       if (response.status === 429) {
         return { ok: false as const, error: "Rate limit exceeded. Please try again shortly.", status: 429 };
       }
