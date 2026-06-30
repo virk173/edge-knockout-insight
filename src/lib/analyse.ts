@@ -2016,6 +2016,9 @@ export async function collectMatchData(
     debugEntries: opts.debug ? localDebug : undefined,
     deadRubberTriggered,
     deadRubberFlagged,
+    historicalCaveatEligible,
+    historicalCaveatReason,
+
   };
 }
 
