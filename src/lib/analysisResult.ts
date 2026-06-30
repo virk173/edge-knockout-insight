@@ -290,6 +290,11 @@ export interface AnalysisResult {
   markets_evaluated?: string[];
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
+  // Validated / normalized fields (computed app-side, see calculate.ts).
+  model_probabilities?: ModelProbabilities;
+  data_quality_flags?: string[];
+  dimension_weights?: DimensionWeights;
+  dimension_weights_validation?: DimensionWeightsValidation;
   analyst_note?: string;
   // Contextual factor inputs from Claude + computed adjustments (app code).
   context_inputs?: ContextInputs;
