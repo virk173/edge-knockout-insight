@@ -594,18 +594,99 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
-  // 4 — Confidence score
+  // GAP 1 — model probabilities must sum to 100 (proportional rescale).
+  if (result.model_probabilities) {
+    const validated = validateModelProbabilities({
+      home: num(result.model_probabilities.home) ?? 0,
+      draw: num(result.model_probabilities.draw) ?? 0,
+      away: num(result.model_probabilities.away) ?? 0,
+    });
+    result.model_probabilities = validated;
+    if (validated.was_normalized) {
+      result.data_quality_flags = result.data_quality_flags || [];
+      result.data_quality_flags.push(
+        `Model probabilities summed to ${validated.raw_sum.toFixed(1)}%, normalized to 100%.`,
+      );
+    }
+  }
+
+  // GAP 2 — ensemble alignment is recomputed from the three signals and
+  // OVERWRITES whatever Claude stated (single source of truth).
+  if (result.ensemble_check) {
+    const computed = calculateEnsembleAlignment({
+      signal_1_model: num(result.ensemble_check.signal_1_model) ?? 0,
+      signal_2_poisson: num(result.ensemble_check.signal_2_poisson) ?? 0,
+      signal_3_historical: num(result.ensemble_check.signal_3_historical) ?? 0,
+    });
+
+    result.ensemble_check.alignment = computed.alignment;
+    result.ensemble_check.confidence_impact = computed.confidence_impact.toString();
+    result.ensemble_check.note = computed.note;
+    result.ensemble_check.max_pairwise_diff = computed.max_pairwise_diff;
+
+    // Force data_quality PARTIAL on CONFLICT, matching existing rule.
+    if (computed.alignment === "CONFLICT" && result.data_quality === "FULL") {
+      result.data_quality = "PARTIAL";
+    }
+  }
+
+  // 4 — Confidence score. Pass the ensemble signals so computeConfidence
+  // uses the SAME calculateEnsembleAlignment() impact — no divergence.
   const cs = result.confidence_scores;
   if (cs?.confidence_inputs) {
-    const conf = computeConfidence(cs.confidence_inputs);
+    const conf = computeConfidence(
+      cs.confidence_inputs,
+      result.ensemble_check && {
+        signal_1_model: num(result.ensemble_check.signal_1_model),
+        signal_2_poisson: num(result.ensemble_check.signal_2_poisson),
+        signal_3_historical: num(result.ensemble_check.signal_3_historical),
+      },
+    );
     if (conf !== undefined) {
       cs.dimension_weighted_raw =
         num(cs.confidence_inputs.dimension_weighted_raw) ??
         cs.dimension_weighted_raw;
-      cs.adjustments = cs.confidence_inputs.adjustments ?? cs.adjustments;
+      cs.adjustments = conf.adjustments;
       cs.post_adjustment = conf.post_adjustment;
       cs.final_confidence = conf.final_confidence;
       cs.bayesian_applied = conf.bayesian_applied;
+    }
+  }
+
+  // GAP 3 — dimension weights validated against actual data conditions.
+  // Surfaced as a flag only; weights are NOT auto-corrected.
+  if (result.dimension_weights) {
+    const call4Count = result.tactical_analysis?.call4_fixture_count ?? 5;
+    const h2hPassed = !result.markets_rejected?.some((m) =>
+      (m?.market ?? "").includes("H2H"),
+    );
+    const criticalAbsence = !!result.player_intelligence?.absences?.some(
+      (a) => a?.classification === "CRITICAL",
+    );
+    const allFit =
+      (result.player_intelligence?.absences?.length ?? 0) === 0;
+
+    const validation = validateDimensionWeights({
+      weights: {
+        D1: num(result.dimension_weights.D1) ?? 0,
+        D2: num(result.dimension_weights.D2) ?? 0,
+        D3: num(result.dimension_weights.D3) ?? 0,
+        D4: num(result.dimension_weights.D4) ?? 0,
+        D5: num(result.dimension_weights.D5) ?? 0,
+        D6: num(result.dimension_weights.D6) ?? 0,
+      },
+      call4_fixture_count: call4Count,
+      h2h_gate_passed: h2hPassed,
+      critical_absence_present: criticalAbsence,
+      all_players_confirmed_fit: allFit,
+    });
+    result.dimension_weights_validation = validation;
+    if (validation.mismatch_flags.length > 0) {
+      result.key_risk_flag =
+        (result.key_risk_flag || "") +
+        " [WEIGHT VALIDATION: " +
+        validation.mismatch_flags.join(" ") +
+        "]";
     }
   }
 
