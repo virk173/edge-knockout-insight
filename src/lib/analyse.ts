@@ -1841,31 +1841,44 @@ export async function collectMatchData(
       const tag = `attempt ${attempt + 1}/${maxAttempts}`;
       if (state === "POPULATED") {
         console.log(
-          `[S3 lineups] LINEUP CONFIRMED AND POPULATED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}).`,
+          `[S3 lineups] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — starting_xi populated for both teams.`,
         );
         return payload;
       }
       if (state === "PROPAGATING") {
         console.warn(
-          `[S3 lineups] LINEUP ANNOUNCED BUT PROPAGATING for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — confirmed/full squad present ` +
-            `but starting_xi not split out yet. Will re-check near kickoff (T-15).`,
+          `[S3 lineups] State 2 LINEUP PROPAGATING for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — confirmed=true but starting_xi ` +
+            `still empty (data being ingested). Will retry then fall back to API-Football.`,
         );
       } else {
         console.warn(
-          `[S3 lineups] LINEUP NOT YET ANNOUNCED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — endpoint empty/404.`,
+          `[S3 lineups] State 1 LINEUP NOT ANNOUNCED for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not published yet.`,
         );
       }
       if (attempt < maxAttempts - 1) await sleep(60000);
     }
+
+    // TheStatsAPI never reached POPULATED within the retry window — hand off to
+    // the API-Football lineup fallback (per spec: State 2 → fall back to AF).
+    const afLineup = await fetchApiFootballLineupFallback(match);
+    if (afLineup) {
+      lastLineupState = "POPULATED";
+      console.log(
+        `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
+          `${match.home} vs ${match.away} (TheStatsAPI was ${state}).`,
+      );
+      return afLineup;
+    }
+
     // Carry the resolved state in the thrown message so the caller knows whether
-    // this is NOT_ANNOUNCED vs PROPAGATING.
+    // this is NOT_ANNOUNCED vs PROPAGATING (and that the AF fallback was empty too).
     throw new Error(
       state === "PROPAGATING"
-        ? "LINEUP ANNOUNCED BUT PROPAGATING — confirmed but starting_xi not yet populated."
-        : "LINEUP NOT YET ANNOUNCED — lineups not published yet (empty/404).",
+        ? "LINEUP PROPAGATING — confirmed=true but starting_xi never populated; API-Football fallback also empty."
+        : "LINEUP NOT ANNOUNCED — lineups not published yet (404); API-Football fallback also empty.",
     );
   });
 
