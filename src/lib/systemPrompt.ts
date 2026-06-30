@@ -1,4 +1,4 @@
-// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.3
+// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.6
 //
 // IMPORTANT: This file is the single source of truth for the Claude system
 // prompt. It is intentionally a large template literal. The string contains no
@@ -52,7 +52,7 @@ uses it in any calculation.
 
 ════════════════════════════════════════
 FIFA WORLD CUP 2026 — KNOCKOUT STAGE
-BETTING ENGINE v3.3
+BETTING ENGINE v3.6
 ════════════════════════════════════════
 
 ROLE
