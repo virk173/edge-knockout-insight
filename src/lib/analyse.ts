@@ -3,7 +3,11 @@
 
 import { computeStatus, type AnalysedMatch } from "./fixtures";
 import { apiFetch } from "./api-proxy.functions";
-import { detectDeadRubber, applyDeadRubberDiscount } from "./calculate";
+import {
+  detectDeadRubber,
+  applyDeadRubberDiscount,
+  WC2026_QUALIFICATION,
+} from "./calculate";
 import {
   getApiCallCount,
   incrementApiCallCount,
