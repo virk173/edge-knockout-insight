@@ -177,6 +177,13 @@ function Index() {
   // Debug-mode capture: raw HTTP calls + the formatted Claude input.
   const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
 
+  // Debug-mode two-step state: the data pipeline (Button 1) runs API calls and
+  // formatting only; "Send to Claude" (Button 2) reuses this cached data.
+  const [debugMatch, setDebugMatch] = useState<AnalysedMatch | null>(null);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineReady, setPipelineReady] = useState(false);
+  const [pipelineFetchedAt, setPipelineFetchedAt] = useState<Date | null>(null);
+
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Tracks fixtures we've already auto-refetched lineups for, so the timer
@@ -250,10 +257,9 @@ function Index() {
   }, [now, collection, activeMatchId, matches]);
 
   async function handleRun() {
-    if (debugMode) {
-      await handleRunDebug();
-      return;
-    }
+    // Debug mode uses the two-step buttons (Run Data Pipeline / Send to Claude),
+    // not this single button.
+    if (debugMode) return;
     setLoading(true);
     setError(null);
     try {
@@ -418,17 +424,24 @@ Start your response with { and end with }.`;
 
   // Debug Mode: run the full pipeline against a fixed real fixture
   // (South Africa vs Canada, June 28) instead of today's timing-gated matches.
-  async function handleRunDebug() {
-    setLoading(true);
+  //
+  // BUTTON 1 — Run Data Pipeline. Fetches all API-Football + TheStatsAPI data,
+  // formats the [CALL N … END CALL N] injection blocks, and caches everything
+  // for Button 2. Does NOT call Claude / consume any tokens.
+  async function handleRunDebugPipeline() {
+    setPipelineRunning(true);
     setError(null);
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
+    setTokenUsage(null);
     setFormattedDebug(null);
     setCollection(null);
     setCollectError(null);
+    setPipelineReady(false);
     try {
       const match = await resolveDebugFixture();
+      setDebugMatch(match);
       setMatches([match]);
       setActiveMatchId(match.id);
       setProgress({ step: 0, total: 11, label: "Starting data collection…" });
@@ -438,16 +451,40 @@ Start your response with { and end with }.`;
       setCollection(result);
       setProgress(null);
       setApiCalls(getApiCallCount());
-      await runClaudeAnalysis(match, result);
+
+      // Format the data that WOULD be sent to Claude — for display only.
+      let formattedData: string;
+      try {
+        formattedData = formatDataForClaude(result.callResults);
+      } catch (e) {
+        console.error("formatDataForClaude failed:", e);
+        formattedData = "No usable API data could be formatted for analysis.";
+      }
+      setFormattedDebug(formattedData);
+
+      setPipelineReady(true);
+      setPipelineFetchedAt(new Date());
+      toast.success("Pipeline complete — data ready for Claude");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error.";
-      console.error("Debug run failed:", err);
-      setError(`Debug analysis failed: ${friendlyError(msg)}`);
+      console.error("Debug pipeline failed:", err);
+      setError(`Debug pipeline failed: ${friendlyError(msg)}`);
       setProgress(null);
       setApiCalls(getApiCallCount());
     } finally {
-      setLoading(false);
+      setPipelineRunning(false);
     }
+  }
+
+  // BUTTON 2 — Send to Claude. Reuses the cached match + collection from the
+  // last pipeline run. Does NOT re-fetch any API data. Can be clicked multiple
+  // times to re-test against the same dataset.
+  async function handleSendDebugToClaude() {
+    if (!debugMatch || !collection) {
+      toast.error("Run the data pipeline first.");
+      return;
+    }
+    await runClaudeAnalysis(debugMatch, collection);
   }
 
   function handleResetBudget() {
@@ -556,34 +593,88 @@ Start your response with { and end with }.`;
       <main className="flex flex-1 flex-col items-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col items-center gap-6">
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleRun}
-                disabled={loading || analysing}
-                className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading
-                  ? "Analysing…"
-                  : debugMode
-                    ? "Run Debug Analysis"
-                    : "Run Analysis"}
-              </button>
+            {debugMode ? (
+              <>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunDebugPipeline}
+                    disabled={pipelineRunning || analysing}
+                    className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pipelineRunning ? "Running pipeline…" : "Run Data Pipeline"}
+                  </button>
 
-              {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
-              <div className="group relative">
+                  <button
+                    type="button"
+                    onClick={handleSendDebugToClaude}
+                    disabled={!pipelineReady || pipelineRunning || analysing}
+                    className="rounded-md border border-signal-blue bg-signal-blue/15 px-6 py-3 text-sm font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {analysing
+                      ? "Sending to Claude…"
+                      : pipelineReady
+                        ? "Send to Claude (data ready)"
+                        : "Run pipeline first"}
+                  </button>
+
+                  {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      aria-label="How to use this tool"
+                      className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                    >
+                      <HelpCircle size={16} />
+                    </button>
+                    <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                      {HOW_TO_TEXT}
+                    </div>
+                  </div>
+                </div>
+                <span className="font-mono text-xs">
+                  Pipeline data:{" "}
+                  <span
+                    className={pipelineReady ? "text-signal-green" : "text-slate"}
+                  >
+                    {pipelineReady ? "READY" : "NOT READY"}
+                  </span>
+                  {pipelineFetchedAt && (
+                    <>
+                      {" "}
+                      <span className="text-slate">
+                        · Last fetched: {pipelineFetchedAt.toLocaleTimeString()}
+                      </span>
+                    </>
+                  )}
+                </span>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  aria-label="How to use this tool"
-                  className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                  onClick={handleRun}
+                  disabled={loading || analysing}
+                  className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <HelpCircle size={16} />
+                  {loading ? "Analysing…" : "Run Analysis"}
                 </button>
-                <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                  {HOW_TO_TEXT}
+
+                {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
+                <div className="group relative">
+                  <button
+                    type="button"
+                    aria-label="How to use this tool"
+                    className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+                  >
+                    <HelpCircle size={16} />
+                  </button>
+                  <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                    {HOW_TO_TEXT}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
             <span className="font-mono text-xs text-slate">
               API calls used today:{" "}
               <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
