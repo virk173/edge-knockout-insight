@@ -821,6 +821,16 @@ tactical_analysis:
   expected_cards_range,
   goals_model_direction,
   formation_change_impact
+context_inputs:
+  venue_name: string
+  home_last_fixture_date: ISO-8601
+  away_last_fixture_date: ISO-8601
+  home_avg_altitude: number
+  away_avg_altitude: number
+  home_last_venue_tz: number
+  away_last_venue_tz: number
+  (app computes altitude_adjustment,
+   rest_disparity and travel_burden)
 player_intelligence:
   absences array each with:
     player, team,
