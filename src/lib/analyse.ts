@@ -1195,7 +1195,7 @@ function sideXICount(side: unknown): number {
 // state the spec says should not exist. This helper is the single source of
 // truth for "are the lineups genuinely populated?", used by both the main
 // pipeline (CALL 6 / S3) and the refetch path so the behaviour can't drift.
-function lineupsArePopulated(payload: unknown): boolean {
+export function lineupsArePopulated(payload: unknown): boolean {
   const node = getField(payload, ["data"]) ?? payload;
   const homeXI = sideXICount(getField(node, ["home"]));
   const awayXI = sideXICount(getField(node, ["away"]));
