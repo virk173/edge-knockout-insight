@@ -415,5 +415,37 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // 7, 8 & 9 — Contextual factors (altitude, rest, travel).
+  // All derived from context_inputs + static venue data — ZERO new API calls.
+  const ci = result.context_inputs;
+  if (ci) {
+    const venue = ci.venue_name ? getVenueData(ci.venue_name) : null;
+
+    if (venue) {
+      result.altitude_adjustment = calculateAltitudeAdjustment({
+        venue_altitude_m: venue.altitude_m,
+        home_team_last5_avg_altitude: num(ci.home_avg_altitude) ?? 0,
+        away_team_last5_avg_altitude: num(ci.away_avg_altitude) ?? 0,
+      });
+
+      result.travel_burden = calculateTravelBurden({
+        venue_timezone_offset: venue.timezone_offset_hours,
+        home_last_venue_timezone:
+          num(ci.home_last_venue_tz) ?? venue.timezone_offset_hours,
+        away_last_venue_timezone:
+          num(ci.away_last_venue_tz) ?? venue.timezone_offset_hours,
+      });
+    }
+
+    if (ci.home_last_fixture_date && ci.away_last_fixture_date) {
+      result.rest_disparity = calculateRestDisparity({
+        home_last_fixture_date: ci.home_last_fixture_date,
+        away_last_fixture_date: ci.away_last_fixture_date,
+        kickoff_utc: result.kickoff_UTC ?? "",
+        current_round: result.round ?? "",
+      });
+    }
+  }
+
   return result;
 }
