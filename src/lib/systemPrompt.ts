@@ -811,6 +811,25 @@ confidence_scores:
       type and delta
   (app computes post_adjustment,
    bayesian_applied and final_confidence)
+dimension_weights:
+  D1: number
+  D2: number
+  D3: number
+  D4: number
+  D5: number
+  D6: number
+  adjustment_reason: string or null
+  (these SIX numbers MUST sum to 100;
+   these are OUTPUT INPUTS — you
+   determine which dimension weights
+   apply per the Section 4 rules
+   (default 35/25/20/10/5/5, with
+   adjustments for fewer than 3 fixtures
+   in C4, a failed H2H gate, a critical
+   absence, or all players confirmed
+   fit) and output the SIX INDIVIDUAL
+   NUMBERS you actually used — not just
+   the blended dimension_weighted_raw)
 tactical_analysis:
   formation_home, formation_away,
   formation_home_assumed,
