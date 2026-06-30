@@ -423,7 +423,7 @@ Start your response with { and end with }.`;
   }
 
   // Debug Mode: run the full pipeline against a fixed real fixture
-  // (South Africa vs Canada, June 28) instead of today's timing-gated matches.
+  // (Germany vs Paraguay, June 29) instead of today's timing-gated matches.
   //
   // BUTTON 1 — Run Data Pipeline. Fetches all API-Football + TheStatsAPI data,
   // formats the [CALL N … END CALL N] injection blocks, and caches everything
@@ -684,7 +684,7 @@ Start your response with { and end with }.`;
           {debugMode && (
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex-1 rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
-                REAL API TEST — South Africa vs Canada June 28. Full pipeline
+                REAL API TEST — Germany vs Paraguay June 29. Full pipeline
                 verification.
               </div>
               <button

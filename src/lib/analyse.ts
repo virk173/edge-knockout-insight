@@ -2095,13 +2095,15 @@ export async function refetchLineups(match: AnalysedMatch): Promise<CallResult> 
 
 
 // DEBUG MODE — resolve a fixed real fixture for testing the full pipeline.
-// South Africa vs Canada (2026-06-28). Fetches the real fixture from
+// Germany vs Paraguay (2026-06-29, Round of 32). Fetches the real fixture from
 // API-Football for that date so collectMatchData can run against live data.
+// Fixture/match IDs are NOT hardcoded — resolved via the same C1 (API-Football)
+// and S0 (TheStatsAPI) lookup path used for any normal match.
 // ============================================================================
 
-export const DEBUG_FIXTURE_DATE = "2026-06-28";
-const DEBUG_TEAM_A = "south africa";
-const DEBUG_TEAM_B = "canada";
+export const DEBUG_FIXTURE_DATE = "2026-06-29";
+const DEBUG_TEAM_A = "germany";
+const DEBUG_TEAM_B = "paraguay";
 
 interface AfFixtureItem {
   fixture?: {
@@ -2138,7 +2140,7 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
 
   if (!item || !item.fixture?.id || !item.teams?.home?.id || !item.teams?.away?.id) {
     throw new Error(
-      `Debug fixture "South Africa vs Canada" not found in API-Football for ${DEBUG_FIXTURE_DATE}.`,
+      `Debug fixture "Germany vs Paraguay" not found in API-Football for ${DEBUG_FIXTURE_DATE}.`,
     );
   }
 
@@ -2149,8 +2151,8 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
 
   return {
     id: item.fixture.id,
-    home: item.teams.home.name ?? "South Africa",
-    away: item.teams.away.name ?? "Canada",
+    home: item.teams.home.name ?? "Germany",
+    away: item.teams.away.name ?? "Paraguay",
     homeId: item.teams.home.id,
     awayId: item.teams.away.id,
     kickoffUtc,
