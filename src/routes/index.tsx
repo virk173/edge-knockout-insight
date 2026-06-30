@@ -938,13 +938,14 @@ Start your response with { and end with }.`;
             matches.filter((m) => !m.isTomorrow).length > 0 &&
             matches
               .filter((m) => !m.isTomorrow)
-              .every((m) => m.status === "SKIP") && (
+              .every((m) => m.blocked) && (
               <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
-                All of today's matches have already kicked off. Come back
+                All of today's matches are in progress or finished. Come back
                 tomorrow.
                 {"\n"}Next matches: {nextMatchesText(matches, now)}
               </div>
             )}
+
 
           {matches && matches.length > 0 && (
             <ul className="flex w-full flex-col gap-3">
