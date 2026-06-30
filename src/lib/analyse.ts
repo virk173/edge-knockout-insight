@@ -1376,6 +1376,7 @@ async function computeTeamDeadRubber(
       matchday: f.matchday,
       is_dead_rubber: r.is_dead_rubber,
       reason: r.reason,
+      comparison: r.comparison,
     });
   }
 
