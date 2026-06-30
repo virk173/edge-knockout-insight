@@ -386,13 +386,27 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
 }
 
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
-// On HTTP 429 (rate limit) we back off and retry up to 3 times with escalating
-// waits (3s, 6s, 9s); on 404 we return null (used for lineups "not announced
-// yet"). Other failures throw with detail.
+//
+// Throttling contract (fixes the "too many requests" burst errors):
+//   - Every call logs "TheStatsAPI call {label} starting at {timestamp}" so the
+//     console shows exactly how fast calls fire.
+//   - On HTTP 429: log the error body + Retry-After header, wait 3s, retry ONCE.
+//     If it 429s again the error is thrown so the caller marks that single call
+//     EMPTY/FAILED and the pipeline continues (it does not block everything).
+//   - After EVERY call we wait STATSAPI_DELAY_MS (400ms) so the next sequential
+//     TheStatsAPI call is spaced out. Callers must never run saGet in parallel.
+//   - On 404 we return null (used for lineups "not announced yet").
 async function saGet(path: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
+  const label = currentDebugCall ?? "?";
 
-  const attempt = async (): Promise<{ ok: boolean; status: number | string; statusText?: string; json: unknown }> => {
+  const attempt = async (): Promise<{
+    ok: boolean;
+    status: number | string;
+    statusText?: string;
+    retryAfter?: string | null;
+    json: unknown;
+  }> => {
     try {
       return await apiFetch({ data: { provider: "statsapi", url } });
     } catch (err) {
@@ -401,13 +415,30 @@ async function saGet(path: string): Promise<unknown> {
     }
   };
 
+  console.log(`TheStatsAPI call ${label} starting at ${new Date().toISOString()}`);
   let result = await attempt();
-  // Retry on rate-limit (429) with escalating backoff.
-  for (let attemptNo = 1; attemptNo <= 3 && !result.ok && String(result.status) === "429"; attemptNo++) {
-    await sleep(attemptNo * 3000);
+
+  // Rate limit: log the exact error + Retry-After, wait 3s, retry exactly once.
+  if (!result.ok && String(result.status) === "429") {
+    console.warn(
+      `[TheStatsAPI] 429 rate limit on call ${label}. ` +
+        `Retry-After: ${result.retryAfter ?? "(none)"} — waiting 3s then retrying once.`,
+      { status: result.status, body: result.json },
+    );
+    await sleep(3000);
+    console.log(`TheStatsAPI call ${label} retrying at ${new Date().toISOString()}`);
     result = await attempt();
+    if (!result.ok && String(result.status) === "429") {
+      console.error(
+        `[TheStatsAPI] 429 again on call ${label} after retry — marking this call ` +
+          `EMPTY/FAILED and continuing the pipeline.`,
+        { status: result.status, body: result.json },
+      );
+    }
   }
 
+  // Always space subsequent TheStatsAPI calls so a burst never trips the limiter.
+  await sleep(STATSAPI_DELAY_MS);
 
   // 404 = resource not yet available (e.g. lineups not announced). Treat as null.
   if (!result.ok && String(result.status) === "404") {
