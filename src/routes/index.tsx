@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import {
   runAnalysis,
   STATUS_META,
+  timingBand,
   type AnalysedMatch,
+  type TimingBand,
 } from "@/lib/fixtures";
 import {
   collectMatchData,
