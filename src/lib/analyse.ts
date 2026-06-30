@@ -23,7 +23,7 @@ const STATSAPI_SEASON_ID = "sn_118868";
 // TheStatsAPI trips a *burst* rate limit even though the per-minute quota is
 // high. Every TheStatsAPI call is therefore spaced by this fixed delay and run
 // strictly sequentially (never Promise.all) — see saGet below.
-const STATSAPI_DELAY_MS = 400;
+const STATSAPI_DELAY_MS = 600;
 
 // WC2026 group stage concluded the day before the Round of 32 began. Any last-5
 // fixture whose UTC date is strictly before this falls inside the group-stage
@@ -146,7 +146,11 @@ export function validateCall(callKey: string, data: unknown): unknown {
   if (data == null) return null;
 
   const d = data as Record<string, unknown>;
-  const resp = d.response as unknown;
+  // afGet already unwraps the API-Football `{ response: [...] }` envelope, so the
+  // stored data is usually the bare array/object. Be tolerant of BOTH shapes:
+  // treat the array itself as `resp` when data is already unwrapped, and fall
+  // back to d.response when a full envelope is somehow present.
+  const resp: unknown = Array.isArray(data) ? (data as unknown[]) : d.response;
   const firstResp =
     Array.isArray(resp) && resp.length ? (resp[0] as Record<string, unknown>) : undefined;
 
@@ -159,8 +163,9 @@ export function validateCall(callKey: string, data: unknown): unknown {
     "5": () => resp !== undefined,
     "6": () => !!(d.home || d.away || d.match_id) || resp !== undefined, // TheStatsAPI lineups shape
     "6B": () => !!(d.playerStatistics || d.playerCount),
-    "7": () => resp !== undefined,
-    "8": () => !!firstResp?.predictions,
+    // CALL 7 is a derived referee profile object (no envelope) OR a raw response.
+    "7": () => !!(d.referee || d.matches_officiated !== undefined) || resp !== undefined,
+    "8": () => !!firstResp?.predictions || resp !== undefined,
     "9A": () => resp !== undefined,
     "9B": () => d.bookmakerOdds !== undefined || d.data !== undefined || d.markets !== undefined,
     "10": () => resp !== undefined,
@@ -1756,124 +1761,10 @@ export async function collectMatchData(
     }
   }
 
-  // CALL 6B (S4): player stats for absences (TheStatsAPI). Runs AFTER S5 so the
-  // mandatory Pinnacle call gets rate-limit budget first. Triggers ONLY when
-  // CALL 5 (injuries) returned absences. Player ids come from the S3 lineup
-  // starting_xi. Best-effort: a per-call failure stops the loop but keeps any
-  // results already gathered. Recorded directly (not a numbered progress step).
-  {
-    currentDebugCall = "6B";
-    onProgress({
-      step: stepKeys.length,
-      total: TOTAL_STEPS,
-      label: "Fetching player stats (TheStatsAPI)...",
-    });
-    const injuries = callResults["5"];
-    const injuryItems =
-      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
-    const hasAbsences = injuryItems.length > 0;
-
-    const lineupResult = callResults["6"];
-    const playerIds =
-      lineupResult?.status === "SUCCESS"
-        ? extractLineupPlayerIds(lineupResult.data)
-        : [];
-
-    if (!hasAbsences) {
-      record(
-        "6B",
-        "Player stats (TheStatsAPI)",
-        "SKIPPED",
-        undefined,
-        "No absences in CALL 5 — player stats not triggered.",
-      );
-    } else if (playerIds.length === 0) {
-      record(
-        "6B",
-        "Player stats (TheStatsAPI)",
-        "EMPTY",
-        undefined,
-        "Absences present but no starting_xi player ids available from lineups.",
-      );
-    } else {
-      // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces a
-      // tight rate limit, so we space player-stat calls out generously.
-      const ids = playerIds.slice(0, 8);
-      const perPlayer: Record<string, unknown> = {};
-      let lastError: string | undefined;
-      // Each player call is spaced by STATSAPI_DELAY_MS inside saGet, so the
-      // loop runs sequentially with the standard 400ms gap between calls.
-      for (const pid of ids) {
-        try {
-          const raw = await saGet(
-            `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
-          );
-          if (!isEmptyResponse(raw)) {
-            perPlayer[pid] = extractPlayerStats(raw);
-          }
-        } catch (e) {
-          lastError = e instanceof Error ? e.message : String(e);
-          break; // stop on rate-limit / error; keep what we have
-        }
-      }
-      const anyData = Object.keys(perPlayer).length > 0;
-      record(
-        "6B",
-        "Player stats (TheStatsAPI)",
-        anyData ? "SUCCESS" : "EMPTY",
-        anyData
-          ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer }
-          : undefined,
-        anyData
-          ? undefined
-          : lastError ?? "No player statistics returned for the starting XI.",
-      );
-    }
-    currentDebugCall = null;
-  }
-
-
-
-
-
-
-  // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
-  const nr = nextRound(match.round);
-  if (counterWarning) {
-    record("10", "Next-round bracket", "SKIPPED", undefined,
-      "Skipped — daily API budget near limit (>=85).");
-  } else if (!nr) {
-    record("10", "Next-round bracket", "SKIPPED", undefined,
-      "Could not derive next round from current round.");
-  } else {
-    currentDebugCall = "10";
-    try {
-      const r = await afGet(
-        `/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`,
-        afKey,
-      );
-      if (isEmptyResponse(r)) {
-        record(
-          "10",
-          "Next-round bracket",
-          "EXPECTED_EMPTY",
-          r,
-          `Next round (${nr}) fixtures not yet determined. Bracket context unavailable.`,
-        );
-      } else {
-        record("10", "Next-round bracket", "SUCCESS", r);
-      }
-
-    } catch (e) {
-      record("10", "Next-round bracket", "FAILED", undefined,
-        e instanceof Error ? e.message : String(e));
-    } finally {
-      currentDebugCall = null;
-    }
-  }
-
   // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
-  // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists.
+  // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists, and
+  // BEFORE the optional CALL 6B player-stat burst so the mandatory all-groups
+  // standings call always gets TheStatsAPI rate-limit budget first.
   // Triggers ONLY when a last-5 fixture falls in the group-stage window; when it
   // fires, it makes exactly ONE new call (all-groups standings, cached once).
   // WC2026-aware: uses the cross-group 3rd-place table so a 3rd-placed team that
@@ -1986,6 +1877,128 @@ export async function collectMatchData(
       currentDebugCall = null;
     }
   }
+
+
+  // CALL 6B (S4): player stats for absences (TheStatsAPI). Runs AFTER S5 so the
+  // mandatory Pinnacle call gets rate-limit budget first. Triggers ONLY when
+  // CALL 5 (injuries) returned absences. Player ids come from the S3 lineup
+  // starting_xi. Best-effort: a per-call failure stops the loop but keeps any
+  // results already gathered. Recorded directly (not a numbered progress step).
+  {
+    currentDebugCall = "6B";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching player stats (TheStatsAPI)...",
+    });
+    const injuries = callResults["5"];
+    const injuryItems =
+      injuries?.status === "SUCCESS" ? extractArray(injuries.data) : [];
+    const hasAbsences = injuryItems.length > 0;
+
+    const lineupResult = callResults["6"];
+    const playerIds =
+      lineupResult?.status === "SUCCESS"
+        ? extractLineupPlayerIds(lineupResult.data)
+        : [];
+
+    if (!hasAbsences) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "SKIPPED",
+        undefined,
+        "No absences in CALL 5 — player stats not triggered.",
+      );
+    } else if (playerIds.length === 0) {
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        "EMPTY",
+        undefined,
+        "Absences present but no starting_xi player ids available from lineups.",
+      );
+    } else {
+      // Cap to keep the run bounded and throttle hard — TheStatsAPI enforces a
+      // tight burst rate limit, so we keep this optional player-stat burst small
+      // (it runs LAST, after the mandatory S5/S6 calls have taken their budget).
+      const ids = playerIds.slice(0, 4);
+      const perPlayer: Record<string, unknown> = {};
+      let lastError: string | undefined;
+      // Each player call is spaced by STATSAPI_DELAY_MS inside saGet, so the
+      // loop runs sequentially with the standard gap between calls.
+      for (const pid of ids) {
+        try {
+          const raw = await saGet(
+            `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
+          );
+          if (!isEmptyResponse(raw)) {
+            perPlayer[pid] = extractPlayerStats(raw);
+          }
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+          break; // stop on rate-limit / error; keep what we have
+        }
+      }
+      const anyData = Object.keys(perPlayer).length > 0;
+      record(
+        "6B",
+        "Player stats (TheStatsAPI)",
+        anyData ? "SUCCESS" : "EMPTY",
+        anyData
+          ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer }
+          : undefined,
+        anyData
+          ? undefined
+          : lastError ?? "No player statistics returned for the starting XI.",
+      );
+    }
+    currentDebugCall = null;
+  }
+
+
+
+
+
+
+  // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
+  const nr = nextRound(match.round);
+  if (counterWarning) {
+    record("10", "Next-round bracket", "SKIPPED", undefined,
+      "Skipped — daily API budget near limit (>=85).");
+  } else if (!nr) {
+    record("10", "Next-round bracket", "SKIPPED", undefined,
+      "Could not derive next round from current round.");
+  } else {
+    currentDebugCall = "10";
+    try {
+      const r = await afGet(
+        `/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`,
+        afKey,
+      );
+      if (isEmptyResponse(r)) {
+        record(
+          "10",
+          "Next-round bracket",
+          "EXPECTED_EMPTY",
+          r,
+          `Next round (${nr}) fixtures not yet determined. Bracket context unavailable.`,
+        );
+      } else {
+        record("10", "Next-round bracket", "SUCCESS", r);
+      }
+
+    } catch (e) {
+      record("10", "Next-round bracket", "FAILED", undefined,
+        e instanceof Error ? e.message : String(e));
+    } finally {
+      currentDebugCall = null;
+    }
+  }
+
+  // (S6 dead-rubber detection now runs earlier — before the optional CALL 6B
+  // player-stat burst — so the mandatory all-groups standings call is not
+  // starved of TheStatsAPI rate-limit budget. See the S6 block above.)
 
   // ---- Round of 32 historical base-rate staleness flag (system-prompt rule
   // 33). Only the structural precondition (round === Round of 32) is knowable
