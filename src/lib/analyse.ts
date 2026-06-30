@@ -1664,67 +1664,94 @@ export async function collectMatchData(
   // limit. Running the player-stat burst first would starve S5. See below.
 
 
-  // 7: referee profile.
-  // API-Football does NOT support a `referee` query filter ("The Referee field
-  // do not exist"). Instead we pull all completed World Cup fixtures for the
-  // season once (cached for the day), then filter client-side by the referee
-  // name extracted from CALL 1. Falls back to 2022 when <3 matches found, and
-  // marks UNKNOWN when no fixtures match either season.
+  // 7 (S7): referee profile.
+  // PRIMARY = S7: TheStatsAPI dedicated endpoint /football/matches/{id}/referee,
+  // which returns CAREER TOTALS (games, yellow_cards, red_cards). We derive
+  // avg_yellow_cards_per_game = yellow_cards / games from it. This single call
+  // is spaced by STATSAPI_DELAY_MS inside saGet, so it sits in the sequential
+  // TheStatsAPI throttle order like every other S-call.
+  // fouls-per-game and penalties-per-game are NOT in the referee endpoint, so we
+  // enrich those two fields (when the budget allows) from API-Football's
+  // completed-fixture history. FALLBACK: if S7 returns a null referee (none
+  // assigned) or fails, fall back entirely to the API-Football-derived profile.
   {
     stepKeys.push("7");
     onProgress({
       step: stepKeys.length,
       total: TOTAL_STEPS,
-      label: "Fetching referee profile... (9/11)",
+      label: "Fetching referee profile (S7)... (9/11)",
     });
-    if (counterCritical) {
-      record(
-        "7",
-        "Referee profile",
-        "SKIPPED",
-        undefined,
-        "Skipped — daily API budget critical (>=95). Referee strictness: UNKNOWN.",
-      );
-    } else if (!match.referee) {
-      record(
-        "7",
-        "Referee profile",
-        "EMPTY",
-        undefined,
-        "Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only.",
-      );
-    } else {
-      currentDebugCall = "7";
-      try {
-        // Skip the (per-fixture) statistics enrichment when the budget is near
-        // its limit — the completed-fixtures list itself is cheap + cached.
-        const profile = await buildRefereeProfile(match.referee, !counterWarning);
-        if (profile) {
-          record("7", "Referee profile", "SUCCESS", profile);
-        } else {
-          record(
-            "7",
-            "Referee profile",
-            "EMPTY",
-            undefined,
-            `Referee strictness: UNKNOWN. No WC2026/2022 fixtures found for referee "${match.referee}" — cards market estimates use historical base rate only.`,
-          );
+    currentDebugCall = "7";
+    try {
+      let profile: RefereeProfile | null = null;
+
+      // --- S7: TheStatsAPI dedicated referee endpoint (career totals) ---
+      const matchId = await ensureStatsApiMatchId();
+      if (matchId) {
+        try {
+          const refJson = await saGet(`/football/matches/${matchId}/referee`);
+          const refNode = getField(getField(refJson, ["data"]) ?? refJson, ["referee"]);
+          profile = buildRefereeProfileFromStatsApi(refNode);
+        } catch (e) {
+          console.warn("[analyse] S7 referee endpoint failed", e);
         }
-      } catch (e) {
+      }
+
+      // --- API-Football enrichment / fallback ---
+      // When S7 gave us a referee, only run the (costly) API-Football history if
+      // the budget allows, and use it solely to fill fouls/penalties (and yellows
+      // if S7 lacked games). When S7 had no referee, use API-Football entirely.
+      const afName =
+        (typeof profile?.referee === "string" && profile.referee) || match.referee;
+      if (afName && !counterCritical) {
+        try {
+          const afProfile = await buildRefereeProfile(afName, !counterWarning);
+          if (afProfile) {
+            if (!profile) {
+              profile = afProfile; // FALLBACK: S7 null → API-Football profile.
+            } else {
+              profile.avg_fouls_per_game = afProfile.avg_fouls_per_game;
+              profile.penalties_awarded = afProfile.penalties_awarded;
+              if (profile.avg_yellow_cards_per_game === "NOT_AVAILABLE") {
+                profile.avg_yellow_cards_per_game = afProfile.avg_yellow_cards_per_game;
+              }
+              profile.source =
+                "TheStatsAPI /referee (yellows from career) + API-Football history (fouls/penalties)";
+            }
+          }
+        } catch (e) {
+          console.warn("[analyse] CALL 7 API-Football referee enrichment failed", e);
+        }
+      }
+
+      if (profile) {
+        record("7", "Referee profile (S7 + API-Football)", "SUCCESS", profile);
+      } else {
         record(
           "7",
           "Referee profile",
           "EMPTY",
           undefined,
-          `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
-            e instanceof Error ? e.message : String(e)
-          })`,
+          `Referee strictness: UNKNOWN. S7 returned no referee and no API-Football fixtures matched "${
+            match.referee ?? "unknown"
+          }" — cards market estimates use historical base rate only.`,
         );
-      } finally {
-        currentDebugCall = null;
       }
+    } catch (e) {
+      record(
+        "7",
+        "Referee profile",
+        "EMPTY",
+        undefined,
+        `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+    } finally {
+      currentDebugCall = null;
     }
   }
+
 
   // 8: predictions (skipped if near daily cap)
   await runStep(
