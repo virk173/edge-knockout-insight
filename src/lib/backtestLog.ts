@@ -105,6 +105,18 @@ function makeId(): string {
 }
 
 /**
+ * Strip Claude's pre-computation placeholder so it can never reach the screen.
+ * Numeric fields (ev/confidence) are already number-guarded below, but Claude
+ * can also emit "PENDING_APP_COMPUTE" inside descriptive string fields
+ * (ensemble_alignment, sharp_signal). Blank those out defensively.
+ */
+function sanitizeString(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  if (v.includes("PENDING_APP_COMPUTE")) return undefined;
+  return v;
+}
+
+/**
  * Append a Claude `log_entry` to the persisted log. Returns the updated list.
  * Never overwrites existing entries.
  */
@@ -121,11 +133,13 @@ export function appendLogEntry(raw: RawLogEntry | null | undefined): LogEntry[] 
         stake: r?.stake,
         model_probability:
           typeof r?.model_probability === "number" ? r.model_probability : undefined,
+        // ev/confidence: only a real computed number is ever stored; the literal
+        // "PENDING_APP_COMPUTE" string is a non-number and becomes undefined.
         ev: typeof r?.ev === "number" ? r.ev : undefined,
         confidence:
           typeof r?.confidence === "number" ? r.confidence : undefined,
-        ensemble_alignment: r?.ensemble_alignment,
-        sharp_signal: r?.sharp_signal,
+        ensemble_alignment: sanitizeString(r?.ensemble_alignment),
+        sharp_signal: sanitizeString(r?.sharp_signal),
         // Honour an explicit outcome from the raw entry; default PENDING.
         outcome:
           r?.outcome === "WON" || r?.outcome === "LOST" ? r.outcome : "PENDING",

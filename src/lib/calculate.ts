@@ -1086,10 +1086,18 @@ export const detectDeadRubber = (
         .map((t) => t.points)
         .sort((a, b) => b - a)[cutoffIndex] ?? 0;
 
-    // Best case for the opponent: they win their final match (+3 points). If
-    // that still cannot reach the qualifying third-place cutoff, they were
-    // already eliminated via every pathway before kickoff.
-    const bestCaseOpponentPoints = opponent.points + 3;
+    // Best case for the opponent: they win every remaining group match
+    // (+3 each). When their group is already complete (matches_played ===
+    // group_total_matchdays) there are zero matches left, so the best case is
+    // simply their actual final points — adding a speculative +3 to a team with
+    // no games remaining would artificially inflate eliminated teams to the
+    // cutoff and flip a true elimination to a false "still alive" result.
+    const opponentMatchesRemaining =
+      inputs.group_total_matchdays - opponent.matches_played;
+    const groupComplete = opponentMatchesRemaining <= 0;
+    const bestCaseOpponentPoints = groupComplete
+      ? opponent.points // no games left — use actual final points
+      : opponent.points + opponentMatchesRemaining * 3; // best-case projection
 
     const mathematicallyEliminated =
       bestCaseOpponentPoints < cutoffThirdPlacePoints;
