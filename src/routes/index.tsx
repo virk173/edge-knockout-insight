@@ -338,6 +338,7 @@ KICKOFF UTC: ${match.kickoffUtc}
 CURRENT TIME UTC: ${new Date().toISOString()}
 VENUE: ${match.venueName ?? "NOT_AVAILABLE"}
 VENUE CITY: ${match.venueCity ?? "NOT_AVAILABLE"}
+LINEUP STATUS: ${LINEUP_STATE_INFO[result.lineupState].label} — ${LINEUP_STATE_INFO[result.lineupState].note}${result.lineupState === "POPULATED" ? "" : " Apply the LINEUP-UNAVAILABLE confidence penalty; a PROPAGATING state (lineup confirmed to exist but XI not yet split out) warrants a SMALLER penalty than NOT_ANNOUNCED."}
 
 INJECTED API DATA:
 
