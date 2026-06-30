@@ -566,6 +566,30 @@ D3 — CONTEXT
   USA Canada Mexico crowd: +0.05
   No prior knockout experience: -0.04
 
+D3 CONTEXT — ADDITIONAL INPUTS:
+Output context_inputs object with:
+  venue_name: string from C1
+  home_last_fixture_date: ISO date
+    from C4 most recent fixture
+  away_last_fixture_date: ISO date
+    from C4 most recent fixture
+  home_avg_altitude: average venue
+    altitude of home team's last 5
+    fixtures if determinable, else 0
+  away_avg_altitude: same for away
+  home_last_venue_tz: timezone offset
+    of home team's previous venue
+    if determinable
+  away_last_venue_tz: same for away
+These are OUTPUT INPUTS ONLY. Do not
+calculate adjustments yourself.
+Application code computes:
+  altitude_adjustment
+  rest_disparity
+  travel_burden
+from these inputs using static venue
+data and arithmetic.
+
 D4 — INJURY
 Use Gap Score from C6B.
 Stacked floor x0.65 per player.
