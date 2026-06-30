@@ -957,6 +957,11 @@ SECTION 10 — ABSOLUTE RULES
     multiplier_inputs, confidence_inputs,
     overround_inputs). The application does
     all arithmetic for guaranteed accuracy.
+29. Output context_inputs accurately
+    from C1 and C4 data. Application
+    computes all altitude, rest, and
+    travel adjustments. Never compute
+    these adjustments yourself.
 
 ════════════════════════════════════════
 FEW-SHOT EXAMPLE
