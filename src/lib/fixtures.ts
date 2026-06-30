@@ -15,6 +15,8 @@ export interface Fixture {
   round: string | null;
   venueName: string | null;
   venueCity: string | null;
+  // API-Football fixture status short code (NS, 1H, HT, FT, AET, PEN, …).
+  statusShort: string;
 }
 
 export type MatchStatus =
@@ -28,7 +30,86 @@ export type MatchStatus =
 export interface AnalysedMatch extends Fixture {
   minutesUntilKickoff: number;
   status: MatchStatus;
+  // Whether pre-match analysis is blocked (match live / finished).
+  blocked: boolean;
 }
+
+// API-Football status short codes that mean the match is live / in progress.
+const LIVE_STATUSES = new Set([
+  "1H",
+  "HT",
+  "2H",
+  "ET",
+  "BT",
+  "P",
+  "SUSP",
+  "INT",
+  "LIVE",
+]);
+// Codes that mean the match has finished (or otherwise has no pre-match bets).
+const FINISHED_STATUSES = new Set(["FT", "AET", "PEN", "ABD", "AWD", "WO"]);
+
+// Whether pre-match analysis should be BLOCKED. Driven primarily by the
+// API-Football status (live / finished), with a kickoff-time safety net for the
+// case where the status feed lags behind the real kickoff.
+export function isMatchBlocked(
+  statusShort: string,
+  minutesUntilKickoff: number,
+): boolean {
+  if (LIVE_STATUSES.has(statusShort)) return true;
+  if (FINISHED_STATUSES.has(statusShort)) return true;
+  if (minutesUntilKickoff <= 0) return true;
+  return false;
+}
+
+export type TimingTone = "green" | "amber" | "red" | "slate" | "blocked";
+
+export interface TimingBand {
+  tone: TimingTone;
+  label: string;
+}
+
+// Warning-only timing band (never blocks pre-kickoff). Blocking is decided
+// separately by isMatchBlocked() using the API status.
+export function timingBand(
+  minutesUntilKickoff: number,
+  blocked: boolean,
+): TimingBand {
+  if (blocked) {
+    return {
+      tone: "blocked",
+      label: "Match in progress or finished — no pre-match bets available",
+    };
+  }
+  const m = minutesUntilKickoff;
+  if (m > 90) {
+    return {
+      tone: "slate",
+      label: "⏳ TOO EARLY — optimal window opens at T-90 (lineups not yet confirmed)",
+    };
+  }
+  if (m >= 75) {
+    return {
+      tone: "green",
+      label: "✅ OPTIMAL — lineups confirmed, full analysis window",
+    };
+  }
+  if (m >= 40) {
+    return { tone: "amber", label: "⚠️ VALID — within analysis window" };
+  }
+  if (m >= 20) {
+    return {
+      tone: "amber",
+      label: "⚠️ LATE — limited time to act after analysis completes",
+    };
+  }
+  return {
+    tone: "red",
+    label:
+      "🔴 VERY LATE — under 20 minutes to kickoff, act immediately if analysis recommends a bet",
+  };
+}
+
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
