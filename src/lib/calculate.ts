@@ -526,6 +526,8 @@ export const validateDimensionWeights = (inputs: {
 
 
 // ─────────────────────────────────────────────────────────────
+// Orchestrator
+// ─────────────────────────────────────────────────────────────
 /**
  * Takes Claude's raw JSON output and returns an enriched copy where every
  * quantitative field has been (re)computed from the raw *_inputs variables.
