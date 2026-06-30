@@ -444,7 +444,9 @@ Start your response with { and end with }.`;
     }
   }
 
-  async function handleAnalyseMatch(match: AnalysedMatch) {
+  // BUTTON 1 (normal mode) — Run Calls. Runs the full API pipeline only and
+  // caches the result for Button 2. Does NOT call Claude / consume any tokens.
+  async function handleRunCalls(match: AnalysedMatch) {
     setActiveMatchId(match.id);
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
@@ -454,6 +456,7 @@ Start your response with { and end with }.`;
     setAnalysisError(null);
     setAnalysisRaw(null);
     setFormattedDebug(null);
+    setTokenUsage(null);
     setProgress({ step: 0, total: 11, label: "Starting data collection…" });
 
     try {
@@ -463,12 +466,23 @@ Start your response with { and end with }.`;
       setCollection(result);
       setProgress(null);
       setApiCalls(getApiCallCount());
-      await runClaudeAnalysis(match, result);
+      toast.success("Calls complete — ready to analyse");
     } catch (e) {
       setCollectError(friendlyError(e instanceof Error ? e.message : "Data collection failed."));
       setProgress(null);
       setApiCalls(getApiCallCount());
     }
+  }
+
+  // BUTTON 2 (normal mode) — Analyse. Sends the cached pipeline data to Claude.
+  // Does NOT re-run any API calls; can be clicked repeatedly against the same
+  // cached dataset.
+  async function handleAnalyseCached(match: AnalysedMatch) {
+    if (activeMatchId !== match.id || !collection) {
+      toast.error("Run calls first.");
+      return;
+    }
+    await runClaudeAnalysis(match, collection);
   }
 
   // Debug Mode: run the full pipeline against a fixed real fixture
