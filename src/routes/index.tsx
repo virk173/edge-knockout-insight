@@ -1215,6 +1215,19 @@ function DebugReportView({ report }: { report: DebugReport }) {
         </span>
 
         <span className="text-slate">
+          Dead rubber check:{" "}
+          {report.deadRubberTriggered ? (
+            <span className="text-accent-amber">
+              {report.deadRubberFlagged} fixture(s) flagged across both teams
+            </span>
+          ) : (
+            <span className="text-slate">
+              NOT TRIGGERED — all last-5 fixtures are knockout stage
+            </span>
+          )}
+        </span>
+
+        <span className="text-slate">
           Ready for Claude:{" "}
           <span
             className={
