@@ -424,17 +424,24 @@ Start your response with { and end with }.`;
 
   // Debug Mode: run the full pipeline against a fixed real fixture
   // (South Africa vs Canada, June 28) instead of today's timing-gated matches.
-  async function handleRunDebug() {
-    setLoading(true);
+  //
+  // BUTTON 1 — Run Data Pipeline. Fetches all API-Football + TheStatsAPI data,
+  // formats the [CALL N … END CALL N] injection blocks, and caches everything
+  // for Button 2. Does NOT call Claude / consume any tokens.
+  async function handleRunDebugPipeline() {
+    setPipelineRunning(true);
     setError(null);
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisRaw(null);
+    setTokenUsage(null);
     setFormattedDebug(null);
     setCollection(null);
     setCollectError(null);
+    setPipelineReady(false);
     try {
       const match = await resolveDebugFixture();
+      setDebugMatch(match);
       setMatches([match]);
       setActiveMatchId(match.id);
       setProgress({ step: 0, total: 11, label: "Starting data collection…" });
@@ -444,16 +451,40 @@ Start your response with { and end with }.`;
       setCollection(result);
       setProgress(null);
       setApiCalls(getApiCallCount());
-      await runClaudeAnalysis(match, result);
+
+      // Format the data that WOULD be sent to Claude — for display only.
+      let formattedData: string;
+      try {
+        formattedData = formatDataForClaude(result.callResults);
+      } catch (e) {
+        console.error("formatDataForClaude failed:", e);
+        formattedData = "No usable API data could be formatted for analysis.";
+      }
+      setFormattedDebug(formattedData);
+
+      setPipelineReady(true);
+      setPipelineFetchedAt(new Date());
+      toast.success("Pipeline complete — data ready for Claude");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error.";
-      console.error("Debug run failed:", err);
-      setError(`Debug analysis failed: ${friendlyError(msg)}`);
+      console.error("Debug pipeline failed:", err);
+      setError(`Debug pipeline failed: ${friendlyError(msg)}`);
       setProgress(null);
       setApiCalls(getApiCallCount());
     } finally {
-      setLoading(false);
+      setPipelineRunning(false);
     }
+  }
+
+  // BUTTON 2 — Send to Claude. Reuses the cached match + collection from the
+  // last pipeline run. Does NOT re-fetch any API data. Can be clicked multiple
+  // times to re-test against the same dataset.
+  async function handleSendDebugToClaude() {
+    if (!debugMatch || !collection) {
+      toast.error("Run the data pipeline first.");
+      return;
+    }
+    await runClaudeAnalysis(debugMatch, collection);
   }
 
   function handleResetBudget() {
