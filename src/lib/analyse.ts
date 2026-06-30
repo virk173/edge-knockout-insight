@@ -10,12 +10,11 @@ import {
 } from "./calculate";
 import {
   getApiCallCount,
-  incrementApiCallCount,
   WARNING_THRESHOLD,
   CRITICAL_THRESHOLD,
 } from "./apiCounter";
+import { apiFootballGet } from "./apiFootball";
 
-const AF_BASE = "https://v3.football.api-sports.io";
 const SA_BASE = "https://api.thestatsapi.com/api";
 // Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
 const STATSAPI_COMPETITION_ID = "comp_6107";
@@ -324,7 +323,9 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "S7", api: "TheStatsAPI", endpoint: "/matches/{id}/referee (career totals) + API-Football fouls/penalties enrichment", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     // ---- API-Football group ----
     { callLabel: "CALL 3", api: "API-Football", endpoint: "/fixtures/headtohead", entryKey: "3", extracted: cr["3"]?.status === "SUCCESS", count: true },
-    { callLabel: "CALL 4", api: "API-Football", endpoint: "/fixtures (last 5 each team)", entryKey: "4", crKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-1", api: "API-Football", endpoint: "/fixtures (home last 5)", entryKey: "4-1", extracted: cr["4-1"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-2", api: "API-Football", endpoint: "/fixtures (away last 5)", entryKey: "4-2", extracted: cr["4-2"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4-3", api: "API-Football", endpoint: "/fixtures (last-5 ids batch)", entryKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
     
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
@@ -405,46 +406,17 @@ function replaceNulls(value: unknown): unknown {
   return value;
 }
 
-interface AfResponse {
-  errors?: unknown;
-  response?: unknown;
-}
-
-function afErrors(errors: unknown): string | null {
-  if (!errors) return null;
-  if (Array.isArray(errors)) return errors.length ? errors.join(", ") : null;
-  if (typeof errors === "object") {
-    const vals = Object.values(errors as Record<string, unknown>);
-    return vals.length ? vals.map(String).join(", ") : null;
-  }
-  if (typeof errors === "string") return errors.trim() ? errors : null;
-  return null;
-}
-
 // API-Football GET (via server proxy). Increments the daily counter on a
 // successful HTTP response. The `_key` arg is retained for call-site
 // compatibility but is unused — the key lives server-side.
 async function afGet(path: string, _key?: string): Promise<unknown> {
-  const url = `${AF_BASE}${path}`;
-  let result: { ok: boolean; status: number | string; statusText?: string; json: unknown };
-  try {
-    result = await apiFetch({ data: { provider: "apifootball", url } });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    debugSink?.push({ api: "API-Football", url, status: "network error", ok: false, json: null, error: msg, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`API-Football network error: ${msg}`);
-  }
-  if (!result || !result.ok) {
-    const status = result?.status ?? "no response";
-    debugSink?.push({ api: "API-Football", url, status, ok: false, json: null, error: result?.statusText, callLabel: currentDebugCall ?? undefined });
-    throw new Error(`API-Football ${status} ${result?.statusText ?? ""}`.trim());
-  }
-  incrementApiCallCount();
-  const json = (result.json ?? null) as AfResponse | null;
-  debugSink?.push({ api: "API-Football", url, status: result.status, ok: true, json, callLabel: currentDebugCall ?? undefined });
-  const err = afErrors(json?.errors);
-  if (err) throw new Error(err);
-  return json?.response ?? null;
+  const label = currentDebugCall ?? undefined;
+  return apiFootballGet(path, {
+    callLabel: label,
+    onDebug: (entry) => {
+      debugSink?.push({ ...entry, callLabel: label });
+    },
+  });
 }
 
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
@@ -1575,7 +1547,7 @@ export async function collectMatchData(
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
     }
-    currentDebugCall = key.startsWith("4") ? "4" : key;
+    currentDebugCall = key;
     try {
       const response = await fn();
       record(key, label, isEmptyResponse(response) ? "EMPTY" : "SUCCESS", response);
@@ -2284,9 +2256,15 @@ interface AfFixtureItem {
 }
 
 export async function resolveDebugFixture(): Promise<AnalysedMatch> {
-  const response = await afGet(
-    `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
-  );
+  currentDebugCall = "C1";
+  let response: unknown;
+  try {
+    response = await afGet(
+      `/fixtures?league=1&season=2026&date=${DEBUG_FIXTURE_DATE}`,
+    );
+  } finally {
+    currentDebugCall = null;
+  }
   const items = extractArray(response) as AfFixtureItem[];
 
   const matches = (a: string, b: string) => {
