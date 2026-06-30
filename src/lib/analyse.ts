@@ -862,6 +862,51 @@ interface RefereeProfile {
   avg_fouls_per_game: number | string;
   penalties_awarded: number | string;
   sample_fixtures_with_stats: number;
+  source?: string;
+  career_totals?: {
+    games: number | null;
+    yellow_cards: number | null;
+    red_cards: number | null;
+    yellow_red_cards: number | null;
+  };
+}
+
+// ---- S7: dedicated TheStatsAPI referee endpoint ----
+//
+// GET /football/matches/{match_id}/referee returns the assigned referee with
+// CAREER TOTALS (games, yellow_cards, red_cards, yellow_red_cards) — NOT
+// averages. We derive avg_yellow_cards_per_game = yellow_cards / games. The
+// endpoint does NOT expose fouls-per-game or penalties-per-game, so those stay
+// NOT_AVAILABLE here and are filled (when possible) from API-Football. `referee`
+// is null when no referee is assigned yet — caller falls back to API-Football.
+function buildRefereeProfileFromStatsApi(refNode: unknown): RefereeProfile | null {
+  const name = getField(refNode, ["name"]);
+  if (!name) return null;
+  const career = getField(refNode, ["career"]);
+  const games = toNum(getField(career, ["games"]));
+  const yellows = toNum(getField(career, ["yellow_cards"]));
+  const reds = toNum(getField(career, ["red_cards"]));
+  const yellowReds = toNum(getField(career, ["yellow_red_cards"]));
+  const avgYellow =
+    games && games > 0 && yellows != null
+      ? Math.round((yellows / games) * 100) / 100
+      : "NOT_AVAILABLE";
+  return {
+    referee: String(name),
+    matches_officiated: games ?? 0,
+    seasons_used: [],
+    avg_yellow_cards_per_game: avgYellow,
+    avg_fouls_per_game: "NOT_AVAILABLE",
+    penalties_awarded: "NOT_AVAILABLE",
+    sample_fixtures_with_stats: games ?? 0,
+    source: "TheStatsAPI /matches/{id}/referee (career totals)",
+    career_totals: {
+      games,
+      yellow_cards: yellows,
+      red_cards: reds,
+      yellow_red_cards: yellowReds,
+    },
+  };
 }
 
 // Build a referee profile from cached completed fixtures, optionally enriching
