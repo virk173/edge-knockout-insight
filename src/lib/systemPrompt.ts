@@ -1039,6 +1039,48 @@ SECTION 10 — ABSOLUTE RULES
     natural continuation of the existing
     analyst_note paragraph, never as
     bullet points or a separate field.
+33. HISTORICAL BASE RATE STALENESS
+    CAVEAT: signal_3_historical in the
+    ensemble_check is built from WC
+    1998-2022 data, an era with a 32-team
+    tournament format. WC2026 uses 48
+    teams with an additional knockout
+    round (Round of 32) and 8 third-place
+    qualifiers, which may alter
+    knockout-stage dynamics (more
+    mismatches in early knockout rounds,
+    different rest patterns, different
+    stakes distribution) in ways the
+    historical base rates do not reflect.
+    When ALL of the following are true:
+    (a) ensemble_check.alignment is
+        CONFLICT or MAJORITY (not TRIPLE
+        ALIGNED)
+    (b) signal_3_historical is the outlier
+        signal OR materially influences the
+        final recommendation
+    (c) the match is Round of 32
+        specifically (the round most
+        structurally different from the
+        pre-2026 format)
+    then include a brief caveat in
+    analyst_note such as: "Historical base
+    rate (signal 3) reflects pre-2026
+    32-team tournament structure — Round of
+    32 dynamics under the expanded 48-team
+    format are less proven and this signal
+    carries elevated uncertainty." Do NOT
+    include this caveat for Round of 16 or
+    later matches, since those rounds
+    existed in the pre-2026 format as well
+    and the historical base rates remain
+    structurally comparable. Like rules 31
+    and 32, this is at most one sentence
+    appended to the existing analyst_note
+    paragraph, only when (a)(b)(c) all
+    hold — never a blanket disclaimer.
+
+
 
 
 ════════════════════════════════════════
