@@ -281,6 +281,7 @@ function Index() {
     setAnalysing(true);
     setAnalysisResult(null);
     setAnalysisError(null);
+    setBillingError(false);
     setAnalysisRaw(null);
     setTokenUsage(null);
 
