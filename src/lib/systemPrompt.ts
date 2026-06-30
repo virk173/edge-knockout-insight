@@ -857,6 +857,11 @@ tier_1_anchor:
     model_probability, decimal_odds
   (app computes ev and ev_rating;
    odds mirrors decimal_odds)
+  pinnacle_odds: the Pinnacle decimal
+    price for THIS anchor market if
+    available in C9B/pinnacle data,
+    else null (app uses it to detect
+    Stake-anchoring bias)
   source_calls array, reasoning string
 tier_2_parlay:
   active boolean, skip_reason,
