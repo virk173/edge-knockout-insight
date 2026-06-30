@@ -1183,7 +1183,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
       <DebugCallGroup title="API-Football calls" rows={afRows} />
       {saRows.length > 0 && (
         <DebugCallGroup
-          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle, S6 dead-rubber standings)"
+          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle, S6 all-groups standings — 3rd-place-aware dead-rubber check)"
           rows={saRows}
         />
       )}
