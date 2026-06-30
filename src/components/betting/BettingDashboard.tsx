@@ -332,10 +332,17 @@ function Tier1Card({ result }: { result: AnalysisResult }) {
         </div>
       </div>
 
-
-
+      {(t.ev_confidence || t.pinnacle_check_note) && (
+        <EvConfidenceNote
+          confidence={t.ev_confidence}
+          note={t.pinnacle_check_note}
+          rawEv={t.raw_ev}
+          adjustedEv={t.ev}
+        />
+      )}
 
       <ExpandableText text={t.reasoning} />
+
 
       <a
         href="https://stake.com"
