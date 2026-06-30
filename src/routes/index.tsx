@@ -1336,6 +1336,29 @@ function DebugReportView({ report }: { report: DebugReport }) {
           </span>
         </span>
 
+        <span className="text-slate">
+          Lineup state:{" "}
+          <span
+            className={
+              report.lineupResolved ? "text-signal-green" : "text-signal-red"
+            }
+          >
+            {LINEUP_STATE_INFO[report.lineupState].label}
+          </span>
+          <span className="block pl-2 text-[11px] leading-snug text-slate">
+            {LINEUP_STATE_INFO[report.lineupState].note}
+          </span>
+          {!report.lineupResolved && (
+            <span className="block pl-2 text-[11px] leading-snug text-signal-red">
+              ⚠️ DATA QUALITY: Debug Mode runs against FINISHED matches, and per
+              the TheStatsAPI spec finished matches always have an official
+              lineup record available. A finished match still showing LINEUP
+              PENDING is a genuine data gap worth flagging — not something to
+              accept silently.
+            </span>
+          )}
+        </span>
+
 
         <span className="text-slate">
           Ready for Claude:{" "}
