@@ -15,6 +15,11 @@ const SA_BASE = "https://api.thestatsapi.com/api";
 // Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
 const STATSAPI_COMPETITION_ID = "comp_6107";
 const STATSAPI_SEASON_ID = "sn_118868";
+// TheStatsAPI trips a *burst* rate limit even though the per-minute quota is
+// high. Every TheStatsAPI call is therefore spaced by this fixed delay and run
+// strictly sequentially (never Promise.all) — see saGet below.
+const STATSAPI_DELAY_MS = 400;
+
 
 
 export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
