@@ -20,6 +20,9 @@ import type {
   AltitudeAdjustment,
   AnalysisResult,
   ConfidenceAdjustment,
+  DimensionWeights,
+  DimensionWeightsValidation,
+  ModelProbabilities,
   RestDisparity,
   TravelBurden,
 } from "@/lib/analysisResult";
@@ -88,22 +91,120 @@ export function computeGapScore(inputs?: {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 4 — Ensemble alignment (single source of truth)
+//   Derived purely from the three signal probabilities so the
+//   alignment label and confidence_impact can never disagree with
+//   the confidence-score math (computeConfidence calls this).
+// ─────────────────────────────────────────────────────────────
+export const calculateEnsembleAlignment = (signals: {
+  signal_1_model: number;
+  signal_2_poisson: number;
+  signal_3_historical: number;
+}): {
+  alignment: "TRIPLE ALIGNED" | "MAJORITY" | "CONFLICT";
+  max_pairwise_diff: number;
+  confidence_impact: number;
+  note: string;
+} => {
+  const s1 = signals.signal_1_model;
+  const s2 = signals.signal_2_poisson;
+  const s3 = signals.signal_3_historical;
+
+  const diff12 = Math.abs(s1 - s2);
+  const diff13 = Math.abs(s1 - s3);
+  const diff23 = Math.abs(s2 - s3);
+  const maxDiff = Math.max(diff12, diff13, diff23);
+
+  if (maxDiff <= 0.3) {
+    return {
+      alignment: "TRIPLE ALIGNED",
+      max_pairwise_diff: maxDiff,
+      confidence_impact: 5,
+      note: `All three signals within 0.3 of each other (max diff ${maxDiff.toFixed(
+        2,
+      )}). Confidence +5.`,
+    };
+  }
+
+  // count how many pairs are within 0.3
+  const pairsAligned = [diff12, diff13, diff23].filter((d) => d <= 0.3).length;
+
+  if (pairsAligned >= 1) {
+    return {
+      alignment: "MAJORITY",
+      max_pairwise_diff: maxDiff,
+      confidence_impact: 0,
+      note: `2 of 3 signals aligned within 0.3 (max diff ${maxDiff.toFixed(
+        2,
+      )}). No confidence change.`,
+    };
+  }
+
+  return {
+    alignment: "CONFLICT",
+    max_pairwise_diff: maxDiff,
+    confidence_impact: -5,
+    note: `All signals diverge above 0.3 (max diff ${maxDiff.toFixed(
+      2,
+    )}). Confidence -5, data_quality forced PARTIAL.`,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
 // 4 — Confidence score
 //   post_adj = raw + Σ(deltas)
 //   if post_adj > 75:  final = 75 + (post_adj − 75) × 0.40
 //   else:              final = post_adj
+//
+//   The ensemble-alignment delta is NOT trusted from Claude. When the
+//   three ensemble signals are supplied, computeConfidence calls
+//   calculateEnsembleAlignment() and substitutes its confidence_impact
+//   for any Claude-provided "ensemble" adjustment, so the confidence
+//   math and ensemble_check.alignment share one source of truth.
 // ─────────────────────────────────────────────────────────────
-export function computeConfidence(inputs?: {
-  dimension_weighted_raw?: number;
-  adjustments?: ConfidenceAdjustment[];
-}): { post_adjustment: number; final_confidence: number; bayesian_applied: boolean } | undefined {
+export function computeConfidence(
+  inputs?: {
+    dimension_weighted_raw?: number;
+    adjustments?: ConfidenceAdjustment[];
+  },
+  ensembleSignals?: {
+    signal_1_model?: number;
+    signal_2_poisson?: number;
+    signal_3_historical?: number;
+  },
+): {
+  post_adjustment: number;
+  final_confidence: number;
+  bayesian_applied: boolean;
+  adjustments: ConfidenceAdjustment[];
+  ensemble_impact?: number;
+} | undefined {
   if (!inputs) return undefined;
   const raw = num(inputs.dimension_weighted_raw);
   if (raw === undefined) return undefined;
-  const sum = (inputs.adjustments ?? []).reduce(
-    (acc, a) => acc + (num(a?.delta) ?? 0),
-    0,
-  );
+
+  let adjustments: ConfidenceAdjustment[] = [...(inputs.adjustments ?? [])];
+  let ensembleImpact: number | undefined;
+
+  const s1 = num(ensembleSignals?.signal_1_model);
+  const s2 = num(ensembleSignals?.signal_2_poisson);
+  const s3 = num(ensembleSignals?.signal_3_historical);
+  if (s1 !== undefined && s2 !== undefined && s3 !== undefined) {
+    const ensemble = calculateEnsembleAlignment({
+      signal_1_model: s1,
+      signal_2_poisson: s2,
+      signal_3_historical: s3,
+    });
+    ensembleImpact = ensemble.confidence_impact;
+    // Drop any Claude-supplied ensemble adjustment, then inject the
+    // single-source-of-truth value so it can never double-count or diverge.
+    adjustments = adjustments.filter(
+      (a) => !(a?.type ?? "").toLowerCase().includes("ensemble"),
+    );
+    adjustments.push({ type: "ensemble_alignment", delta: ensembleImpact });
+  }
+
+  const sum = adjustments.reduce((acc, a) => acc + (num(a?.delta) ?? 0), 0);
   const postAdj = raw + sum;
   const bayesian = postAdj > 75;
   const final = bayesian ? 75 + (postAdj - 75) * 0.4 : postAdj;
@@ -111,6 +212,8 @@ export function computeConfidence(inputs?: {
     post_adjustment: round(postAdj, 1),
     final_confidence: round(final, 1),
     bayesian_applied: bayesian,
+    adjustments,
+    ensemble_impact: ensembleImpact,
   };
 }
 
@@ -323,6 +426,106 @@ export const calculateTravelBurden = (inputs: {
 
 
 // ─────────────────────────────────────────────────────────────
+// Validation — model probabilities (proportional rescale to 100)
+// ─────────────────────────────────────────────────────────────
+export const validateModelProbabilities = (probs: {
+  home: number;
+  draw: number;
+  away: number;
+}): {
+  home: number;
+  draw: number;
+  away: number;
+  was_normalized: boolean;
+  raw_sum: number;
+} => {
+  const sum = probs.home + probs.draw + probs.away;
+
+  if (Math.abs(sum - 100) < 0.5) {
+    return {
+      ...probs,
+      was_normalized: false,
+      raw_sum: sum,
+    };
+  }
+
+  // Proportionally rescale to sum to 100
+  const scale = 100 / sum;
+  return {
+    home: Math.round(probs.home * scale * 100) / 100,
+    draw: Math.round(probs.draw * scale * 100) / 100,
+    away: Math.round(probs.away * scale * 100) / 100,
+    was_normalized: true,
+    raw_sum: sum,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
+// Validation — dimension weights (against actual trigger conditions)
+//   Surfaces mismatches as flags; does NOT auto-correct the weights
+//   because Claude's weighted reasoning already happened upstream.
+// ─────────────────────────────────────────────────────────────
+export const validateDimensionWeights = (inputs: {
+  weights: DimensionWeights;
+  call4_fixture_count: number;
+  h2h_gate_passed: boolean;
+  critical_absence_present: boolean;
+  all_players_confirmed_fit: boolean;
+}): DimensionWeightsValidation => {
+  // Determine expected weights from actual data conditions, independent
+  // of what Claude claimed.
+  const expected: DimensionWeights = {
+    D1: 35,
+    D2: 25,
+    D3: 20,
+    D4: 10,
+    D5: 5,
+    D6: 5,
+  };
+
+  if (inputs.call4_fixture_count < 3) {
+    expected.D2 = 15;
+    expected.D1 = 45;
+  }
+
+  if (!inputs.h2h_gate_passed) {
+    expected.D6 = 0;
+    expected.D1 = inputs.call4_fixture_count < 3 ? 45 : 40;
+  }
+
+  if (inputs.critical_absence_present) {
+    expected.D4 = 18;
+    expected.D2 = 17;
+  } else if (inputs.all_players_confirmed_fit) {
+    expected.D4 = 5;
+    expected.D1 = 40;
+  }
+
+  const mismatchFlags: string[] = [];
+  (Object.keys(expected) as (keyof DimensionWeights)[]).forEach((k) => {
+    if (Math.abs(inputs.weights[k] - expected[k]) > 2) {
+      mismatchFlags.push(
+        `${k}: Claude used ${inputs.weights[k]}, expected ${expected[k]} given data conditions.`,
+      );
+    }
+  });
+
+  const sum = Object.values(inputs.weights).reduce((a, b) => a + b, 0);
+  const sumValid = Math.abs(sum - 100) < 1;
+  if (!sumValid) {
+    mismatchFlags.push(`Dimension weights sum to ${sum}, not 100.`);
+  }
+
+  return {
+    weights: inputs.weights,
+    expected_weights: expected,
+    mismatch_flags: mismatchFlags,
+    sum_valid: sumValid,
+  };
+};
+
+
+// ─────────────────────────────────────────────────────────────
 // Orchestrator
 // ─────────────────────────────────────────────────────────────
 /**
@@ -391,18 +594,99 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
-  // 4 — Confidence score
+  // GAP 1 — model probabilities must sum to 100 (proportional rescale).
+  if (result.model_probabilities) {
+    const validated = validateModelProbabilities({
+      home: num(result.model_probabilities.home) ?? 0,
+      draw: num(result.model_probabilities.draw) ?? 0,
+      away: num(result.model_probabilities.away) ?? 0,
+    });
+    result.model_probabilities = validated;
+    if (validated.was_normalized) {
+      result.data_quality_flags = result.data_quality_flags || [];
+      result.data_quality_flags.push(
+        `Model probabilities summed to ${validated.raw_sum.toFixed(1)}%, normalized to 100%.`,
+      );
+    }
+  }
+
+  // GAP 2 — ensemble alignment is recomputed from the three signals and
+  // OVERWRITES whatever Claude stated (single source of truth).
+  if (result.ensemble_check) {
+    const computed = calculateEnsembleAlignment({
+      signal_1_model: num(result.ensemble_check.signal_1_model) ?? 0,
+      signal_2_poisson: num(result.ensemble_check.signal_2_poisson) ?? 0,
+      signal_3_historical: num(result.ensemble_check.signal_3_historical) ?? 0,
+    });
+
+    result.ensemble_check.alignment = computed.alignment;
+    result.ensemble_check.confidence_impact = computed.confidence_impact.toString();
+    result.ensemble_check.note = computed.note;
+    result.ensemble_check.max_pairwise_diff = computed.max_pairwise_diff;
+
+    // Force data_quality PARTIAL on CONFLICT, matching existing rule.
+    if (computed.alignment === "CONFLICT" && result.data_quality === "FULL") {
+      result.data_quality = "PARTIAL";
+    }
+  }
+
+  // 4 — Confidence score. Pass the ensemble signals so computeConfidence
+  // uses the SAME calculateEnsembleAlignment() impact — no divergence.
   const cs = result.confidence_scores;
   if (cs?.confidence_inputs) {
-    const conf = computeConfidence(cs.confidence_inputs);
+    const conf = computeConfidence(
+      cs.confidence_inputs,
+      result.ensemble_check && {
+        signal_1_model: num(result.ensemble_check.signal_1_model),
+        signal_2_poisson: num(result.ensemble_check.signal_2_poisson),
+        signal_3_historical: num(result.ensemble_check.signal_3_historical),
+      },
+    );
     if (conf !== undefined) {
       cs.dimension_weighted_raw =
         num(cs.confidence_inputs.dimension_weighted_raw) ??
         cs.dimension_weighted_raw;
-      cs.adjustments = cs.confidence_inputs.adjustments ?? cs.adjustments;
+      cs.adjustments = conf.adjustments;
       cs.post_adjustment = conf.post_adjustment;
       cs.final_confidence = conf.final_confidence;
       cs.bayesian_applied = conf.bayesian_applied;
+    }
+  }
+
+  // GAP 3 — dimension weights validated against actual data conditions.
+  // Surfaced as a flag only; weights are NOT auto-corrected.
+  if (result.dimension_weights) {
+    const call4Count = result.tactical_analysis?.call4_fixture_count ?? 5;
+    const h2hPassed = !result.markets_rejected?.some((m) =>
+      (m?.market ?? "").includes("H2H"),
+    );
+    const criticalAbsence = !!result.player_intelligence?.absences?.some(
+      (a) => a?.classification === "CRITICAL",
+    );
+    const allFit =
+      (result.player_intelligence?.absences?.length ?? 0) === 0;
+
+    const validation = validateDimensionWeights({
+      weights: {
+        D1: num(result.dimension_weights.D1) ?? 0,
+        D2: num(result.dimension_weights.D2) ?? 0,
+        D3: num(result.dimension_weights.D3) ?? 0,
+        D4: num(result.dimension_weights.D4) ?? 0,
+        D5: num(result.dimension_weights.D5) ?? 0,
+        D6: num(result.dimension_weights.D6) ?? 0,
+      },
+      call4_fixture_count: call4Count,
+      h2h_gate_passed: h2hPassed,
+      critical_absence_present: criticalAbsence,
+      all_players_confirmed_fit: allFit,
+    });
+    result.dimension_weights_validation = validation;
+    if (validation.mismatch_flags.length > 0) {
+      result.key_risk_flag =
+        (result.key_risk_flag || "") +
+        " [WEIGHT VALIDATION: " +
+        validation.mismatch_flags.join(" ") +
+        "]";
     }
   }
 

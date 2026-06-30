@@ -19,7 +19,7 @@ import {
   type ProgressUpdate,
 } from "@/lib/analyse";
 import type { AnalysisResult } from "@/lib/analysisResult";
-import { calculateResults } from "@/lib/calculate";
+import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
@@ -947,6 +947,12 @@ Start your response with { and end with }.`;
                   </pre>
                 </details>
               )}
+
+              {analysisResult !== null && (
+                <ValidationChecksView
+                  result={analysisResult as AnalysisResult}
+                />
+              )}
             </div>
           )}
 
@@ -972,6 +978,147 @@ Start your response with { and end with }.`;
     </div>
   );
 }
+
+function ValidationChecksView({ result }: { result: AnalysisResult }) {
+  const mp = result.model_probabilities;
+  const ec = result.ensemble_check;
+  const dw = result.dimension_weights_validation;
+
+  // Recompute the ensemble impact straight from the signals so we can show,
+  // side by side, that ensemble_check (and the confidence math, which uses the
+  // same helper) and a fresh calculateEnsembleAlignment() never disagree.
+  const recomputed =
+    ec &&
+    calculateEnsembleAlignment({
+      signal_1_model: Number(ec.signal_1_model ?? 0),
+      signal_2_poisson: Number(ec.signal_2_poisson ?? 0),
+      signal_3_historical: Number(ec.signal_3_historical ?? 0),
+    });
+
+  return (
+    <details className="rounded-md border border-border bg-background/60" open>
+      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
+        Validation Checks
+      </summary>
+      <div className="space-y-4 border-t border-border px-3 py-3 font-mono text-xs text-slate">
+        {/* GAP 1 */}
+        <div>
+          <div className="mb-1 font-semibold text-foreground">
+            model_probabilities
+          </div>
+          {mp ? (
+            <div className="space-y-0.5">
+              <div>
+                was_normalized:{" "}
+                <span className="text-accent-amber">
+                  {String(mp.was_normalized ?? false)}
+                </span>
+              </div>
+              <div>
+                raw_sum:{" "}
+                <span className="text-accent-amber">
+                  {typeof mp.raw_sum === "number"
+                    ? mp.raw_sum.toFixed(2)
+                    : "—"}
+                </span>
+              </div>
+              <div>
+                normalized: {Number(mp.home).toFixed(2)} /{" "}
+                {Number(mp.draw).toFixed(2)} / {Number(mp.away).toFixed(2)}{" "}
+                (sum{" "}
+                {(
+                  Number(mp.home) +
+                  Number(mp.draw) +
+                  Number(mp.away)
+                ).toFixed(2)}
+                )
+              </div>
+            </div>
+          ) : (
+            <div className="text-slate">not present in output</div>
+          )}
+        </div>
+
+        {/* GAP 2 */}
+        <div>
+          <div className="mb-1 font-semibold text-foreground">
+            ensemble_check.alignment
+          </div>
+          {ec ? (
+            <div className="space-y-0.5">
+              <div>
+                alignment (stored):{" "}
+                <span className="text-accent-amber">{ec.alignment}</span>
+              </div>
+              <div>
+                confidence_impact (stored):{" "}
+                <span className="text-accent-amber">
+                  {ec.confidence_impact}
+                </span>
+              </div>
+              <div>
+                recomputed alignment:{" "}
+                <span className="text-accent-amber">
+                  {recomputed?.alignment}
+                </span>{" "}
+                | confidence_impact:{" "}
+                <span className="text-accent-amber">
+                  {recomputed?.confidence_impact}
+                </span>{" "}
+                | maxDiff:{" "}
+                <span className="text-accent-amber">
+                  {recomputed?.max_pairwise_diff.toFixed(2)}
+                </span>
+              </div>
+              <div
+                className={
+                  recomputed &&
+                  ec.alignment === recomputed.alignment &&
+                  ec.confidence_impact ===
+                    recomputed.confidence_impact.toString()
+                    ? "text-signal-blue"
+                    : "text-destructive"
+                }
+              >
+                {recomputed &&
+                ec.alignment === recomputed.alignment &&
+                ec.confidence_impact ===
+                  recomputed.confidence_impact.toString()
+                  ? "✓ stored matches confidence-math source"
+                  : "✗ MISMATCH between stored and recomputed"}
+              </div>
+            </div>
+          ) : (
+            <div className="text-slate">not present in output</div>
+          )}
+        </div>
+
+        {/* GAP 3 */}
+        <div>
+          <div className="mb-1 font-semibold text-foreground">
+            dimension_weights_validation.mismatch_flags
+          </div>
+          {dw ? (
+            dw.mismatch_flags.length === 0 ? (
+              <div className="text-signal-blue">
+                [] — all weights matched expected conditions
+              </div>
+            ) : (
+              <ul className="list-disc space-y-0.5 pl-5 text-destructive">
+                {dw.mismatch_flags.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            )
+          ) : (
+            <div className="text-slate">not present in output</div>
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 
 const STATUS_DOT: Record<string, string> = {
   SUCCESS: "text-accent-amber",

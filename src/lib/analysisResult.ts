@@ -59,8 +59,34 @@ export interface EnsembleCheck {
   signal_1_model?: number;
   signal_2_poisson?: number;
   signal_3_historical?: number;
-  alignment?: string; // "TRIPLE" | "MAJORITY" | "CONFLICT"
+  alignment?: string; // "TRIPLE ALIGNED" | "MAJORITY" | "CONFLICT"
   confidence_impact?: string;
+  note?: string;
+  max_pairwise_diff?: number;
+}
+
+export interface ModelProbabilities {
+  home: number;
+  draw: number;
+  away: number;
+  was_normalized?: boolean;
+  raw_sum?: number;
+}
+
+export interface DimensionWeights {
+  D1: number;
+  D2: number;
+  D3: number;
+  D4: number;
+  D5: number;
+  D6: number;
+}
+
+export interface DimensionWeightsValidation {
+  weights: DimensionWeights;
+  expected_weights: DimensionWeights;
+  mismatch_flags: string[];
+  sum_valid: boolean;
 }
 
 export interface ConfidenceAdjustment {
@@ -100,6 +126,7 @@ export interface TacticalAnalysis {
   expected_cards_range?: string;
   goals_model_direction?: string; // "OVER" | "UNDER" | "NEUTRAL"
   formation_change_impact?: string;
+  call4_fixture_count?: number;
 }
 
 export interface Absence {
@@ -263,6 +290,11 @@ export interface AnalysisResult {
   markets_evaluated?: string[];
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
+  // Validated / normalized fields (computed app-side, see calculate.ts).
+  model_probabilities?: ModelProbabilities;
+  data_quality_flags?: string[];
+  dimension_weights?: DimensionWeights;
+  dimension_weights_validation?: DimensionWeightsValidation;
   analyst_note?: string;
   // Contextual factor inputs from Claude + computed adjustments (app code).
   context_inputs?: ContextInputs;
