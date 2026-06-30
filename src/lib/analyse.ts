@@ -1287,6 +1287,56 @@ export const LINEUP_STATE_INFO: Record<
   },
 };
 
+// API-Football lineup fallback. When TheStatsAPI is still PROPAGATING (or
+// NOT_ANNOUNCED) after the retry burst, pull the XI from API-Football's
+// /fixtures/lineups and normalise it into the same {home,away,starting_xi}
+// shape the rest of the pipeline reads, tagged source:"API-Football". Returns
+// null when API-Football has no usable (populated) XI either.
+async function fetchApiFootballLineupFallback(match: {
+  id: number;
+  homeId: number;
+  awayId: number;
+  home: string;
+  away: string;
+}): Promise<unknown | null> {
+  let raw: unknown;
+  try {
+    raw = await afGet(`/fixtures/lineups?fixture=${match.id}`);
+  } catch (e) {
+    console.warn("[S3 lineups/AF-fallback] request failed", e);
+    return null;
+  }
+  const entries = extractArray(raw);
+  if (entries.length < 2) return null;
+
+  const mapPlayer = (p: unknown) => {
+    const pl = getField(p, ["player"]) ?? p;
+    return {
+      id: String(getField(pl, ["id"]) ?? ""),
+      name: getField(pl, ["name"]) ?? null,
+      position: getField(pl, ["pos", "position"]) ?? null,
+      jersey_number: getField(pl, ["number", "jersey_number"]) ?? null,
+    };
+  };
+  const mapSide = (entry: unknown) => {
+    const team = getField(entry, ["team"]);
+    return {
+      id: String(getField(team, ["id"]) ?? ""),
+      name: getField(team, ["name"]) ?? null,
+      formation: getField(entry, ["formation"]) ?? null,
+      starting_xi: extractArray(getField(entry, ["startXI", "starting_xi"])).map(mapPlayer),
+      substitutes: extractArray(getField(entry, ["substitutes"])).map(mapPlayer),
+    };
+  };
+  const sides = entries.map(mapSide);
+  const home = sides.find((s) => s.id === String(match.homeId)) ?? sides[0];
+  const away = sides.find((s) => s.id === String(match.awayId)) ?? sides[1];
+
+  const payload = { confirmed: true, source: "API-Football", home, away };
+  if (!lineupsArePopulated(payload)) return null;
+  return payload;
+}
+
 // Extract the player-stat fields the GAP formula needs from a TheStatsAPI
 // /players/{id}/stats response.
 function extractPlayerStats(raw: unknown): Record<string, unknown> {
