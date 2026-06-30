@@ -85,6 +85,12 @@ function formatLocal(iso: string): string {
 // Lineups for WC2026 are expected to drop ~75 min before kickoff.
 const LINEUP_DROP_MIN = 75;
 
+// Option B — final near-kickoff re-check. Live observation (France vs Sweden)
+// showed TheStatsAPI only splits the starting XI out of the squad at ~T-0, long
+// after confirmed=true. T-15 is the latest point where a populated lineup still
+// meaningfully changes the analysis, so we fire one last re-check there.
+const LINEUP_FINAL_RECHECK_MIN = 15;
+
 // Minutes from now until kickoff for a fixture (can be negative).
 function minutesUntil(iso: string, now: Date): number {
   return Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
