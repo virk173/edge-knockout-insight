@@ -106,6 +106,9 @@ export interface CollectionResult {
   // Rule 33 — Round of 32 historical base-rate staleness flag.
   historicalCaveatEligible: boolean;
   historicalCaveatReason: string;
+  // Gap 6 — penalty-shootout detection from score.final_score (S0 lookup).
+  wentToPenalties: boolean;
+  penaltyShootoutNote: string;
 }
 
 
