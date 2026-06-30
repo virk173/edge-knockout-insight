@@ -86,6 +86,8 @@ export interface DebugReport {
   call10ExpectedEmpty: boolean;
   deadRubberTriggered: boolean;
   deadRubberFlagged: number;
+  historicalCaveatEligible: boolean;
+  historicalCaveatReason: string;
 }
 
 
@@ -101,6 +103,9 @@ export interface CollectionResult {
   // S6 dead-rubber detection summary (group-stage games in last-5 form).
   deadRubberTriggered: boolean;
   deadRubberFlagged: number;
+  // Rule 33 — Round of 32 historical base-rate staleness flag.
+  historicalCaveatEligible: boolean;
+  historicalCaveatReason: string;
 }
 
 
