@@ -923,22 +923,11 @@ Start your response with { and end with }.`;
 
           {matches &&
             matches.length > 0 &&
-            matches.filter((m) => !m.isTomorrow).length === 0 && (
-              <div className="w-full whitespace-pre-line rounded-md border border-border bg-card/40 px-4 py-4 text-center text-sm text-slate">
-                No World Cup matches scheduled today.
-                {"\n"}Next match: {nextMatchesText(matches, now)}
-              </div>
-            )}
-
-          {matches &&
-            matches.length > 0 &&
-            matches.filter((m) => !m.isTomorrow).length > 0 &&
-            matches
-              .filter((m) => !m.isTomorrow)
-              .every((m) => m.blocked) && (
+            matches.every((m) =>
+              isMatchBlocked(m.statusShort, minutesUntil(m.kickoffUtc, now)),
+            ) && (
               <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
-                All of today's matches are in progress or finished. Come back
-                tomorrow.
+                All scheduled matches are in progress or finished.
                 {"\n"}Next matches: {nextMatchesText(matches, now)}
               </div>
             )}

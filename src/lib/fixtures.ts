@@ -160,11 +160,17 @@ async function fetchFixturesForDate(
 }
 
 
+// Status is driven by real time-to-kickoff, NOT the UTC calendar day. A match
+// can kick off "tomorrow" in UTC (e.g. 01:00 UTC) while being only ~60 min away
+// — it must read as VALID/OPTIMAL, not a greyed-out "SCHEDULED". Only matches
+// that are genuinely far out (>6h) fall back to the SCHEDULED label.
+const SCHEDULED_HORIZON_MIN = 360;
+
 export function computeStatus(
   minutesUntilKickoff: number,
-  isTomorrow: boolean,
+  _isTomorrow: boolean,
 ): MatchStatus {
-  if (isTomorrow) return "TOMORROW";
+  if (minutesUntilKickoff > SCHEDULED_HORIZON_MIN) return "TOMORROW";
   if (minutesUntilKickoff > 90) return "TOO_EARLY";
   if (minutesUntilKickoff >= 75) return "OPTIMAL";
   if (minutesUntilKickoff >= 40) return "VALID";
