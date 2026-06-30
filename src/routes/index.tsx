@@ -423,7 +423,7 @@ Start your response with { and end with }.`;
   }
 
   // Debug Mode: run the full pipeline against a fixed real fixture
-  // (South Africa vs Canada, June 28) instead of today's timing-gated matches.
+  // (Germany vs Paraguay, June 29) instead of today's timing-gated matches.
   //
   // BUTTON 1 — Run Data Pipeline. Fetches all API-Football + TheStatsAPI data,
   // formats the [CALL N … END CALL N] injection blocks, and caches everything
