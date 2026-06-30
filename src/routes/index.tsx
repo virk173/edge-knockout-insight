@@ -1183,7 +1183,7 @@ function DebugReportView({ report }: { report: DebugReport }) {
       <DebugCallGroup title="API-Football calls" rows={afRows} />
       {saRows.length > 0 && (
         <DebugCallGroup
-          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle)"
+          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle, S6 dead-rubber standings)"
           rows={saRows}
         />
       )}
@@ -1212,6 +1212,19 @@ function DebugReportView({ report }: { report: DebugReport }) {
             {report.statsapiSucceeded}/{report.statsapiTotal}
           </span>{" "}
           calls succeeded
+        </span>
+
+        <span className="text-slate">
+          Dead rubber check:{" "}
+          {report.deadRubberTriggered ? (
+            <span className="text-accent-amber">
+              {report.deadRubberFlagged} fixture(s) flagged across both teams
+            </span>
+          ) : (
+            <span className="text-slate">
+              NOT TRIGGERED — all last-5 fixtures are knockout stage
+            </span>
+          )}
         </span>
 
         <span className="text-slate">
