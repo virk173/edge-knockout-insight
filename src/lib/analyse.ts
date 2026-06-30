@@ -2174,6 +2174,17 @@ export async function collectMatchData(
 
   const lineupResolved = callResults["6"]?.status === "SUCCESS";
 
+  // Gap 6 — penalty-shootout summary from the S0 lookup (final_score based).
+  const wentToPenalties = statsApiRef?.wentToPenalties ?? false;
+  const ps = statsApiRef?.penaltyShootout ?? null;
+  const penaltyShootoutNote =
+    wentToPenalties && ps
+      ? `WENT TO PENALTIES — normal time ${ps.normal_time.home}-${ps.normal_time.away}, ` +
+        `shootout ${ps.shootout_score.home}-${ps.shootout_score.away}, ` +
+        `aggregate (final_score) ${ps.aggregate.home}-${ps.aggregate.away}. ` +
+        `Detected via score.final_score differing from normal-time score (NOT a status string).`
+      : "Not a penalty shootout (final_score matches normal-time score, or no final_score present).";
+
   // Detach the debug sink so later non-debug runs are not recorded into it.
   debugSink = null;
 
@@ -2192,7 +2203,8 @@ export async function collectMatchData(
     deadRubberFlagged,
     historicalCaveatEligible,
     historicalCaveatReason,
-
+    wentToPenalties,
+    penaltyShootoutNote,
   };
 }
 
