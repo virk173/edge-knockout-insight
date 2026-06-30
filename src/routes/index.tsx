@@ -78,12 +78,7 @@ function formatUtc(date: Date): string {
 }
 
 function formatLocal(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
+  return formatMatchTime(iso) ?? "—";
 }
 
 // Lineups for WC2026 are expected to drop ~75 min before kickoff.
