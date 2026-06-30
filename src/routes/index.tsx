@@ -323,6 +323,13 @@ Start your response with { and end with }.`;
       // `res.ok` directly in that case throws "Cannot read properties of
       // undefined (reading 'ok')".
       if (!res || !res.ok) {
+        if ((res as { error_type?: string } | null)?.error_type === "BILLING") {
+          setBillingError(true);
+          toast.error("Anthropic billing issue", {
+            description: "Account credit balance is too low.",
+          });
+          return;
+        }
         const msg =
           res?.error ??
           "The analysis service did not return a response. It may have timed out — please try again.";
