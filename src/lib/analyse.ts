@@ -1114,12 +1114,36 @@ async function resolveStatsApiMatch(
   if (!found) return null;
   const id = getField(found, ["id", "match_id"]);
   if (id == null) return null;
+
+  // Gap 6: penalty-shootout detection from score.final_score vs normal time.
+  const score = getField(found, ["score"]);
+  const ntHome = toNum(getField(score, ["home"]));
+  const ntAway = toNum(getField(score, ["away"]));
+  const fs = getField(score, ["final_score"]);
+  const fsHome = toNum(getField(fs, ["home"]));
+  const fsAway = toNum(getField(fs, ["away"]));
+  let wentToPenalties = false;
+  let penaltyShootout: PenaltyShootout | null = null;
+  if (fs && fsHome != null && fsAway != null && (fsHome !== ntHome || fsAway !== ntAway)) {
+    wentToPenalties = true;
+    penaltyShootout = {
+      aggregate: { home: fsHome, away: fsAway },
+      normal_time: { home: ntHome, away: ntAway },
+      shootout_score: {
+        home: ntHome != null ? fsHome - ntHome : null,
+        away: ntAway != null ? fsAway - ntAway : null,
+      },
+    };
+  }
+
   return {
     id: String(id),
     homeTeamId: idOrNull(getField(getField(found, ["home_team"]), ["id", "team_id"])),
     awayTeamId: idOrNull(getField(getField(found, ["away_team"]), ["id", "team_id"])),
     homeTeamName: (getField(getField(found, ["home_team"]), ["name"]) as string) ?? null,
     awayTeamName: (getField(getField(found, ["away_team"]), ["name"]) as string) ?? null,
+    wentToPenalties,
+    penaltyShootout,
     raw: found,
   };
 }
