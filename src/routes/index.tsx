@@ -171,6 +171,7 @@ function Index() {
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
   const [analysisResult, setAnalysisResult] = useState<unknown>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [billingError, setBillingError] = useState(false);
   const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
   const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
 
