@@ -44,6 +44,7 @@ import {
 } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { analyseMatch } from "@/lib/analyse-match.functions";
+import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
@@ -78,12 +79,7 @@ function formatUtc(date: Date): string {
 }
 
 function formatLocal(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
+  return formatMatchTime(iso) ?? "—";
 }
 
 // Lineups for WC2026 are expected to drop ~75 min before kickoff.

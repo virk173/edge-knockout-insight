@@ -7,6 +7,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatMatchTime } from "@/lib/formatMatchTime";
 import {
   type AnalysisResult,
   type TierLeg,
@@ -172,8 +173,9 @@ function MatchHeader({ result }: { result: AnalysisResult }) {
             {result.match ?? "Match"}
           </h2>
           <p className="text-sm text-slate">
-            {[result.round, result.kickoff_local].filter(Boolean).join(" · ") ||
-              "—"}
+            {[result.round, formatMatchTime(result.kickoff_UTC) ?? result.kickoff_local]
+              .filter(Boolean)
+              .join(" · ") || "—"}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -1039,7 +1041,10 @@ function TopBets({ result }: { result: AnalysisResult }) {
   const noneActive = rows.length === 0;
   const dq = (result.data_quality ?? "").toUpperCase();
   const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
-  const subtitle = [result.match, result.round].filter(Boolean).join(" — ") || "—";
+  const subtitle =
+    [result.match, result.round, formatMatchTime(result.kickoff_UTC)]
+      .filter(Boolean)
+      .join(" — ") || "—";
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4 border-accent-amber/40")}>
