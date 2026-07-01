@@ -393,16 +393,22 @@ Layer 2 — Joint probability:
     Weak positive x1.02
       strict referee + over 3.5 cards
     None x1.00
-  P_joint = P_independent x corr_factor
-  P_final = P_joint x (1 - hold_rate)
-  effective_sgp = stake_sgp
-    x (1 - hold_rate) x 1.05
+  p_joint = P_independent x corr_factor
+  hold_rate is DIAGNOSTIC ONLY. Do NOT
+    apply (1 - hold_rate) to p_joint,
+    and do NOT apply it to the price.
+    The hold is already embedded in the
+    offered stake_sgp price.
 Do NOT compute parlay EV. Output:
-  parlay_ev_inputs: { p_final,
-    effective_sgp_price }
+  parlay_ev_inputs: { p_joint, stake_sgp }
+    where stake_sgp is the actual offered
+    SGP decimal price (as shown on Stake).
 The app computes
-  parlay_EV = (p_final x price) - 1.
+  parlay_ev = (p_joint x stake_sgp) - 1.
   Minimum parlay EV: 0.05
+Put hold_rate ONLY in sgp_validation as
+  a diagnostic (how much the SGP builder
+  skims) — never in the EV inputs.
 For Tier 3 jackpot likewise output:
   jackpot_ev_inputs: { p_final,
     combined_odds }
@@ -891,7 +897,7 @@ tier_2_parlay:
   probability_derivation with:
     p_independent, correlation_factor,
     correlation_basis, p_joint,
-    hold_rate, p_final
+    hold_rate (diagnostic only)
   legs array each with:
     leg_number, market, selection,
     odds, model_probability,
@@ -907,7 +913,8 @@ tier_2_parlay:
     potential_return_realistic,
     basis_note
   parlay_ev_inputs with:
-    p_final, effective_sgp_price
+    p_joint, stake_sgp
+    (hold_rate is NOT included here)
   (app computes parlay_ev and ev_rating)
   reasoning
 tier_3_jackpot:
@@ -1444,19 +1451,18 @@ EXAMPLE OUTPUT:
     "stake": "$20",
     "stake_boost_pct": 5,
     "sgp_validation": {
-      "independent_price": 5.71,
+      "independent_price": 5.57,
       "stake_sgp_price": 4.96,
-      "sgp_ratio": 0.869,
+      "sgp_ratio": 0.890,
       "hold_rate": 0.175,
       "status": "MODERATE TAX VALID"
     },
     "probability_derivation": {
-      "p_independent": 0.175,
+      "p_independent": 0.244,
       "correlation_factor": 1.04,
       "correlation_basis": "HEURISTIC moderate positive",
-      "p_joint": 0.182,
-      "hold_rate": 0.175,
-      "p_final": 0.150
+      "p_joint": 0.253,
+      "hold_rate": 0.175
     },
     "legs": [
       {
@@ -1484,17 +1490,17 @@ EXAMPLE OUTPUT:
         "correlation_logic": "France defensive solidity. Mane absence. Moderate positive with France win."
       }
     ],
-    "combined_odds_independent": 5.71,
+    "combined_odds_independent": 5.57,
     "combined_odds_sgp": 4.96,
-    "combined_odds_effective": 4.30,
+    "combined_odds_effective": 4.96,
     "returns": {
-      "potential_return_raw": "$99.20",
-      "potential_return_realistic": "$86.00",
-      "basis_note": "Realistic uses hold-adjusted 4.30. Use this figure."
+      "potential_return_raw": "$111.40",
+      "potential_return_realistic": "$99.20",
+      "basis_note": "Realistic uses the actual offered SGP price 4.96 (hold already embedded). Use this figure."
     },
     "parlay_ev_inputs": {
-      "p_final": 0.150,
-      "effective_sgp_price": 4.30
+      "p_joint": 0.253,
+      "stake_sgp": 4.96
     },
     "reasoning": "France Win + Over 3.5 Cards + Under 2.5 Goals. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]."
   },

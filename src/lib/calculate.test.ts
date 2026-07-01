@@ -69,34 +69,66 @@ describe("calculateEV", () => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GROUP 2 — calculateSGPEV / parlay EV
+// Corrected formula: parlay_ev = p_joint × stake_sgp − 1.
+// The hold_rate is diagnostic ONLY and never enters the EV math (it is already
+// embedded in the offered stake_sgp price). The old tests fed the double-vig
+// p_final / effective_sgp_price pair; these now feed p_joint + stake_sgp.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 describe("calculateSGPEV", () => {
-  it("returns negative EV for Norway vs Ivory Coast SGP from tonight", () => {
-    // p_final 0.133, effective_sgp 4.54
-    // EV = 0.133 * 4.54 - 1 = -0.396
-    // This is the parlay the EV gate correctly killed tonight
+  it("Norway vs Ivory Coast — same legs, corrected (no double-vig)", () => {
+    // Tonight this parlay showed -0.396 under the buggy double-vig formula
+    // (p_final 0.133 × effective_sgp 4.54). Those were the post-hold values with
+    // hold_rate 0.175. Recovering the true inputs:
+    //   p_joint   = 0.133 / (1 - 0.175)          = 0.1612
+    //   stake_sgp = 4.54  / ((1 - 0.175) × 1.05) = 5.241
+    // Correct EV = 0.1612 × 5.241 − 1 = -0.155 (still negative, but +0.24
+    // better than the mechanical -0.396 the bug produced).
     expect(
       calculateSGPEV({
-        p_final: 0.133,
-        effective_sgp_price: 4.54,
+        p_joint: 0.1612,
+        stake_sgp: 5.241,
       }),
-    ).toBeCloseTo(-0.396, 2);
+    ).toBeCloseTo(-0.155, 3);
   });
 
-  it("returns negative EV for France vs Sweden SGP from tonight", () => {
-    // p_final 0.169, effective 3.57
-    // EV = 0.169 * 3.57 - 1 = -0.397
+  it("France vs Sweden — same legs, corrected (no double-vig)", () => {
+    // Buggy: p_final 0.169 × effective 3.57 = -0.397 (hold_rate 0.175).
+    //   p_joint   = 0.169 / 0.825            = 0.2048
+    //   stake_sgp = 3.57  / (0.825 × 1.05)   = 4.121
+    // Correct EV = 0.2048 × 4.121 − 1 = -0.156.
     expect(
       calculateSGPEV({
-        p_final: 0.169,
-        effective_sgp_price: 3.57,
+        p_joint: 0.2048,
+        stake_sgp: 4.121,
       }),
-    ).toBeCloseTo(-0.397, 2);
+    ).toBeCloseTo(-0.156, 3);
   });
 
   it("returns positive EV for a genuinely good parlay", () => {
-    // p_final 0.30, effective 4.00
-    // EV = 0.30 * 4.00 - 1 = 0.20
+    // p_joint 0.30, stake_sgp 4.00 → EV = 0.30 × 4.00 − 1 = 0.20
+    expect(
+      calculateSGPEV({
+        p_joint: 0.3,
+        stake_sgp: 4.0,
+      }),
+    ).toBeCloseTo(0.2, 4);
+  });
+
+  it("ignores hold_rate — it is diagnostic only, not part of the EV math", () => {
+    // Passing hold_rate must not change the result vs omitting it.
+    const withHold = calculateSGPEV({
+      p_joint: 0.253,
+      stake_sgp: 4.96,
+      hold_rate: 0.175,
+    } as { p_joint: number; stake_sgp: number; hold_rate: number });
+    const withoutHold = calculateSGPEV({ p_joint: 0.253, stake_sgp: 4.96 });
+    expect(withHold).toBeCloseTo(withoutHold, 10);
+    // 0.253 × 4.96 − 1 = +0.255 (the corrected few-shot example)
+    expect(withHold).toBeCloseTo(0.255, 3);
+  });
+
+  it("falls back to legacy p_final / effective_sgp_price for old cached results", () => {
+    // Backward-compat: pre-fix cached results carried the double-vig pair.
     expect(
       calculateSGPEV({
         p_final: 0.3,

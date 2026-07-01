@@ -162,7 +162,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "TheStatsAPI Pinnacle odds" },
+  { key: "9B", n: "9B", endpoint: "TheStatsAPI /odds (Pinnacle if available, else retail)" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
@@ -286,8 +286,19 @@ export function formatDataForClaude(
         : null;
     const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
+      // CALL 9B header reflects the ACTUAL odds source so Claude never treats a
+      // retail fallback (e.g. Bet365) as Pinnacle. When it is not Pinnacle the
+      // header instructs pinnacle_odds = null.
+      let header = endpoint;
+      if (n === "9B" && validated && typeof validated === "object") {
+        const v = validated as { bookmaker?: string; is_pinnacle?: boolean };
+        const bk = v.bookmaker ?? "retail book";
+        header = v.is_pinnacle
+          ? "Pinnacle odds"
+          : `${bk} odds (Pinnacle unavailable — set pinnacle_odds null)`;
+      }
       blocks.push(
-        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${header} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
@@ -679,15 +690,26 @@ function summariseOutcome(name: string, node: unknown) {
 // the keys dynamically and keep whatever lines are actually present.
 function buildPinnacleSummary(
   oddsJson: unknown,
-): { bookmaker: string; markets: PinnacleMarketSummary[]; raw: unknown } | null {
+): {
+  bookmaker: string;
+  is_pinnacle: boolean;
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
   const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
   if (!bookmakers.length) return null;
-  // Prefer Pinnacle; otherwise fall back to the first available bookmaker.
-  const chosen =
-    bookmakers.find((b) => {
-      const name = getField(b, ["bookmaker", "name"]);
-      return typeof name === "string" && normalize(name).includes("pinnacle");
-    }) ?? bookmakers[0];
+  // Only a bookmaker named exactly "Pinnacle" (case-insensitive) counts as the
+  // sharp reference. If Pinnacle is absent we STILL extract the first available
+  // book (often Bet365) so its markets can serve as a RETAIL reference for the
+  // overround/C9B block — but is_pinnacle stays false so the pipeline never
+  // feeds those prices into pinnacle_odds (which would wrongly trigger the 15%
+  // Stake-anchoring EV reduction against a non-sharp book).
+  const truePinnacle = bookmakers.find((b) => {
+    const name = getField(b, ["bookmaker", "name"]);
+    return typeof name === "string" && normalize(name) === "pinnacle";
+  });
+  const chosen = truePinnacle ?? bookmakers[0];
+  const is_pinnacle = !!truePinnacle;
   const bookmakerName = (getField(chosen, ["bookmaker", "name"]) as string) ?? "UNKNOWN";
   const m = getField(chosen, ["markets"]);
   if (!m || typeof m !== "object") return null;
@@ -770,7 +792,9 @@ function buildPinnacleSummary(
     if (ahOutcomes.length) markets.push({ market: "Asian Handicap", outcomes: ahOutcomes });
   }
 
-  return markets.length ? { bookmaker: bookmakerName, markets, raw: chosen } : null;
+  return markets.length
+    ? { bookmaker: bookmakerName, is_pinnacle, markets, raw: chosen }
+    : null;
 }
 
 // Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
@@ -2371,13 +2395,14 @@ export async function collectMatchData(
           record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
             matchId,
             bookmaker: summary.bookmaker,
+            is_pinnacle: summary.is_pinnacle,
             markets: summary.markets,
             gap_check: gapCheck,
             note:
               `Odds source bookmaker: ${summary.bookmaker}. ` +
-              (normalize(summary.bookmaker).includes("pinnacle")
-                ? ""
-                : "Pinnacle not offered for this match; line-movement/sharp-money signals from this non-Pinnacle book are weaker — weight accordingly. ") +
+              (summary.is_pinnacle
+                ? "This IS Pinnacle (sharp). You MAY populate pinnacle_odds from these prices. "
+                : `This is NOT Pinnacle — it is a RETAIL book (${summary.bookmaker}). Pinnacle was not offered for this match. Set pinnacle_odds to null for the anchor and every leg; do NOT use these prices as a sharp reference. They are provided only as a secondary retail cross-check and for line movement. `) +
               "movement_pct = (last_seen - opening) / opening * 100. opening may be null (only last_seen captured) → movement UNKNOWN. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
           });
         }
@@ -3270,9 +3295,15 @@ export async function retrySingleCall(
             rec("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
               matchId,
               bookmaker: summary.bookmaker,
+              is_pinnacle: summary.is_pinnacle,
               markets: summary.markets,
               gap_check: gapCheck,
-              note: `Odds source bookmaker: ${summary.bookmaker}. movement_pct = (last_seen - opening) / opening * 100.`,
+              note:
+                `Odds source bookmaker: ${summary.bookmaker}. ` +
+                (summary.is_pinnacle
+                  ? "This IS Pinnacle (sharp). pinnacle_odds may be populated. "
+                  : `This is NOT Pinnacle — RETAIL book (${summary.bookmaker}). Set pinnacle_odds to null. `) +
+                "movement_pct = (last_seen - opening) / opening * 100.",
             });
           }
         } catch (e) {

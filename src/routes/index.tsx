@@ -30,6 +30,12 @@ import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import {
+  readResultCache,
+  writeResultCache,
+  extractSgpChain,
+  formatResultAgo,
+} from "@/lib/resultCache";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
@@ -170,6 +176,9 @@ interface MatchState {
   analysing: boolean;
   retrying: string[];
   lastRunAt: number | null;
+  analysisSavedAt: number | null; // when the persisted result was written
+  loadedFromCache: boolean; // true when analysisResult was hydrated from localStorage
+
 }
 
 const EMPTY_MATCH_STATE: MatchState = {
@@ -184,6 +193,9 @@ const EMPTY_MATCH_STATE: MatchState = {
   analysing: false,
   retrying: [],
   lastRunAt: null,
+  analysisSavedAt: null,
+  loadedFromCache: false,
+
 };
 
 type Tab = "analysis" | "log";
@@ -243,6 +255,33 @@ function Index() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Hydrate persisted analysis results (localStorage) into matchStates whenever
+  // the fixtures list changes — so a reload restores the "✓ Analysed" indicator
+  // and opening a match shows its saved result without a fresh Claude call.
+  useEffect(() => {
+    if (!matches) return;
+    setMatchStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const m of matches) {
+        const existing = prev[m.id];
+        if (existing?.analysisResult) continue; // fresh in-memory result wins
+        const cached = readResultCache(m.id);
+        if (!cached) continue;
+        next[m.id] = {
+          ...(existing ?? EMPTY_MATCH_STATE),
+          analysisResult: cached.result,
+          analysisRaw: cached.rawClaudeJson,
+          tokenUsage: cached.tokenUsage,
+          analysisSavedAt: cached.savedAt,
+          loadedFromCache: true,
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [matches]);
 
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
     setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
@@ -402,10 +441,12 @@ No markdown fences.
 No explanation outside the JSON.
 Start your response with { and end with }.`;
 
+    const startedAt = Date.now();
     try {
       const res = await callAnalyseMatch({
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
+      const responseTimeMs = Date.now() - startedAt;
 
       if (!res || !res.ok) {
         if ((res as { error_type?: string } | null)?.error_type === "BILLING") {
@@ -448,11 +489,26 @@ Start your response with { and end with }.`;
       try {
         const parsed = tryParse();
         const enriched = calculateResults(parsed);
+        const savedAt = Date.now();
         patchState(match.id, {
           analysisRaw: cleaned,
           analysisResult: enriched,
           tokenUsage,
           analysing: false,
+          analysisSavedAt: savedAt,
+          loadedFromCache: false,
+        });
+        // Persist the full enriched result + SGP chain so it survives reload and
+        // can be re-audited without another Claude call.
+        writeResultCache({
+          matchId: match.id,
+          match: `${match.home} vs ${match.away}`,
+          result: enriched as AnalysisResult,
+          rawClaudeJson: cleaned,
+          sgpChain: extractSgpChain(enriched as AnalysisResult),
+          tokenUsage,
+          responseTimeMs,
+          savedAt,
         });
         toast.success("Analysis complete");
 
@@ -845,6 +901,7 @@ function FixturesView({
               const meta = STATUS_META[m.status];
               const hasState = !!matchStates[m.id]?.collection;
               const hasResult = !!matchStates[m.id]?.analysisResult;
+              const savedAt = matchStates[m.id]?.analysisSavedAt ?? null;
               return (
                 <li
                   key={m.id}
@@ -900,7 +957,7 @@ function FixturesView({
                       </button>
                       {hasResult ? (
                         <span className="font-mono text-[11px] text-signal-green">
-                          ✓ analysis saved
+                          ✓ Analysed{savedAt ? ` ${formatResultAgo(savedAt, now.getTime())}` : ""}
                         </span>
                       ) : hasState ? (
                         <span className="font-mono text-[11px] text-signal-blue">
