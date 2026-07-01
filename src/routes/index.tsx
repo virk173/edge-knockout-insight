@@ -186,6 +186,8 @@ interface MatchState {
   analysisJobId: string | null; // id of the in-flight background analysis job
   analysisCompletedAway: boolean; // job finished while the tab was backgrounded
   pollStalled: boolean; // polling failed 5x in a row — show a Retry button
+  usedFallbackModel: boolean; // analysis completed on the fallback model
+  fallbackReason: string | null;
 }
 
 const EMPTY_MATCH_STATE: MatchState = {
@@ -205,6 +207,8 @@ const EMPTY_MATCH_STATE: MatchState = {
   analysisJobId: null,
   analysisCompletedAway: false,
   pollStalled: false,
+  usedFallbackModel: false,
+  fallbackReason: null,
 };
 
 // ─────────────────────────────────────────────────────────────
