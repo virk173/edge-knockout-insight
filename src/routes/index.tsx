@@ -1032,16 +1032,22 @@ function FixturesView({
                     )}
                   </div>
 
-                  <div
-                    className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
-                      band.tone,
-                    )}`}
-                  >
-                    {band.tone === "blocked" ? "🚫 " : ""}
-                    {band.label}
-                  </div>
+                  {!completed && (
+                    <div
+                      className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                        band.tone,
+                      )}`}
+                    >
+                      {band.tone === "blocked" ? "🚫 " : ""}
+                      {band.label}
+                    </div>
+                  )}
 
-                  {blocked ? (
+                  {completed ? (
+                    <p className="font-mono text-xs text-signal-red">
+                      🏁 Match finished — no pre-match bets available.
+                    </p>
+                  ) : blocked ? (
                     <p className="font-mono text-xs text-signal-red">
                       {isMatchBlockedReason(m.statusShort)}
                     </p>
