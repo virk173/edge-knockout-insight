@@ -4,6 +4,7 @@ import type {
   CallPanelRow,
   CallResult,
   DisplayStatus,
+  FixtureVerification,
 } from "@/lib/analyse";
 
 interface CallStatusPanelProps {
