@@ -236,6 +236,32 @@ export function validateCall(callKey: string, data: unknown): unknown {
 }
 
 /**
+ * Compact last-5 scoreline summary for a team's recent-form list (CALL 4-1 /
+ * 4-2). We ship THIS instead of the raw /fixtures/statistics batch (CALL 4-3),
+ * which alone was ~85k tokens and pushed the prompt past Claude's 200k context
+ * limit — the true cause of the "timeout / Job expired" failures. The detailed
+ * shot stats in 4-3 are already distilled into the dead-rubber-adjusted
+ * averages appended below, so the raw batch is redundant.
+ */
+function extractLast5Scorelines(list: unknown): string[] {
+  return extractArray(list)
+    .slice(0, 5)
+    .map((item) => {
+      const fx = getField(item, ["fixture"]);
+      const date = String(getField(fx, ["date"]) ?? "").slice(0, 10);
+      const round = String(getField(getField(item, ["league"]), ["round"]) ?? "");
+      const teams = getField(item, ["teams"]);
+      const hn = String(getField(getField(teams, ["home"]), ["name"]) ?? "?");
+      const an = String(getField(getField(teams, ["away"]), ["name"]) ?? "?");
+      const goals = getField(item, ["goals"]);
+      const hg = getField(goals, ["home"]);
+      const ag = getField(goals, ["away"]);
+      const score = `${hg ?? "-"}-${ag ?? "-"}`;
+      return `${date} ${hn} ${score} ${an}${round ? ` (${round})` : ""}`;
+    });
+}
+
+/**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
