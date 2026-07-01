@@ -1451,19 +1451,18 @@ EXAMPLE OUTPUT:
     "stake": "$20",
     "stake_boost_pct": 5,
     "sgp_validation": {
-      "independent_price": 5.71,
+      "independent_price": 5.57,
       "stake_sgp_price": 4.96,
-      "sgp_ratio": 0.869,
+      "sgp_ratio": 0.890,
       "hold_rate": 0.175,
       "status": "MODERATE TAX VALID"
     },
     "probability_derivation": {
-      "p_independent": 0.175,
+      "p_independent": 0.244,
       "correlation_factor": 1.04,
       "correlation_basis": "HEURISTIC moderate positive",
-      "p_joint": 0.182,
-      "hold_rate": 0.175,
-      "p_final": 0.150
+      "p_joint": 0.253,
+      "hold_rate": 0.175
     },
     "legs": [
       {
@@ -1491,17 +1490,17 @@ EXAMPLE OUTPUT:
         "correlation_logic": "France defensive solidity. Mane absence. Moderate positive with France win."
       }
     ],
-    "combined_odds_independent": 5.71,
+    "combined_odds_independent": 5.57,
     "combined_odds_sgp": 4.96,
-    "combined_odds_effective": 4.30,
+    "combined_odds_effective": 4.96,
     "returns": {
-      "potential_return_raw": "$99.20",
-      "potential_return_realistic": "$86.00",
-      "basis_note": "Realistic uses hold-adjusted 4.30. Use this figure."
+      "potential_return_raw": "$111.40",
+      "potential_return_realistic": "$99.20",
+      "basis_note": "Realistic uses the actual offered SGP price 4.96 (hold already embedded). Use this figure."
     },
     "parlay_ev_inputs": {
-      "p_final": 0.150,
-      "effective_sgp_price": 4.30
+      "p_joint": 0.253,
+      "stake_sgp": 4.96
     },
     "reasoning": "France Win + Over 3.5 Cards + Under 2.5 Goals. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]."
   },
