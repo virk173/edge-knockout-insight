@@ -736,6 +736,15 @@ function FixturesView({
       )
     : null;
 
+  const nowMs = now.getTime();
+  const hasCache = fetchedAt != null;
+  const stale = hasCache && isStale(fetchedAt, nowMs);
+  const buttonLabel = loading
+    ? "Loading fixtures…"
+    : hasCache
+      ? "↻ Refresh"
+      : "Find Fixtures";
+
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
