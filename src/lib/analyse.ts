@@ -2336,7 +2336,9 @@ export async function collectMatchData(
 
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
   const nr = nextRound(match.round);
-  if (counterWarning) {
+  if (tryLoadCache("10")) {
+    /* reused fresh cached bracket */
+  } else if (counterWarning) {
     record("10", "Next-round bracket", "SKIPPED", undefined,
       "Skipped — daily API budget near limit (>=85).");
   } else if (!nr) {
