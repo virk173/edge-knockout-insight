@@ -286,8 +286,19 @@ export function formatDataForClaude(
         : null;
     const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
+      // CALL 9B header reflects the ACTUAL odds source so Claude never treats a
+      // retail fallback (e.g. Bet365) as Pinnacle. When it is not Pinnacle the
+      // header instructs pinnacle_odds = null.
+      let header = endpoint;
+      if (n === "9B" && validated && typeof validated === "object") {
+        const v = validated as { bookmaker?: string; is_pinnacle?: boolean };
+        const bk = v.bookmaker ?? "retail book";
+        header = v.is_pinnacle
+          ? "Pinnacle odds"
+          : `${bk} odds (Pinnacle unavailable — set pinnacle_odds null)`;
+      }
       blocks.push(
-        `[CALL ${n} — ${endpoint} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${header} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
