@@ -290,44 +290,7 @@ function Index() {
     });
   }, [matches]);
 
-  // Resume any in-flight background analysis jobs when fixtures load or when the
-  // tab regains focus after being backgrounded. If a job finished while away,
-  // the poll picks up the completed result and the "away" banner is shown.
-  useEffect(() => {
-    if (!matches) return;
 
-    const resumeAll = (markAway: boolean) => {
-      for (const m of matches) resumeIfPending(m.id, markAway);
-    };
-
-    // When the tab goes hidden, flag any actively-analysing matches so that a
-    // completion that happens while hidden surfaces the "while you were away"
-    // banner on return.
-    const onHidden = () => {
-      for (const m of matches) {
-        const st = matchStates[m.id];
-        if (st?.analysing || pollControllers.current.has(m.id)) {
-          backgroundedRef.current.add(m.id);
-        }
-      }
-    };
-
-    // Initial mount: resume without treating as "away".
-    resumeAll(false);
-
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") onHidden();
-      else resumeAll(true);
-    };
-    const onFocus = () => resumeAll(true);
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", onFocus);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches]);
 
 
 
