@@ -1857,31 +1857,35 @@ export async function collectMatchData(
         console.warn(
           `[S3 lineups] State 2 LINEUP PROPAGATING for matchId=${matchId} ` +
             `(${match.home} vs ${match.away}, ${tag}) — confirmed=true but starting_xi ` +
-            `still empty (data being ingested). Will retry then fall back to API-Football.`,
+            `still empty (data being ingested). Trying API-Football fallback now.`,
         );
       } else {
         console.warn(
           `[S3 lineups] State 1 LINEUP NOT ANNOUNCED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not published yet.`,
+            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not ` +
+            `published yet. Trying API-Football fallback now.`,
         );
       }
+
+      // Fire the API-Football fallback on EVERY attempt (not just after the full
+      // 5×60s TheStatsAPI retry burst). If a lineup lands in API-Football first,
+      // we pick it up immediately instead of blocking for up to 5 minutes.
+      const afEarly = await fetchApiFootballLineupFallback(match);
+      if (afEarly) {
+        lastLineupState = "POPULATED";
+        console.log(
+          `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
+            `${match.home} vs ${match.away} (TheStatsAPI was ${state}, ${tag}).`,
+        );
+        return afEarly;
+      }
+
       if (attempt < maxAttempts - 1) await sleep(60000);
     }
 
-    // TheStatsAPI never reached POPULATED within the retry window — hand off to
-    // the API-Football lineup fallback (per spec: State 2 → fall back to AF).
-    const afLineup = await fetchApiFootballLineupFallback(match);
-    if (afLineup) {
-      lastLineupState = "POPULATED";
-      console.log(
-        `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
-          `${match.home} vs ${match.away} (TheStatsAPI was ${state}).`,
-      );
-      return afLineup;
-    }
-
-    // Carry the resolved state in the thrown message so the caller knows whether
-    // this is NOT_ANNOUNCED vs PROPAGATING (and that the AF fallback was empty too).
+    // Neither TheStatsAPI nor API-Football produced a populated XI within the
+    // retry window. Carry the resolved state in the thrown message so the caller
+    // knows whether this is NOT_ANNOUNCED vs PROPAGATING.
     throw new Error(
       state === "PROPAGATING"
         ? "LINEUP PROPAGATING — confirmed=true but starting_xi never populated; API-Football fallback also empty."
