@@ -2882,7 +2882,8 @@ export interface CallPanelSummary {
   successCount: number;
   cachedCount: number;
   mandatoryReady: boolean;
-  notReadyMandatory: string[]; // display ids of mandatory calls without data
+  notReadyMandatory: string[]; // display ids of mandatory calls that never ran or hard-failed
+  emptyMandatory: string[]; // display ids of mandatory calls that ran but returned no data
   failedOptional: string[]; // display ids of optional calls that FAILED
 }
 
