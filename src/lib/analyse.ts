@@ -3284,9 +3284,15 @@ export async function retrySingleCall(
             rec("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
               matchId,
               bookmaker: summary.bookmaker,
+              is_pinnacle: summary.is_pinnacle,
               markets: summary.markets,
               gap_check: gapCheck,
-              note: `Odds source bookmaker: ${summary.bookmaker}. movement_pct = (last_seen - opening) / opening * 100.`,
+              note:
+                `Odds source bookmaker: ${summary.bookmaker}. ` +
+                (summary.is_pinnacle
+                  ? "This IS Pinnacle (sharp). pinnacle_odds may be populated. "
+                  : `This is NOT Pinnacle — RETAIL book (${summary.bookmaker}). Set pinnacle_odds to null. `) +
+                "movement_pct = (last_seen - opening) / opening * 100.",
             });
           }
         } catch (e) {
