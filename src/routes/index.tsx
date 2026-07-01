@@ -980,6 +980,8 @@ Start your response with { and end with }.`;
           onRunCalls={() => handleRunCalls(activeMatch)}
           onAnalyse={() => handleAnalyseCached(activeMatch)}
           onRetry={(k) => handleRetryCall(activeMatch, k)}
+          onResumeCalls={() => handleResumeCalls(activeMatch)}
+          onResumePoll={() => handleResumePoll(activeMatch)}
           onClearCache={() => handleClearMatchCache(activeMatch)}
           onResetBudget={handleResetBudget}
           patchState={(partial) => patchState(activeMatch.id, partial)}
