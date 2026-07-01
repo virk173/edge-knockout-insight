@@ -771,8 +771,16 @@ function FixturesView({
             disabled={loading}
             className="rounded-md bg-accent-amber px-5 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "Loading…" : "Refresh Fixtures"}
+            {buttonLabel}
           </button>
+          {hasCache && !loading && (
+            <span
+              className={`font-mono text-xs ${stale ? "text-accent-amber" : "text-slate"}`}
+            >
+              Last updated: {formatAgo(fetchedAt, nowMs)}
+              {stale ? " — may be outdated" : ""}
+            </span>
+          )}
           <span className="font-mono text-xs text-slate">
             API calls used today:{" "}
             <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
