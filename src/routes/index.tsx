@@ -414,10 +414,12 @@ No markdown fences.
 No explanation outside the JSON.
 Start your response with { and end with }.`;
 
+    const startedAt = Date.now();
     try {
       const res = await callAnalyseMatch({
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
+      const responseTimeMs = Date.now() - startedAt;
 
       if (!res || !res.ok) {
         if ((res as { error_type?: string } | null)?.error_type === "BILLING") {
@@ -460,11 +462,26 @@ Start your response with { and end with }.`;
       try {
         const parsed = tryParse();
         const enriched = calculateResults(parsed);
+        const savedAt = Date.now();
         patchState(match.id, {
           analysisRaw: cleaned,
           analysisResult: enriched,
           tokenUsage,
           analysing: false,
+          analysisSavedAt: savedAt,
+          loadedFromCache: false,
+        });
+        // Persist the full enriched result + SGP chain so it survives reload and
+        // can be re-audited without another Claude call.
+        writeResultCache({
+          matchId: match.id,
+          match: `${match.home} vs ${match.away}`,
+          result: enriched as AnalysisResult,
+          rawClaudeJson: cleaned,
+          sgpChain: extractSgpChain(enriched as AnalysisResult),
+          tokenUsage,
+          responseTimeMs,
+          savedAt,
         });
         toast.success("Analysis complete");
 
