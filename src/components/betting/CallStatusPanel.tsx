@@ -86,7 +86,10 @@ function StatusRow({
   const meta = STATUS_META[row.status];
   const retryKey = row.spec.retryKey;
   const canRetry =
-    (row.status === "FAILED" || row.status === "PROPAGATING") && !!retryKey;
+    (row.status === "FAILED" ||
+      row.status === "PROPAGATING" ||
+      row.status === "MISMATCH") &&
+    !!retryKey;
   const isRetrying = retryKey ? retrying.has(retryKey) : false;
   const countdown =
     retryKey && propagatingCountdown ? propagatingCountdown[retryKey] : undefined;
