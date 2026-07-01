@@ -146,6 +146,17 @@ export const analyseMatch = createServerFn({ method: "POST" })
       if (response.status === 429) {
         return { ok: false as const, error: "Rate limit exceeded. Please try again shortly.", status: 429 };
       }
+      if (isTransient(response.status)) {
+        return {
+          ok: false as const,
+          error_type: "TIMEOUT" as const,
+          error:
+            "Analysis timed out — Claude took longer than 90 seconds to respond (upstream " +
+            response.status +
+            "). This usually means the input data is too large. Retry or check the injection block sizes.",
+          status: response.status,
+        };
+      }
       if (response.status === 401) {
         return { ok: false as const, error: "Invalid Anthropic API key.", status: 401 };
       }
