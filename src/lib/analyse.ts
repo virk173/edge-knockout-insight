@@ -330,6 +330,26 @@ export function formatDataForClaude(
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
+    // CALL 4: ship the COMPACT last-5 scoreline summary (from 4-1/4-2) plus the
+    // dead-rubber-adjusted averages — NOT the raw ~85k-token /fixtures/statistics
+    // batch (4-3), which blew past Claude's 200k context limit.
+    if (n === "4") {
+      const homeLines = extractLast5Scorelines(safeResults["4-1"]?.data);
+      const awayLines = extractLast5Scorelines(safeResults["4-2"]?.data);
+      if (homeLines.length || awayLines.length) {
+        blocks.push(
+          `[CALL 4 — recent form (last 5) — SUCCESS]\n` +
+            `HOME last 5 (most recent first):\n${homeLines.join("\n") || "none"}\n\n` +
+            `AWAY last 5 (most recent first):\n${awayLines.join("\n") || "none"}` +
+            `${deadRubberSuffix("4")}\n[END CALL 4]`,
+        );
+      } else {
+        blocks.push(
+          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}\n[END CALL 4]`,
+        );
+      }
+      continue;
+    }
     // Validate the response shape before feeding it to Claude. validateCall
     // returns null for structurally invalid responses.
     const validated =
