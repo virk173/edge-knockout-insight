@@ -73,6 +73,27 @@ function RawResponseBlock({ results }: { results: CallResult[] }) {
   );
 }
 
+// Context-aware helper text for EMPTY / PROPAGATING calls, so the retry button
+// sets the right expectation about *why* a retry might help (and when).
+function retryHint(id: string, status: DisplayStatus): string | null {
+  if (status === "PROPAGATING") return "Lineup propagating — retry in 60s";
+  if (status !== "EMPTY") return null;
+  switch (id) {
+    case "C3":
+      return "No competitive H2H history between these teams — retry to check again";
+    case "C5":
+      return "No injuries reported — retry closer to kickoff";
+    case "C9A":
+      return "Odds not posted yet — retry closer to kickoff (T-80)";
+    case "S3":
+      return "Lineup not announced — retry after T-75";
+    case "S5":
+      return "Pinnacle odds not posted yet — retry closer to kickoff";
+    default:
+      return "No data found — retry to check again";
+  }
+}
+
 function StatusRow({
   row,
   retrying,
@@ -86,14 +107,21 @@ function StatusRow({
 }) {
   const meta = STATUS_META[row.status];
   const retryKey = row.spec.retryKey;
+  const isBlocked = row.status === "BLOCKED";
+  // EMPTY is now retryable: a second attempt can productively pick up late data
+  // (injuries near kickoff, odds once posted, lineups after T-75). BLOCKED is
+  // never individually retryable — the only remedy is retrying C1.
   const canRetry =
     (row.status === "FAILED" ||
       row.status === "PROPAGATING" ||
-      row.status === "MISMATCH") &&
+      row.status === "MISMATCH" ||
+      row.status === "EMPTY") &&
     !!retryKey;
   const isRetrying = retryKey ? retrying.has(retryKey) : false;
   const countdown =
     retryKey && propagatingCountdown ? propagatingCountdown[retryKey] : undefined;
+  const hint = retryHint(row.spec.id, row.status);
+  const isEmpty = row.status === "EMPTY";
   return (
     <div className="flex flex-col gap-0.5 py-0.5">
       <div className="flex items-center justify-between gap-3">
@@ -120,14 +148,25 @@ function StatusRow({
           {canRetry && !isRetrying && (
             <button
               type="button"
+              title={hint ?? undefined}
               onClick={() => onRetry(retryKey as string)}
-              className="rounded border border-signal-red/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-signal-red transition-colors hover:bg-signal-red/10"
+              className={
+                isEmpty
+                  ? "rounded border border-accent-amber/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-amber transition-colors hover:bg-accent-amber/10"
+                  : "rounded border border-signal-red/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-signal-red transition-colors hover:bg-signal-red/10"
+              }
             >
-              Retry
+              ↻ Retry
             </button>
           )}
         </span>
       </div>
+      {isBlocked && (
+        <p className="pl-11 text-[10px] text-slate">Blocked — retry C1 first to unblock</p>
+      )}
+      {hint && !isRetrying && (
+        <p className="pl-11 text-[10px] text-slate">{hint}</p>
+      )}
       <RawResponseBlock results={row.results} />
     </div>
   );
