@@ -2669,6 +2669,10 @@ export function deriveDisplayStatus(
 export interface CallPanelRow {
   spec: CallDisplaySpec;
   status: DisplayStatus;
+  // Most recent fetch time across this row's underlying results (for "12m ago").
+  fetchedAt?: number;
+  // Raw recorded results for always-on transparency (raw response blocks).
+  results: CallResult[];
 }
 
 export interface CallPanelSummary {
@@ -2684,10 +2688,20 @@ export interface CallPanelSummary {
 export function buildCallPanelSummary(
   callResults: Record<string, CallResult>,
 ): CallPanelSummary {
-  const rows: CallPanelRow[] = CALL_DISPLAY_SPECS.map((spec) => ({
-    spec,
-    status: deriveDisplayStatus(spec, callResults),
-  }));
+  const rows: CallPanelRow[] = CALL_DISPLAY_SPECS.map((spec) => {
+    const results = spec.keys
+      .map((k) => callResults[k])
+      .filter(Boolean) as CallResult[];
+    const times = results
+      .map((r) => r.fetchedAt)
+      .filter((t): t is number => typeof t === "number");
+    return {
+      spec,
+      status: deriveDisplayStatus(spec, callResults),
+      fetchedAt: times.length ? Math.max(...times) : undefined,
+      results,
+    };
+  });
 
   const has = (s: DisplayStatus) => s === "SUCCESS" || s === "CACHED";
   const successCount = rows.filter((r) => r.status === "SUCCESS").length;
@@ -2710,6 +2724,7 @@ export function buildCallPanelSummary(
     failedOptional,
   };
 }
+
 
 /**
  * Re-run a SINGLE logical call for a match and return the updated callResults
