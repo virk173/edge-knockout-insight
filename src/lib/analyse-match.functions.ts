@@ -59,28 +59,72 @@ export const analyseMatch = createServerFn({ method: "POST" })
       };
     }
 
+    // Anthropic sits behind Cloudflare; a very large prompt can make Claude take
+    // >100s and the edge returns a 524 origin-timeout. We cap the wait at 90s
+    // client-side and retry ONCE (after 10s) for transient timeouts / 5xx before
+    // surfacing a clear error.
+    const TIMEOUT_MS = 90_000;
+    const requestBody = JSON.stringify({
+      model: data.model,
+      max_tokens: data.maxTokens,
+      system: data.systemPrompt,
+      messages: [{ role: "user", content: data.userMessage }],
+    });
+
+    const callAnthropic = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        return await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: requestBody,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    const isTransient = (status: number) =>
+      status === 524 || status === 529 || status === 503 || status === 502;
+
     let response: Response;
     try {
-      response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: data.model,
-          max_tokens: data.maxTokens,
-          system: data.systemPrompt,
-          messages: [{ role: "user", content: data.userMessage }],
-        }),
-      });
+      response = await callAnthropic();
+      // Retry once on a transient server-side timeout / overload.
+      if (isTransient(response.status)) {
+        console.warn(`analyse-match: transient ${response.status} — retrying in 10s`);
+        await new Promise((r) => setTimeout(r, 10_000));
+        response = await callAnthropic();
+      }
     } catch (err) {
-      console.error("analyse-match: network error calling Anthropic", err);
-      return { ok: false as const, error: "Failed to reach the Anthropic API." };
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (isAbort) {
+        console.error("analyse-match: Anthropic request timed out after 90s", err);
+        return {
+          ok: false as const,
+          error_type: "TIMEOUT" as const,
+          error:
+            "Analysis timed out — Claude took longer than 90 seconds to respond. This usually means the input data is too large. Retry or check the injection block sizes.",
+        };
+      }
+      // Retry once on a network error before giving up.
+      try {
+        await new Promise((r) => setTimeout(r, 10_000));
+        response = await callAnthropic();
+      } catch (retryErr) {
+        console.error("analyse-match: network error calling Anthropic", retryErr);
+        return { ok: false as const, error: "Failed to reach the Anthropic API." };
+      }
     }
 
     const payload = await response.json().catch(() => null);
+
 
     if (!response.ok) {
       console.error("analyse-match: Anthropic API error", response.status, payload);
