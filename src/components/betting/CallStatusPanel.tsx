@@ -139,11 +139,22 @@ export function CallStatusPanel({
   onClearCache,
   propagatingCountdown,
 }: CallStatusPanelProps) {
-  const afRows = summary.rows.filter((r) => r.spec.api === "API-FOOTBALL");
+  const c1Row = summary.rows.find((r) => r.spec.id === "C1");
+  const afRows = summary.rows.filter(
+    (r) => r.spec.api === "API-FOOTBALL" && r.spec.id !== "C1",
+  );
   const saRows = summary.rows.filter((r) => r.spec.api === "THESTATSAPI");
 
   return (
     <div className="flex w-full flex-col gap-3 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
+      {c1Row && (
+        <FixtureResolution
+          row={c1Row}
+          retrying={retrying}
+          onRetry={onRetry}
+        />
+      )}
+
       <div className="flex flex-col gap-1">
         <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate">
           API-Football
