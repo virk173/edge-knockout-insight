@@ -186,6 +186,8 @@ interface MatchState {
   analysisJobId: string | null; // id of the in-flight background analysis job
   analysisCompletedAway: boolean; // job finished while the tab was backgrounded
   pollStalled: boolean; // polling failed 5x in a row — show a Retry button
+  usedFallbackModel: boolean; // analysis completed on the fallback model
+  fallbackReason: string | null;
 }
 
 const EMPTY_MATCH_STATE: MatchState = {
@@ -205,6 +207,8 @@ const EMPTY_MATCH_STATE: MatchState = {
   analysisJobId: null,
   analysisCompletedAway: false,
   pollStalled: false,
+  usedFallbackModel: false,
+  fallbackReason: null,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -567,6 +571,8 @@ function Index() {
         loadedFromCache: false,
         analysisJobId: null,
         analysisCompletedAway: away,
+        usedFallbackModel: res.used_fallback_model === true,
+        fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
       writeResultCache({
         matchId: match.id,
@@ -1519,6 +1525,15 @@ function MatchView({
                 ✓ Analysis completed while you were away
               </div>
             )}
+
+            {state.usedFallbackModel && state.analysisResult !== null && (
+              <div className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 font-mono text-xs font-semibold text-accent-amber">
+                ⚠ Completed on fallback model (claude-sonnet-4-5)
+                {state.fallbackReason ? ` — ${state.fallbackReason}` : ""}
+              </div>
+            )}
+
+
 
 
             {state.billingError && (

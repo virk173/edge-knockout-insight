@@ -236,6 +236,32 @@ export function validateCall(callKey: string, data: unknown): unknown {
 }
 
 /**
+ * Compact last-5 scoreline summary for a team's recent-form list (CALL 4-1 /
+ * 4-2). We ship THIS instead of the raw /fixtures/statistics batch (CALL 4-3),
+ * which alone was ~85k tokens and pushed the prompt past Claude's 200k context
+ * limit — the true cause of the "timeout / Job expired" failures. The detailed
+ * shot stats in 4-3 are already distilled into the dead-rubber-adjusted
+ * averages appended below, so the raw batch is redundant.
+ */
+function extractLast5Scorelines(list: unknown): string[] {
+  return extractArray(list)
+    .slice(0, 5)
+    .map((item) => {
+      const fx = getField(item, ["fixture"]);
+      const date = String(getField(fx, ["date"]) ?? "").slice(0, 10);
+      const round = String(getField(getField(item, ["league"]), ["round"]) ?? "");
+      const teams = getField(item, ["teams"]);
+      const hn = String(getField(getField(teams, ["home"]), ["name"]) ?? "?");
+      const an = String(getField(getField(teams, ["away"]), ["name"]) ?? "?");
+      const goals = getField(item, ["goals"]);
+      const hg = getField(goals, ["home"]);
+      const ag = getField(goals, ["away"]);
+      const score = `${hg ?? "-"}-${ag ?? "-"}`;
+      return `${date} ${hn} ${score} ${an}${round ? ` (${round})` : ""}`;
+    });
+}
+
+/**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
@@ -304,6 +330,26 @@ export function formatDataForClaude(
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
+    // CALL 4: ship the COMPACT last-5 scoreline summary (from 4-1/4-2) plus the
+    // dead-rubber-adjusted averages — NOT the raw ~85k-token /fixtures/statistics
+    // batch (4-3), which blew past Claude's 200k context limit.
+    if (n === "4") {
+      const homeLines = extractLast5Scorelines(safeResults["4-1"]?.data);
+      const awayLines = extractLast5Scorelines(safeResults["4-2"]?.data);
+      if (homeLines.length || awayLines.length) {
+        blocks.push(
+          `[CALL 4 — recent form (last 5) — SUCCESS]\n` +
+            `HOME last 5 (most recent first):\n${homeLines.join("\n") || "none"}\n\n` +
+            `AWAY last 5 (most recent first):\n${awayLines.join("\n") || "none"}` +
+            `${deadRubberSuffix("4")}\n[END CALL 4]`,
+        );
+      } else {
+        blocks.push(
+          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}\n[END CALL 4]`,
+        );
+      }
+      continue;
+    }
     // Validate the response shape before feeding it to Claude. validateCall
     // returns null for structurally invalid responses.
     const validated =
