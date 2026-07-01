@@ -2202,12 +2202,13 @@ export async function collectMatchData(
   }
 
 
-  // 8: predictions (skipped if near daily cap)
+  // 8: predictions (blocked on C1 mismatch; else skipped if near daily cap)
   await runStep(
     "8",
     "Fetching predictions... (10/11)",
     () => afGet(`/predictions?fixture=${match.id}`, afKey),
     {
+      ...blockOpts,
       skip: counterWarning,
       skipReason: "Skipped — daily API budget near limit (>=85).",
     },
