@@ -34,7 +34,15 @@ const GROUP_TOTAL_MATCHDAYS = 3;
 
 
 
-export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
+export type CallStatus =
+  | "SUCCESS"
+  | "EMPTY"
+  | "EXPECTED_EMPTY"
+  | "FAILED"
+  | "SKIPPED"
+  // Dependent call was refused because the C1 fixture-id verification failed
+  // (resolved fixture belongs to a different match). Never runs the HTTP call.
+  | "BLOCKED";
 
 export interface CallResult {
   key: string;
@@ -437,6 +445,93 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
       debugSink?.push({ ...entry, callLabel: label });
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// FIXTURE ID VERIFICATION (C1 guard)
+//
+// The pipeline (C3/C4/C5/C7/C8/C9A/C10) trusts `match.id` — the API-Football
+// fixture id resolved by the C1 fixtures list. If that id ever points at the
+// wrong game (e.g. 1565177 France instead of 1567306 Mexico vs Ecuador), every
+// dependent call succeeds but returns data for the WRONG match, silently
+// corrupting the analysis. This guard re-fetches the fixture by id and confirms
+// the returned team names match the teams we intend to analyse.
+// ---------------------------------------------------------------------------
+
+export interface FixtureVerification {
+  verified: boolean;
+  reason: string;
+  expectedHome: string;
+  expectedAway: string;
+  actualHome: string | null;
+  actualAway: string | null;
+  fixtureId: number;
+}
+
+// Loose name match: either side contains the other (case-insensitive), so
+// "USA" vs "United States"-style aliases and punctuation differences still pass.
+function teamNameMatches(actual: string | null, expected: string): boolean {
+  if (!actual || !expected) return false;
+  const a = actual.toLowerCase().trim();
+  const e = expected.toLowerCase().trim();
+  return a === e || a.includes(e) || e.includes(a);
+}
+
+// Fetch the fixture by its resolved id and confirm the teams match. `fetcher`
+// lets tests inject a fixture object without hitting the network.
+export async function verifyFixtureById(
+  match: Pick<AnalysedMatch, "id" | "home" | "away">,
+  fetcher: (id: number) => Promise<unknown> = (id) =>
+    afGet(`/fixtures?id=${id}`),
+): Promise<FixtureVerification> {
+  const raw = await fetcher(match.id);
+  const item = extractArray(raw)[0] ?? (raw as unknown);
+  const teams = getField(item, ["teams"]);
+  const actualHome = (getField(getField(teams, ["home"]), ["name"]) ?? null) as
+    | string
+    | null;
+  const actualAway = (getField(getField(teams, ["away"]), ["name"]) ?? null) as
+    | string
+    | null;
+
+  return verifyFixture(match, actualHome, actualAway);
+}
+
+// Pure comparison — exported so both the pipeline and the UI can reuse it and
+// so it can be unit-tested with a wrong fixture id.
+export function verifyFixture(
+  match: Pick<AnalysedMatch, "id" | "home" | "away">,
+  actualHome: string | null,
+  actualAway: string | null,
+): FixtureVerification {
+  const homeOk = teamNameMatches(actualHome, match.home);
+  const awayOk = teamNameMatches(actualAway, match.away);
+  const base = {
+    expectedHome: match.home,
+    expectedAway: match.away,
+    actualHome,
+    actualAway,
+    fixtureId: match.id,
+  };
+  if (homeOk && awayOk) {
+    return { ...base, verified: true, reason: "Teams confirmed ✓" };
+  }
+  if (actualHome === null && actualAway === null) {
+    // Could not read teams from the fixture response — inconclusive, not a hard
+    // mismatch. The caller decides whether to proceed with a caveat.
+    return {
+      ...base,
+      verified: false,
+      reason: "INCONCLUSIVE — could not read teams from fixture response.",
+    };
+  }
+  return {
+    ...base,
+    verified: false,
+    reason: `ID mismatch: fixture ${match.id} has ${actualHome ?? "?"} vs ${
+      actualAway ?? "?"
+    }, expected ${match.home} vs ${match.away}.`,
+  };
 }
 
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
@@ -1708,7 +1803,7 @@ export async function collectMatchData(
     // Persist fresh (non-cache) results so a later run / individual retry can
     // reuse them. FAILED and SKIPPED are never cached (so they always re-run);
     // lineups ("6") are excluded inside writeCallCache.
-    if (!fromCache && status !== "FAILED" && status !== "SKIPPED") {
+    if (!fromCache && status !== "FAILED" && status !== "SKIPPED" && status !== "BLOCKED") {
       writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
     }
     console.log(
@@ -1734,11 +1829,21 @@ export async function collectMatchData(
     key: string,
     label: string,
     fn: () => Promise<unknown>,
-    opts: { skip?: boolean; skipReason?: string } = {},
+    opts: {
+      skip?: boolean;
+      skipReason?: string;
+      block?: boolean;
+      blockReason?: string;
+    } = {},
   ) => {
     stepKeys.push(key);
     const step = stepKeys.length;
     onProgress({ step, total: TOTAL_STEPS, label });
+    // A blocked call (C1 fixture mismatch) must NEVER fire its HTTP request.
+    if (opts.block) {
+      record(key, label, "BLOCKED", undefined, opts.blockReason);
+      return;
+    }
     if (opts.skip) {
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
@@ -1760,6 +1865,68 @@ export async function collectMatchData(
   const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
   // ---- STEP 1: data calls ----
+
+  // C1 FIXTURE VERIFICATION (runs FIRST). Confirms the resolved API-Football
+  // fixture id actually belongs to the teams we intend to analyse. Every
+  // API-Football id-dependent call (C3/C4/C5/C7/C8/C9A/C10) is BLOCKED if this
+  // fails, so we never silently analyse the wrong match.
+  let fixtureVerified = true;
+  let fixtureMismatchReason: string | null = null;
+  {
+    stepKeys.push("C1");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Verifying fixture id (C1)...",
+    });
+    if (tryLoadCache("C1")) {
+      // A cached FAILED is never persisted, so a cache hit means SUCCESS or an
+      // inconclusive EMPTY — neither should block.
+      fixtureVerified = callResults["C1"]?.status !== "FAILED";
+    } else {
+      currentDebugCall = "C1";
+      try {
+        const v = await verifyFixtureById(match);
+        const inconclusive = v.reason.startsWith("INCONCLUSIVE");
+        if (v.verified) {
+          fixtureVerified = true;
+          record("C1", "Fixture verification", "SUCCESS", v);
+        } else if (inconclusive) {
+          // Fail-safe: an unreadable verification response must NOT block the
+          // whole run. Proceed with a caveat.
+          fixtureVerified = true;
+          record("C1", "Fixture verification", "EMPTY", v, v.reason);
+        } else {
+          fixtureVerified = false;
+          fixtureMismatchReason = v.reason;
+          record("C1", "Fixture verification", "FAILED", v, v.reason);
+          console.error(`[analyse] C1 FIXTURE MISMATCH — ${v.reason}`);
+        }
+      } catch (e) {
+        // Verification call itself errored (network / rate limit). Inconclusive
+        // → do not block; the dependent calls proceed with a caveat row.
+        fixtureVerified = true;
+        record(
+          "C1",
+          "Fixture verification",
+          "EMPTY",
+          undefined,
+          `Verification inconclusive — ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        currentDebugCall = null;
+      }
+    }
+  }
+
+  // Block opts for any API-Football call that depends on the C1 fixture id.
+  const blockOpts = fixtureVerified
+    ? {}
+    : {
+        block: true,
+        blockReason: `C1 fixture mismatch, cannot proceed. ${fixtureMismatchReason ?? ""}`.trim(),
+      };
+
 
   // S0: resolve the TheStatsAPI match (id + per-team ids). Everything sourced
   // from TheStatsAPI (team stats, lineups, player stats, Pinnacle) depends on
@@ -1807,14 +1974,20 @@ export async function collectMatchData(
   });
 
   // 3: head-to-head
-  await runStep("3", "Fetching head-to-head data... (3/11)", () =>
-    afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`, afKey),
+  await runStep(
+    "3",
+    "Fetching head-to-head data... (3/11)",
+    () => afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`, afKey),
+    blockOpts,
   );
 
   // 4 step 1: home recent form
   let homeFixtureIds: number[] = [];
-  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () =>
-    afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+  await runStep(
+    "4-1",
+    "Fetching recent form step 1... (4/11)",
+    async () => afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+    blockOpts,
   );
   // Derive ids AFTER the step so a cached 4-1 (fn not executed) still feeds 4-3.
   homeFixtureIds = extractArray(callResults["4-1"]?.data)
@@ -1823,23 +1996,34 @@ export async function collectMatchData(
 
   // 4 step 2: away recent form
   let awayFixtureIds: number[] = [];
-  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () =>
-    afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+  await runStep(
+    "4-2",
+    "Fetching recent form step 2... (5/11)",
+    async () => afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+    blockOpts,
   );
   awayFixtureIds = extractArray(callResults["4-2"]?.data)
     .map((f) => getField(getField(f, ["fixture"]), ["id"]))
     .filter((id): id is number => typeof id === "number");
 
   // 4 step 3: combined batch
-  await runStep("4-3", "Fetching recent form batch... (6/11)", () => {
-    const ids = Array.from(new Set([...homeFixtureIds, ...awayFixtureIds])).slice(0, 10);
-    if (ids.length === 0) return Promise.resolve(null);
-    return afGet(`/fixtures?ids=${ids.join("-")}`, afKey);
-  });
+  await runStep(
+    "4-3",
+    "Fetching recent form batch... (6/11)",
+    () => {
+      const ids = Array.from(new Set([...homeFixtureIds, ...awayFixtureIds])).slice(0, 10);
+      if (ids.length === 0) return Promise.resolve(null);
+      return afGet(`/fixtures?ids=${ids.join("-")}`, afKey);
+    },
+    blockOpts,
+  );
 
   // 5: injuries
-  await runStep("5", "Fetching injuries... (7/11)", () =>
-    afGet(`/injuries?fixture=${match.id}`, afKey),
+  await runStep(
+    "5",
+    "Fetching injuries... (7/11)",
+    () => afGet(`/injuries?fixture=${match.id}`, afKey),
+    blockOpts,
   );
 
   // 6 (S3): confirmed lineups (TheStatsAPI).
@@ -1942,7 +2126,9 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching referee profile (S7)... (9/11)",
     });
-    if (!tryLoadCache("7")) {
+    if (!fixtureVerified) {
+      record("7", "Referee profile", "BLOCKED", undefined, blockOpts.blockReason);
+    } else if (!tryLoadCache("7")) {
     currentDebugCall = "7";
     try {
       let profile: RefereeProfile | null = null;
@@ -2016,12 +2202,13 @@ export async function collectMatchData(
   }
 
 
-  // 8: predictions (skipped if near daily cap)
+  // 8: predictions (blocked on C1 mismatch; else skipped if near daily cap)
   await runStep(
     "8",
     "Fetching predictions... (10/11)",
     () => afGet(`/predictions?fixture=${match.id}`, afKey),
     {
+      ...blockOpts,
       skip: counterWarning,
       skipReason: "Skipped — daily API budget near limit (>=85).",
     },
@@ -2053,7 +2240,7 @@ export async function collectMatchData(
       afKey,
     );
     return { stakeOdds: afOdds };
-  });
+  }, blockOpts);
 
   // CALL 9B: TheStatsAPI Pinnacle odds + line movement.
   // Reuses the TheStatsAPI match_id resolved for CALL 6. Fetches
@@ -2336,7 +2523,9 @@ export async function collectMatchData(
 
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
   const nr = nextRound(match.round);
-  if (tryLoadCache("10")) {
+  if (!fixtureVerified) {
+    record("10", "Next-round bracket", "BLOCKED", undefined, blockOpts.blockReason);
+  } else if (tryLoadCache("10")) {
     /* reused fresh cached bracket */
   } else if (counterWarning) {
     record("10", "Next-round bracket", "SKIPPED", undefined,
@@ -2614,7 +2803,7 @@ export interface CallDisplaySpec {
 
 export const CALL_DISPLAY_SPECS: CallDisplaySpec[] = [
   // ---- API-FOOTBALL ----
-  { id: "C1", label: "Fixtures", api: "API-FOOTBALL", keys: ["C1"], mandatory: true },
+  { id: "C1", label: "Fixture verification", api: "API-FOOTBALL", keys: ["C1"], mandatory: true, retryKey: "C1" },
   { id: "C3", label: "Head to Head", api: "API-FOOTBALL", keys: ["3"], mandatory: false, retryKey: "3" },
   { id: "C4", label: "Last 5 Form", api: "API-FOOTBALL", keys: ["4-1", "4-2", "4-3"], mandatory: false, retryKey: "4" },
   { id: "C5", label: "Injuries", api: "API-FOOTBALL", keys: ["5"], mandatory: false, retryKey: "5" },
@@ -2638,14 +2827,24 @@ export type DisplayStatus =
   | "EMPTY"
   | "PROPAGATING"
   | "FAILED"
+  | "BLOCKED"
+  | "MISMATCH"
   | "PENDING";
 
 export function deriveDisplayStatus(
   spec: CallDisplaySpec,
   callResults: Record<string, CallResult>,
 ): DisplayStatus {
-  // C1 (fixtures) is satisfied by the match existing in the list.
-  if (spec.id === "C1") return "SUCCESS";
+  // C1 is the fixture-verification step. Reflect the real result: VERIFIED
+  // (SUCCESS), MISMATCH (hard FAILED), or PENDING before it has run. An
+  // inconclusive EMPTY still shows SUCCESS-ish (verified with caveat).
+  if (spec.id === "C1") {
+    const c1 = callResults["C1"];
+    if (!c1) return "PENDING";
+    if (c1.status === "FAILED") return "MISMATCH";
+    if (c1.status === "EMPTY") return "EMPTY";
+    return c1.cached ? "CACHED" : "SUCCESS";
+  }
 
   // Lineups are never cached and their absence is expected/optional — surface
   // PROPAGATING vs EMPTY rather than a hard FAILED.
@@ -2659,6 +2858,8 @@ export function deriveDisplayStatus(
 
   const results = spec.keys.map((k) => callResults[k]).filter(Boolean) as CallResult[];
   if (results.length === 0) return "PENDING";
+  // A BLOCKED dependent call (C1 mismatch) takes precedence over any other state.
+  if (results.some((r) => r.status === "BLOCKED")) return "BLOCKED";
   if (results.some((r) => r.status === "FAILED")) return "FAILED";
 
   const withData = results.filter((r) => r.status === "SUCCESS");
@@ -2748,7 +2949,7 @@ export async function retrySingleCall(
     const validated = data !== undefined ? replaceNulls(data) : undefined;
     const fetchedAt = Date.now();
     out[key] = { key, label, status, data: validated, error, cached: false, fetchedAt };
-    if (status !== "FAILED" && status !== "SKIPPED") {
+    if (status !== "FAILED" && status !== "SKIPPED" && status !== "BLOCKED") {
       writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
     }
   };
@@ -2756,9 +2957,65 @@ export async function retrySingleCall(
   const counterWarning = getApiCallCount() >= WARNING_THRESHOLD;
   const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
+  // Any API-Football id-dependent retry must re-confirm the C1 fixture
+  // verification first. A cached SUCCESS is trusted; a cached FAILED (or a fresh
+  // mismatch) blocks the retry so a wrong fixture id can never re-enter via the
+  // individual retry path.
+  const AF_ID_DEPENDENT = new Set(["3", "4", "5", "7", "8", "9", "10"]);
+  const ensureVerifiedForRetry = async (): Promise<boolean> => {
+    const cached = readCallCache(match.id, "C1");
+    if (cached?.status === "SUCCESS" || cached?.status === "EMPTY") return true;
+    if (cached?.status === "FAILED") return false;
+    try {
+      const v = await verifyFixtureById(match);
+      if (v.reason.startsWith("INCONCLUSIVE")) {
+        rec("C1", "Fixture verification", "EMPTY", v, v.reason);
+        return true;
+      }
+      rec("C1", "Fixture verification", v.verified ? "SUCCESS" : "FAILED", v, v.reason);
+      return v.verified;
+    } catch {
+      return true; // inconclusive network error → don't block
+    }
+  };
+
+  if (AF_ID_DEPENDENT.has(retryKey)) {
+    const ok = await ensureVerifiedForRetry();
+    if (!ok) {
+      const reason = "C1 fixture mismatch, cannot proceed. Retry C1 first.";
+      // Mark every id-dependent surface for this key BLOCKED.
+      const map: Record<string, [string, string][]> = {
+        "3": [["3", "Head-to-head"]],
+        "4": [["4-1", "Recent form (home)"], ["4-2", "Recent form (away)"], ["4-3", "Recent form batch"]],
+        "5": [["5", "Injuries"]],
+        "7": [["7", "Referee profile"]],
+        "8": [["8", "Predictions"]],
+        "9": [["9", "Stake odds"]],
+        "10": [["10", "Next-round bracket"]],
+      };
+      for (const [k, l] of map[retryKey] ?? [[retryKey, retryKey]]) {
+        rec(k, l, "BLOCKED", undefined, reason);
+      }
+      return out;
+    }
+  }
+
   currentDebugCall = retryKey;
   try {
     switch (retryKey) {
+      case "C1": {
+        try {
+          const v = await verifyFixtureById(match);
+          if (v.reason.startsWith("INCONCLUSIVE")) {
+            rec("C1", "Fixture verification", "EMPTY", v, v.reason);
+          } else {
+            rec("C1", "Fixture verification", v.verified ? "SUCCESS" : "FAILED", v, v.reason);
+          }
+        } catch (e) {
+          rec("C1", "Fixture verification", "EMPTY", undefined, `Verification inconclusive — ${msg(e)}`);
+        }
+        break;
+      }
       case "3": {
         try {
           const r = await afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`);

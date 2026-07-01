@@ -4,6 +4,7 @@ import type {
   CallPanelRow,
   CallResult,
   DisplayStatus,
+  FixtureVerification,
 } from "@/lib/analyse";
 
 interface CallStatusPanelProps {
@@ -24,6 +25,8 @@ const STATUS_META: Record<
   EMPTY: { icon: "⚠️", label: "EMPTY", className: "text-accent-amber" },
   PROPAGATING: { icon: "⚠️", label: "PROPAGATING", className: "text-accent-amber" },
   FAILED: { icon: "❌", label: "FAILED", className: "text-signal-red" },
+  BLOCKED: { icon: "⛔", label: "BLOCKED", className: "text-signal-red" },
+  MISMATCH: { icon: "❌", label: "MISMATCH", className: "text-signal-red" },
   PENDING: { icon: "…", label: "PENDING", className: "text-slate" },
 };
 
@@ -84,7 +87,10 @@ function StatusRow({
   const meta = STATUS_META[row.status];
   const retryKey = row.spec.retryKey;
   const canRetry =
-    (row.status === "FAILED" || row.status === "PROPAGATING") && !!retryKey;
+    (row.status === "FAILED" ||
+      row.status === "PROPAGATING" ||
+      row.status === "MISMATCH") &&
+    !!retryKey;
   const isRetrying = retryKey ? retrying.has(retryKey) : false;
   const countdown =
     retryKey && propagatingCountdown ? propagatingCountdown[retryKey] : undefined;
@@ -134,11 +140,22 @@ export function CallStatusPanel({
   onClearCache,
   propagatingCountdown,
 }: CallStatusPanelProps) {
-  const afRows = summary.rows.filter((r) => r.spec.api === "API-FOOTBALL");
+  const c1Row = summary.rows.find((r) => r.spec.id === "C1");
+  const afRows = summary.rows.filter(
+    (r) => r.spec.api === "API-FOOTBALL" && r.spec.id !== "C1",
+  );
   const saRows = summary.rows.filter((r) => r.spec.api === "THESTATSAPI");
 
   return (
     <div className="flex w-full flex-col gap-3 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
+      {c1Row && (
+        <FixtureResolution
+          row={c1Row}
+          retrying={retrying}
+          onRetry={onRetry}
+        />
+      )}
+
       <div className="flex flex-col gap-1">
         <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate">
           API-Football
@@ -178,6 +195,93 @@ export function CallStatusPanel({
       >
         Clear cache for this match
       </button>
+    </div>
+  );
+}
+
+// FIXTURE RESOLUTION — always shown at the very top so fixture-id resolution is
+// visible and auditable on every run rather than silently trusted.
+function FixtureResolution({
+  row,
+  retrying,
+  onRetry,
+}: {
+  row: CallPanelRow;
+  retrying: Set<string>;
+  onRetry: (retryKey: string) => void;
+}) {
+  const v = row.results[0]?.data as FixtureVerification | undefined;
+  const isRetrying = retrying.has("C1");
+  const verified = row.status === "SUCCESS" || row.status === "CACHED";
+  const mismatch = row.status === "MISMATCH";
+  const inconclusive = row.status === "EMPTY";
+
+  const tone = mismatch
+    ? "border-signal-red/60 bg-signal-red/10"
+    : inconclusive
+      ? "border-accent-amber/50 bg-accent-amber/10"
+      : verified
+        ? "border-signal-green/50 bg-signal-green/10"
+        : "border-border bg-background/60";
+
+  return (
+    <div className={`flex flex-col gap-1 rounded-md border px-3 py-2 ${tone}`}>
+      <div className="text-[10px] font-bold uppercase tracking-widest text-slate">
+        Fixture Resolution
+      </div>
+
+      {mismatch ? (
+        <div className="text-signal-red">
+          <p className="font-bold">
+            ⚠️ FIXTURE MISMATCH DETECTED — C1 resolved to the wrong match.
+          </p>
+          <p className="mt-0.5 text-[11px]">
+            Expected: {v?.expectedHome ?? "?"} vs {v?.expectedAway ?? "?"}
+          </p>
+          <p className="text-[11px]">
+            Got: {v?.actualHome ?? "?"} vs {v?.actualAway ?? "?"} · id {v?.fixtureId ?? "?"}
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate">
+            All dependent calls are BLOCKED. Check the fixture lookup and retry.
+          </p>
+          <button
+            type="button"
+            disabled={isRetrying}
+            onClick={() => onRetry("C1")}
+            className="mt-1 rounded border border-signal-red/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-signal-red transition-colors hover:bg-signal-red/10 disabled:opacity-50"
+          >
+            {isRetrying ? "Re-verifying…" : "Retry C1"}
+          </button>
+        </div>
+      ) : verified ? (
+        <div className="text-signal-green">
+          <p className="font-bold">
+            C1 · ✅ VERIFIED {row.status === "CACHED" ? "(cached)" : ""}
+          </p>
+          <p className="mt-0.5 text-[11px] text-foreground">
+            {v?.actualHome ?? v?.expectedHome} vs {v?.actualAway ?? v?.expectedAway} · id{" "}
+            {v?.fixtureId}
+          </p>
+          <p className="text-[11px] text-slate">Teams confirmed ✓</p>
+        </div>
+      ) : inconclusive ? (
+        <div className="text-accent-amber">
+          <p className="font-bold">C1 · ⚠️ UNVERIFIED (inconclusive)</p>
+          <p className="mt-0.5 text-[11px] text-slate">
+            {row.results[0]?.error ?? "Verification response unreadable — proceeding with caveat."}
+          </p>
+          <button
+            type="button"
+            disabled={isRetrying}
+            onClick={() => onRetry("C1")}
+            className="mt-1 rounded border border-accent-amber/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-amber transition-colors hover:bg-accent-amber/10 disabled:opacity-50"
+          >
+            {isRetrying ? "Re-verifying…" : "Re-verify C1"}
+          </button>
+        </div>
+      ) : (
+        <p className="text-[11px] text-slate">C1 · … verifying fixture id…</p>
+      )}
     </div>
   );
 }
