@@ -1803,7 +1803,7 @@ export async function collectMatchData(
     // Persist fresh (non-cache) results so a later run / individual retry can
     // reuse them. FAILED and SKIPPED are never cached (so they always re-run);
     // lineups ("6") are excluded inside writeCallCache.
-    if (!fromCache && status !== "FAILED" && status !== "SKIPPED") {
+    if (!fromCache && status !== "FAILED" && status !== "SKIPPED" && status !== "BLOCKED") {
       writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
     }
     console.log(
