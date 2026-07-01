@@ -796,6 +796,80 @@ function extractStake1X2(stakeOdds: unknown): Record<string, number | null> {
   return out;
 }
 
+// Trim the RAW API-Football /odds response down to ONLY the markets the analysis
+// actually uses. The raw response for a single bookmaker still carries ~160 bet
+// markets (correct score, exact goals, halftime combos, etc.) with dozens of
+// values each — dumping all of that into the Claude prompt inflated a single run
+// past 200k input tokens, which made Claude take >100s and the request die with
+// a Cloudflare 524 origin-timeout. We keep 1X2, Over/Under 2.5, BTTS, Corners
+// 9.5 and Asian Handicap only.
+const WANTED_STAKE_MARKETS: Array<{
+  label: string;
+  match: (name: string) => boolean;
+  valueFilter?: (value: string) => boolean;
+}> = [
+  {
+    label: "1X2 (Match Winner)",
+    match: (n) => /match winner|1x2|full time result|home\/away/.test(n),
+  },
+  {
+    label: "Over/Under 2.5 Goals",
+    match: (n) => /goals over\/under|over\/under|total goals/.test(n) && !n.includes("corner"),
+    valueFilter: (v) => v.includes("2.5"),
+  },
+  {
+    label: "Both Teams To Score",
+    match: (n) => /both teams|btts/.test(n),
+  },
+  {
+    label: "Corners Over/Under 9.5",
+    match: (n) => n.includes("corner"),
+    valueFilter: (v) => v.includes("9.5"),
+  },
+  {
+    label: "Asian Handicap",
+    match: (n) => n.includes("asian handicap"),
+  },
+];
+
+export function extractStakeMarkets(
+  stakeOdds: unknown,
+): {
+  bookmaker: string | null;
+  markets: Record<string, Array<{ value: string; odd: string }>>;
+} | null {
+  const responseArr = extractArray(stakeOdds);
+  if (!responseArr.length) return null;
+  let bookmakerName: string | null = null;
+  const markets: Record<string, Array<{ value: string; odd: string }>> = {};
+  for (const item of responseArr) {
+    const bookmakers = extractArray(getField(item, ["bookmakers"]));
+    for (const bk of bookmakers) {
+      if (bookmakerName === null) {
+        const bn = getField(bk, ["name"]);
+        if (typeof bn === "string") bookmakerName = bn;
+      }
+      const bets = extractArray(getField(bk, ["bets"]));
+      for (const bet of bets) {
+        const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+        const spec = WANTED_STAKE_MARKETS.find((w) => w.match(betName));
+        if (!spec) continue;
+        const values = extractArray(getField(bet, ["values"]))
+          .map((v) => ({
+            value: String(getField(v, ["value"]) ?? ""),
+            odd: String(getField(v, ["odd", "odds", "price"]) ?? ""),
+          }))
+          .filter((v) =>
+            spec.valueFilter ? spec.valueFilter(v.value.toLowerCase()) : true,
+          );
+        if (values.length && !markets[spec.label]) markets[spec.label] = values;
+      }
+    }
+  }
+  return Object.keys(markets).length ? { bookmaker: bookmakerName, markets } : null;
+}
+
+
 // Step 4 — gap check: compare Stake odds vs Pinnacle current odds (1X2).
 // Higher decimal odds = better price for the bettor.
 function buildStakeGapCheck(
