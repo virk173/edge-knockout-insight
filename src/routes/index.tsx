@@ -176,6 +176,9 @@ interface MatchState {
   analysing: boolean;
   retrying: string[];
   lastRunAt: number | null;
+  analysisSavedAt: number | null; // when the persisted result was written
+  loadedFromCache: boolean; // true when analysisResult was hydrated from localStorage
+
 }
 
 const EMPTY_MATCH_STATE: MatchState = {
@@ -190,6 +193,9 @@ const EMPTY_MATCH_STATE: MatchState = {
   analysing: false,
   retrying: [],
   lastRunAt: null,
+  analysisSavedAt: null,
+  loadedFromCache: false,
+
 };
 
 type Tab = "analysis" | "log";
