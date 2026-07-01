@@ -1058,7 +1058,6 @@ function MatchView({
   onAnalyse,
   onRetry,
   onResumeCalls,
-  onResumePoll,
   onClearCache,
   onResetBudget,
   patchState,
