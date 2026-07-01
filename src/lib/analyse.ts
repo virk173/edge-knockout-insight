@@ -485,8 +485,10 @@ export function formatDataForClaude(
           ? "Pinnacle odds"
           : `${bk} odds (Pinnacle unavailable — set pinnacle_odds null)`;
       }
+      // Ship the COMPACT Claude-facing shape (raw stays in callResults/cache).
+      const shipped = compactForClaude(n, validated);
       blocks.push(
-        `[CALL ${n} — ${header} — SUCCESS]\n${JSON.stringify(validated, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${header} — SUCCESS]\n${JSON.stringify(shipped, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
