@@ -1,14 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { ClaudeCallResult } from "./claude.server";
 
 /**
  * analyse-match
  *
- * Server-side proxy to the Anthropic Messages API. The frontend calls this
- * instead of talking to Anthropic directly, so the API key never reaches the
- * browser. The key is read from the server-only `ANTHROPIC_KEY` env var.
+ * Synchronous server-side proxy to the Anthropic Messages API. Kept for
+ * backward compatibility / one-shot calls. The preferred path is now the
+ * background-job API (startAnalysis + getAnalysisResult) so a running analysis
+ * survives the browser being backgrounded.
  *
- * Input:  { systemPrompt: string, matchData: string, model?: string, maxTokens?: number }
- * Output: the raw Claude JSON response (or a typed error shape on failure).
+ * The actual Claude request lives in callClaude() (claude.server.ts) so its
+ * config — model, max_tokens, prompt caching, timeout, retry — is identical
+ * whether it runs synchronously here or inside a background job.
  */
 
 interface AnalyseMatchInput {
@@ -18,16 +21,12 @@ interface AnalyseMatchInput {
   maxTokens?: number;
 }
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_TOKENS = 8000;
-
 function validateInput(input: unknown): AnalyseMatchInput {
   if (typeof input !== "object" || input === null) {
     throw new Error("Request body must be an object.");
   }
   const { systemPrompt, userMessage, matchData, model, maxTokens } =
     input as Record<string, unknown>;
-  // Accept either `userMessage` (preferred) or legacy `matchData`.
   const message =
     typeof userMessage === "string" && userMessage.trim()
       ? userMessage
@@ -43,145 +42,14 @@ function validateInput(input: unknown): AnalyseMatchInput {
   return {
     systemPrompt,
     userMessage: message,
-    model: typeof model === "string" && model.trim() ? model : DEFAULT_MODEL,
-    maxTokens: typeof maxTokens === "number" && maxTokens > 0 ? maxTokens : DEFAULT_MAX_TOKENS,
+    model: typeof model === "string" && model.trim() ? model : undefined,
+    maxTokens: typeof maxTokens === "number" && maxTokens > 0 ? maxTokens : undefined,
   };
 }
 
 export const analyseMatch = createServerFn({ method: "POST" })
   .inputValidator(validateInput)
-  .handler(async ({ data }) => {
-    const apiKey = process.env.ANTHROPIC_KEY;
-    if (!apiKey) {
-      return {
-        ok: false as const,
-        error: "Anthropic API key is not configured on the server.",
-      };
-    }
-
-    // Anthropic sits behind Cloudflare; during peak load / degraded service the
-    // response can exceed the normal 15-30s window. Cap each request at 3 minutes
-    // and retry ONCE (after 10s) for transient timeouts / 5xx before surfacing a
-    // clear error.
-    const TIMEOUT_MS = 180_000;
-    const TIMEOUT_MESSAGE =
-      "Analysis timed out after 3 minutes. Anthropic API may be experiencing slow response times. Check status.anthropic.com and retry.";
-    const requestBody = JSON.stringify({
-      model: data.model,
-      max_tokens: data.maxTokens,
-      // Prompt caching (REST format): system is an array of content blocks and
-      // cache_control is attached to the block, not the top level. The large,
-      // static system prompt is cached so subsequent calls read it instead of
-      // re-processing all its tokens.
-      //
-      // TTL is set to "1h" (extended cache) instead of the default 5 minutes.
-      // Writing a 1h cache costs slightly more, but it keeps the system prompt
-      // warm across same-day matches that kick off 1-3 hours apart — worth it
-      // whenever 2+ matches are analysed within an hour in the same session.
-      // Requires the "extended-cache-ttl-2025-04-11" beta header below.
-      system: [
-        {
-          type: "text",
-          text: data.systemPrompt,
-          cache_control: { type: "ephemeral", ttl: "1h" },
-        },
-      ],
-      messages: [{ role: "user", content: data.userMessage }],
-    });
-
-    const callAnthropic = async (): Promise<Response> => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-      try {
-        return await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11",
-          },
-          body: requestBody,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-    };
-
-    const isTransient = (status: number) =>
-      status === 524 || status === 529 || status === 503 || status === 502;
-
-    let response: Response;
-    try {
-      response = await callAnthropic();
-      // Retry once on a transient server-side timeout / overload.
-      if (isTransient(response.status)) {
-        console.warn(`analyse-match: transient ${response.status} — retrying in 10s`);
-        await new Promise((r) => setTimeout(r, 10_000));
-        response = await callAnthropic();
-      }
-    } catch (err) {
-      const isAbort = err instanceof Error && err.name === "AbortError";
-      if (isAbort) {
-        console.error("analyse-match: Anthropic request timed out after 180s", err);
-        return {
-          ok: false as const,
-          error_type: "TIMEOUT" as const,
-          error: TIMEOUT_MESSAGE,
-        };
-      }
-      // Retry once on a network error before giving up.
-      try {
-        await new Promise((r) => setTimeout(r, 10_000));
-        response = await callAnthropic();
-      } catch (retryErr) {
-        console.error("analyse-match: network error calling Anthropic", retryErr);
-        return { ok: false as const, error: "Failed to reach the Anthropic API." };
-      }
-    }
-
-    const payload = await response.json().catch(() => null);
-
-
-    if (!response.ok) {
-      console.error("analyse-match: Anthropic API error", response.status, payload);
-      const apiError = (payload as { error?: { type?: string; message?: string } } | null)?.error;
-      if (
-        response.status === 400 &&
-        apiError?.type === "invalid_request_error" &&
-        typeof apiError?.message === "string" &&
-        apiError.message.toLowerCase().includes("credit balance")
-      ) {
-        return {
-          ok: false as const,
-          error_type: "BILLING" as const,
-          error:
-            "Anthropic account credit balance is too low. Add credits at console.anthropic.com/settings/billing before running analysis.",
-          status: 400,
-        };
-      }
-      if (response.status === 429) {
-        return { ok: false as const, error: "Rate limit exceeded. Please try again shortly.", status: 429 };
-      }
-      if (isTransient(response.status)) {
-        return {
-          ok: false as const,
-          error_type: "TIMEOUT" as const,
-          error: TIMEOUT_MESSAGE,
-          status: response.status,
-        };
-      }
-      if (response.status === 401) {
-        return { ok: false as const, error: "Invalid Anthropic API key.", status: 401 };
-      }
-      return {
-        ok: false as const,
-        error: "The analysis service returned an error.",
-        status: response.status,
-      };
-    }
-
-    // Return the raw Claude JSON response.
-    return { ok: true as const, data: payload };
+  .handler(async ({ data }): Promise<ClaudeCallResult> => {
+    const { callClaude } = await import("./claude.server");
+    return callClaude(data);
   });
