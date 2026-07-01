@@ -643,6 +643,46 @@ Start your response with { and end with }.`;
     await runClaudeAnalysis(match, collection);
   }
 
+  // Retry a SINGLE failed/optional call without touching any other call. Merges
+  // the fresh result into the current collection and updates its cache.
+  async function handleRetryCall(match: AnalysedMatch, retryKey: string) {
+    setRetrying((prev) => new Set(prev).add(retryKey));
+    try {
+      const updated = await retrySingleCall(match, retryKey);
+      setCollection((prev) =>
+        prev
+          ? { ...prev, callResults: { ...prev.callResults, ...updated } }
+          : prev,
+      );
+      setApiCalls(getApiCallCount());
+      const merged = { ...(collection?.callResults ?? {}), ...updated };
+      const ok = Object.values(updated).some((r) => r.status === "SUCCESS");
+      if (ok) toast.success(`Retried ${retryKey} — updated`);
+      else toast.warning(`Retried ${retryKey} — still no data`);
+      void merged;
+    } catch (e) {
+      toast.error(`Retry failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setRetrying((prev) => {
+        const next = new Set(prev);
+        next.delete(retryKey);
+        return next;
+      });
+    }
+  }
+
+  // Wipe every cached call result for this match and reset its status panel.
+  function handleClearMatchCache(match: AnalysedMatch) {
+    clearMatchCache(match.id);
+    setCollection(null);
+    setCollectError(null);
+    setAnalysisResult(null);
+    setAnalysisRaw(null);
+    toast.success("Cache cleared — run calls again for a fresh fetch");
+  }
+
+
+
   // Debug Mode: run the full pipeline against a fixed real fixture
   // (Germany vs Paraguay, June 29) instead of today's timing-gated matches.
   //
