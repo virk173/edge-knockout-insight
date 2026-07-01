@@ -613,7 +613,7 @@ export const validateDimensionWeights = (inputs: {
   }
 
   return {
-    weights: inputs.weights,
+    weights,
     expected_weights: expected,
     mismatch_flags: mismatchFlags,
     sum_valid: sumValid,
