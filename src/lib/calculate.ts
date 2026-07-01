@@ -596,11 +596,12 @@ export const validateDimensionWeights = (inputs: {
     expected.D1 = 40;
   }
 
+  const weights = inputs.weights;
   const mismatchFlags: string[] = [];
   (Object.keys(expected) as (keyof DimensionWeights)[]).forEach((k) => {
-    if (Math.abs(inputs.weights[k] - expected[k]) > 2) {
+    if (Math.abs(weights[k] - expected[k]) > 2) {
       mismatchFlags.push(
-        `${k}: Claude used ${inputs.weights[k]}, expected ${expected[k]} given data conditions.`,
+        `${k}: Claude used ${weights[k]}, expected ${expected[k]} given data conditions.`,
       );
     }
   });
