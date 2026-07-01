@@ -53,12 +53,13 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MAX_TOKENS = 8000;
 
-// Per-attempt timeout. 60s is generous for ~18.6k input tokens (typical
-// response is 15-30s) and gives a CLEAN failure well before any worker-isolate
-// restart risk — a shorter total run means the in-memory job store is far less
-// likely to be swept out from under a still-running request (the real cause of
-// the old "Job expired" reports on 3-minute calls).
-const TIMEOUT_MS = 60_000;
+// Per-attempt timeout. Generating up to 8k OUTPUT tokens is the bottleneck
+// (~60-90s), independent of Anthropic load, so 60s was too tight and every
+// attempt aborted mid-generation. 90s lets a normal response finish while still
+// failing cleanly far inside the 10-min job TTL (worst case 90+10+90+10+90 =
+// ~290s) — well before any worker-isolate restart can strand the in-memory job
+// (the real cause of the old "Job expired" reports on 3-minute calls).
+const TIMEOUT_MS = 90_000;
 const WAIT_BETWEEN_MS = 10_000;
 const TIMEOUT_MESSAGE =
   "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 60s each). Please retry.";
