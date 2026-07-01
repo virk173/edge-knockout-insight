@@ -1073,7 +1073,6 @@ function MatchView({
   onAnalyse: () => void;
   onRetry: (retryKey: string) => void;
   onResumeCalls: () => void;
-  onResumePoll: () => void;
   onClearCache: () => void;
   onResetBudget: () => void;
   patchState: (partial: Partial<MatchState>) => void;
