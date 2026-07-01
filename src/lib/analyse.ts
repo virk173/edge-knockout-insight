@@ -2949,7 +2949,7 @@ export async function retrySingleCall(
     const validated = data !== undefined ? replaceNulls(data) : undefined;
     const fetchedAt = Date.now();
     out[key] = { key, label, status, data: validated, error, cached: false, fetchedAt };
-    if (status !== "FAILED" && status !== "SKIPPED") {
+    if (status !== "FAILED" && status !== "SKIPPED" && status !== "BLOCKED") {
       writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
     }
   };
@@ -2957,9 +2957,65 @@ export async function retrySingleCall(
   const counterWarning = getApiCallCount() >= WARNING_THRESHOLD;
   const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
 
+  // Any API-Football id-dependent retry must re-confirm the C1 fixture
+  // verification first. A cached SUCCESS is trusted; a cached FAILED (or a fresh
+  // mismatch) blocks the retry so a wrong fixture id can never re-enter via the
+  // individual retry path.
+  const AF_ID_DEPENDENT = new Set(["3", "4", "5", "7", "8", "9", "10"]);
+  const ensureVerifiedForRetry = async (): Promise<boolean> => {
+    const cached = readCallCache(match.id, "C1");
+    if (cached?.status === "SUCCESS" || cached?.status === "EMPTY") return true;
+    if (cached?.status === "FAILED") return false;
+    try {
+      const v = await verifyFixtureById(match);
+      if (v.reason.startsWith("INCONCLUSIVE")) {
+        rec("C1", "Fixture verification", "EMPTY", v, v.reason);
+        return true;
+      }
+      rec("C1", "Fixture verification", v.verified ? "SUCCESS" : "FAILED", v, v.reason);
+      return v.verified;
+    } catch {
+      return true; // inconclusive network error → don't block
+    }
+  };
+
+  if (AF_ID_DEPENDENT.has(retryKey)) {
+    const ok = await ensureVerifiedForRetry();
+    if (!ok) {
+      const reason = "C1 fixture mismatch, cannot proceed. Retry C1 first.";
+      // Mark every id-dependent surface for this key BLOCKED.
+      const map: Record<string, [string, string][]> = {
+        "3": [["3", "Head-to-head"]],
+        "4": [["4-1", "Recent form (home)"], ["4-2", "Recent form (away)"], ["4-3", "Recent form batch"]],
+        "5": [["5", "Injuries"]],
+        "7": [["7", "Referee profile"]],
+        "8": [["8", "Predictions"]],
+        "9": [["9", "Stake odds"]],
+        "10": [["10", "Next-round bracket"]],
+      };
+      for (const [k, l] of map[retryKey] ?? [[retryKey, retryKey]]) {
+        rec(k, l, "BLOCKED", undefined, reason);
+      }
+      return out;
+    }
+  }
+
   currentDebugCall = retryKey;
   try {
     switch (retryKey) {
+      case "C1": {
+        try {
+          const v = await verifyFixtureById(match);
+          if (v.reason.startsWith("INCONCLUSIVE")) {
+            rec("C1", "Fixture verification", "EMPTY", v, v.reason);
+          } else {
+            rec("C1", "Fixture verification", v.verified ? "SUCCESS" : "FAILED", v, v.reason);
+          }
+        } catch (e) {
+          rec("C1", "Fixture verification", "EMPTY", undefined, `Verification inconclusive — ${msg(e)}`);
+        }
+        break;
+      }
       case "3": {
         try {
           const r = await afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`);
