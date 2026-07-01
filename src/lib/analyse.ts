@@ -2012,6 +2012,7 @@ export async function collectMatchData(
     } finally {
       currentDebugCall = null;
     }
+    }
   }
 
 
