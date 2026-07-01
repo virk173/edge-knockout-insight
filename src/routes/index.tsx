@@ -222,17 +222,10 @@ function Index() {
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
   const [analysisElapsedSec, setAnalysisElapsedSec] = useState(0);
 
-  const callStartAnalysis = useServerFn(startAnalysis);
-  const callGetAnalysisResult = useServerFn(getAnalysisResult);
+  const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const lineupRefetchedRef = useRef<Set<number>>(new Set());
   const lineupFinalRecheckRef = useRef<Set<number>>(new Set());
-  // Active analysis-poll controllers, keyed by match id. Lets a background job
-  // keep being polled independently of which match view is open.
-  const pollControllers = useRef<Map<number, PollController>>(new Map());
-  // Match ids whose analysis was running while the tab was backgrounded — used
-  // to show the "completed while you were away" banner on return.
-  const backgroundedRef = useRef<Set<number>>(new Set());
 
   // Helpers to read/patch per-match state.
   const getState = (id: number | null): MatchState =>
@@ -254,17 +247,7 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
-  // Clear any live poll timers when the component unmounts.
-  useEffect(() => {
-    const controllers = pollControllers.current;
-    return () => {
-      for (const c of controllers.values()) {
-        c.canceled = true;
-        if (c.timer) clearInterval(c.timer);
-      }
-      controllers.clear();
-    };
-  }, []);
+
 
 
   useEffect(() => {
