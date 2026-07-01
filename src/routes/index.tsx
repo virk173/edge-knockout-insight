@@ -314,6 +314,43 @@ function Index() {
     });
   }, [matches]);
 
+  // Resume any in-flight background analysis jobs when fixtures load or when the
+  // tab regains focus after being backgrounded. If a job finished while away,
+  // the poll picks up the completed result and the "away" banner is shown.
+  useEffect(() => {
+    if (!matches) return;
+
+    const resumeAll = (markAway: boolean) => {
+      // Mark every match that currently believes it is analysing as having been
+      // backgrounded, so completions surface the "while you were away" banner.
+      if (markAway) {
+        for (const m of matches) {
+          const st = matchStates[m.id];
+          if (st?.analysing || pollControllers.current.has(m.id)) {
+            backgroundedRef.current.add(m.id);
+          }
+        }
+      }
+      for (const m of matches) resumeIfPending(m.id, markAway);
+    };
+
+    // Initial mount: resume without treating as "away".
+    resumeAll(false);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") resumeAll(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches]);
+
+
+
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
     setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
   }
