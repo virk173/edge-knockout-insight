@@ -714,6 +714,7 @@ function FixturesView({
   onRefresh,
   onOpenMatch,
   matchStates,
+  fetchedAt,
 }: {
   matches: AnalysedMatch[] | null;
   loading: boolean;
@@ -726,6 +727,7 @@ function FixturesView({
   onRefresh: () => void;
   onOpenMatch: (m: AnalysedMatch) => void;
   matchStates: Record<number, MatchState>;
+  fetchedAt: number | null;
 }) {
   const sorted = matches
     ? [...matches].sort(
