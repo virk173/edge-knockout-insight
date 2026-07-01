@@ -154,6 +154,7 @@ Do not bet unallocated amounts.`;
 
 interface CallSummary {
   callsLabel: string;
+  failedLabel: string | null;
   lineupsLabel: string;
   lineupsTone: "green" | "amber" | "red";
   quality: "FULL" | "PARTIAL" | "THIN";
@@ -171,9 +172,23 @@ function extractInjuryItems(data: unknown): unknown[] {
 }
 
 function buildCallSummary(result: CollectionResult): CallSummary {
-  const entries = Object.values(result.callResults);
-  const total = entries.filter((c) => c.status !== "SKIPPED").length;
-  const completed = result.succeeded;
+  // Count from ONE consistent set (all recorded calls minus intentionally
+  // skipped ones), so numerator and denominator can never disagree.
+  const counted = Object.values(result.callResults).filter(
+    (c) => c.status !== "SKIPPED",
+  );
+  const total = counted.length;
+  // A provider "OK" response is either real data (SUCCESS) or a legitimate
+  // empty 200 — e.g. "no injuries reported" or a bracket not yet scheduled
+  // (EXPECTED_EMPTY). Those are NOT failures. Only FAILED is a true error.
+  const returnedOk = counted.filter(
+    (c) =>
+      c.status === "SUCCESS" ||
+      c.status === "EMPTY" ||
+      c.status === "EXPECTED_EMPTY",
+  ).length;
+  const withData = counted.filter((c) => c.status === "SUCCESS").length;
+  const failed = counted.filter((c) => c.status === "FAILED").length;
 
   const lineupMap: Record<
     string,
@@ -185,7 +200,8 @@ function buildCallSummary(result: CollectionResult): CallSummary {
   };
   const lineup = lineupMap[result.lineupState] ?? lineupMap.NOT_ANNOUNCED;
 
-  const ratio = total > 0 ? completed / total : 0;
+  // Data quality reflects how many calls returned usable data.
+  const ratio = total > 0 ? withData / total : 0;
   const quality: CallSummary["quality"] =
     ratio >= 0.8 ? "FULL" : ratio >= 0.5 ? "PARTIAL" : "THIN";
 
@@ -202,7 +218,8 @@ function buildCallSummary(result: CollectionResult): CallSummary {
   }
 
   return {
-    callsLabel: `${completed}/${total} complete`,
+    callsLabel: `${returnedOk}/${total} OK`,
+    failedLabel: failed > 0 ? `${failed} failed` : null,
     lineupsLabel: lineup.label,
     lineupsTone: lineup.tone,
     quality,
@@ -221,6 +238,13 @@ function CallSummaryPanel({ summary }: { summary: CallSummary }) {
   return (
     <div className="flex w-full flex-col gap-1.5 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
       <Row label="API calls" value={summary.callsLabel} valueClass="text-accent-amber" />
+      {summary.failedLabel && (
+        <Row
+          label="Errored"
+          value={summary.failedLabel}
+          valueClass="text-signal-red"
+        />
+      )}
       <Row
         label="Lineups"
         value={summary.lineupsLabel}
