@@ -571,6 +571,8 @@ function Index() {
         loadedFromCache: false,
         analysisJobId: null,
         analysisCompletedAway: away,
+        usedFallbackModel: res.used_fallback_model === true,
+        fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
       writeResultCache({
         matchId: match.id,
