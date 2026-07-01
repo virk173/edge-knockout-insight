@@ -48,16 +48,17 @@ const LIVE_STATUSES = new Set([
 ]);
 // Codes that mean the match has finished (or otherwise has no pre-match bets).
 const FINISHED_STATUSES = new Set(["FT", "AET", "PEN", "ABD", "AWD", "WO"]);
-// Codes that mean the match was called off — no pre-match bets available.
-const CALLED_OFF_STATUSES = new Set(["PST", "CANC"]);
-// Codes where the feed still reports the match as NOT started. When present we
-// trust the feed over the clock, so a DELAYED kickoff (clock passed but the
-// match hasn't actually started) stays actionable for pre-match analysis.
-const NOT_STARTED_STATUSES = new Set(["NS", "TBD"]);
+// Codes that mean the match was genuinely called off — no pre-match bets.
+const CALLED_OFF_STATUSES = new Set(["CANC"]);
+// Codes where the feed does NOT consider the match live/finished, so pre-match
+// markets and lineups can still be open. This covers not-started (NS/TBD) AND
+// "PST" — API-Football often flags a running kickoff DELAY as Postponed while
+// still serving live odds + confirmed lineups, so we keep it actionable.
+const NOT_STARTED_STATUSES = new Set(["NS", "TBD", "PST"]);
 
 // Whether pre-match analysis should be BLOCKED. Driven primarily by the
-// API-Football status (live / finished / called off). The kickoff-time safety
-// net only applies when the feed does NOT explicitly say "not started" —
+// API-Football status (live / finished / cancelled). The kickoff-time safety
+// net only applies when the feed does NOT report the match as still-to-play —
 // otherwise a genuine kickoff delay would be wrongly blocked.
 export function isMatchBlocked(
   statusShort: string,
