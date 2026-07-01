@@ -326,14 +326,18 @@ function Index() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now, activeMatchId, matches]);
 
+  // Explicit fetch — only called from the Find Fixtures / Refresh button.
   async function loadFixtures() {
     setLoading(true);
     setError(null);
     try {
       const result = await runAnalysis();
       setMatches(result.matches);
+      const entry = writeFixturesCache(result.matches);
+      setFixturesFetchedAt(entry.fetchedAt);
       setApiCalls(getApiCallCount());
     } catch (e) {
+      // On failure keep the previously cached list visible.
       setError(friendlyError(e instanceof Error ? e.message : "Unknown error occurred."));
     } finally {
       setLoading(false);
