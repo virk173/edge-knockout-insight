@@ -843,6 +843,29 @@ Start your response with { and end with }.`;
     }
   }
 
+  // Resume Calls — retry only the calls that FAILED (or never completed), leaving
+  // successful/cached calls untouched. Effectively clicks every failed call's
+  // per-call retry button at once, sequentially to respect rate limits.
+  async function handleResumeCalls(match: AnalysedMatch) {
+    const st = getState(match.id);
+    if (!st.collection) return;
+    const summary = buildCallPanelSummary(st.collection.callResults);
+    const keys = summary.rows
+      .filter((r) => r.status === "FAILED" && r.spec.retryKey)
+      .map((r) => r.spec.retryKey as string);
+    // De-dupe (some rows share a retryKey, e.g. C7/S7).
+    const uniqueKeys = Array.from(new Set(keys));
+    if (uniqueKeys.length === 0) {
+      toast.info("No incomplete calls to resume.");
+      return;
+    }
+    toast.info(`Resuming ${uniqueKeys.length} incomplete call${uniqueKeys.length > 1 ? "s" : ""}…`);
+    for (const k of uniqueKeys) {
+      await handleRetryCall(match, k);
+    }
+  }
+
+
   function handleClearMatchCache(match: AnalysedMatch) {
     clearMatchCache(match.id);
     patchState(match.id, {
