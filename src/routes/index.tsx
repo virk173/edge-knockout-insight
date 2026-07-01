@@ -1388,6 +1388,25 @@ function MatchView({
             />
           )}
 
+          {pipelineInterrupted && (
+            <div className="flex flex-col gap-2 rounded-md border border-signal-red/50 bg-signal-red/10 px-3 py-3">
+              <p className="font-mono text-xs font-semibold text-signal-red">
+                ⚠️ Pipeline interrupted — {failedCount} call
+                {failedCount > 1 ? "s" : ""} incomplete. Tap Resume to continue.
+              </p>
+              <button
+                type="button"
+                onClick={onResumeCalls}
+                disabled={retrying.size > 0}
+                className="self-start rounded-md border border-signal-red bg-signal-red/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-red transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {retrying.size > 0 ? "Resuming…" : "↻ Resume Calls"}
+              </button>
+            </div>
+          )}
+
+
+
           {lineupPending && (
             <ManualLineupForm
               onSubmit={(home, away) => {
