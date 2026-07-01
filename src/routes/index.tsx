@@ -274,6 +274,19 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
+  // Clear any live poll timers when the component unmounts.
+  useEffect(() => {
+    const controllers = pollControllers.current;
+    return () => {
+      for (const c of controllers.values()) {
+        c.canceled = true;
+        if (c.timer) clearInterval(c.timer);
+      }
+      controllers.clear();
+    };
+  }, []);
+
+
   useEffect(() => {
     setApiCalls(getApiCallCount());
     setLogEntries(getLogEntries());
