@@ -377,7 +377,7 @@ function compactForClaude(n: string, data: unknown): unknown {
   }
 }
 
-
+/**
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
