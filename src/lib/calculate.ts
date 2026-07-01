@@ -547,12 +547,26 @@ export const validateModelProbabilities = (probs: {
 //   because Claude's weighted reasoning already happened upstream.
 // ─────────────────────────────────────────────────────────────
 export const validateDimensionWeights = (inputs: {
-  weights: DimensionWeights;
+  weights: DimensionWeights | null;
   call4_fixture_count: number;
   h2h_gate_passed: boolean;
   critical_absence_present: boolean;
   all_players_confirmed_fit: boolean;
 }): DimensionWeightsValidation => {
+  // Guard: Claude can omit dimension_weights entirely. Report a NOT-RUN state
+  // rather than throwing on a null dereference below.
+  if (!inputs.weights) {
+    return {
+      weights: null,
+      expected_weights: null,
+      mismatch_flags: [
+        "dimension_weights field was missing — validation could not run.",
+      ],
+      sum_valid: false,
+      validation_ran: false,
+    };
+  }
+
   // Determine expected weights from actual data conditions, independent
   // of what Claude claimed.
   const expected: DimensionWeights = {
