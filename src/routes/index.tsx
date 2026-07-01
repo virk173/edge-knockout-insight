@@ -229,8 +229,13 @@ function Index() {
   useEffect(() => {
     setApiCalls(getApiCallCount());
     setLogEntries(getLogEntries());
-    // Auto-load the fixtures list on mount.
-    void loadFixtures();
+    // Load whatever fixtures list is already cached for today — NO fetch.
+    // A fresh fetch only happens when the user clicks the Find/Refresh button.
+    const cached = readFixturesCache();
+    if (cached) {
+      setMatches(cached.matches);
+      setFixturesFetchedAt(cached.fetchedAt);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
