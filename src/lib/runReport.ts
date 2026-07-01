@@ -556,7 +556,19 @@ export function generateRunReport(
   );
   push();
 
-  // ── Confidence ──────────────────────────────────────────
+  // ── Call data (actual extracted values) ─────────────────
+  for (const line of buildCallData(
+    cr,
+    callStatuses?.lineupState,
+    callStatuses?.lineupResolved ?? false,
+    meta,
+  )) {
+    push(line);
+  }
+  push(RULE);
+  push();
+
+
   const cs = r.confidence_scores ?? {};
   push("CONFIDENCE");
   push(
