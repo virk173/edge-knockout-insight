@@ -244,12 +244,14 @@ export function formatDataForClaude(
     if (!v) continue;
     resolved[k] = { status: v.status, data: v.data ?? null, error: v.error };
   }
-  // Synthesize 9A (Stake odds) from the combined "9" call.
+  // Synthesize 9A (Stake odds) from the combined "9" call. We ship ONLY the
+  // trimmed 5-market extract, never the raw ~160-market odds blob (which alone
+  // pushed a run past 200k input tokens and caused Claude 524 timeouts).
   if (combinedOdds) {
-    const stake = oddsData?.stakeOdds ?? null;
+    const trimmed = extractStakeMarkets(oddsData?.stakeOdds ?? null);
     resolved["9A"] = {
-      status: isEmptyResponse(stake) || combinedOdds.status !== "SUCCESS" ? "EMPTY" : "SUCCESS",
-      data: stake,
+      status: trimmed === null || combinedOdds.status !== "SUCCESS" ? "EMPTY" : "SUCCESS",
+      data: trimmed,
     };
   }
 
