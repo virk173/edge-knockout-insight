@@ -649,6 +649,7 @@ Start your response with { and end with }.`;
           onRefresh={loadFixtures}
           onOpenMatch={openMatch}
           matchStates={matchStates}
+          fetchedAt={fixturesFetchedAt}
         />
       ) : activeMatch ? (
         <MatchView
