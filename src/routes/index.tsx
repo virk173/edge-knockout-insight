@@ -11,6 +11,12 @@ import {
   type TimingBand,
 } from "@/lib/fixtures";
 import {
+  readFixturesCache,
+  writeFixturesCache,
+  isStale,
+  formatAgo,
+} from "@/lib/fixturesCache";
+import {
   collectMatchData,
   formatDataForClaude,
   refetchLineups,
@@ -187,6 +193,7 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
+  const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
@@ -222,8 +229,13 @@ function Index() {
   useEffect(() => {
     setApiCalls(getApiCallCount());
     setLogEntries(getLogEntries());
-    // Auto-load the fixtures list on mount.
-    void loadFixtures();
+    // Load whatever fixtures list is already cached for today — NO fetch.
+    // A fresh fetch only happens when the user clicks the Find/Refresh button.
+    const cached = readFixturesCache();
+    if (cached) {
+      setMatches(cached.matches);
+      setFixturesFetchedAt(cached.fetchedAt);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -314,14 +326,18 @@ function Index() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now, activeMatchId, matches]);
 
+  // Explicit fetch — only called from the Find Fixtures / Refresh button.
   async function loadFixtures() {
     setLoading(true);
     setError(null);
     try {
       const result = await runAnalysis();
       setMatches(result.matches);
+      const entry = writeFixturesCache(result.matches);
+      setFixturesFetchedAt(entry.fetchedAt);
       setApiCalls(getApiCallCount());
     } catch (e) {
+      // On failure keep the previously cached list visible.
       setError(friendlyError(e instanceof Error ? e.message : "Unknown error occurred."));
     } finally {
       setLoading(false);
@@ -633,6 +649,7 @@ Start your response with { and end with }.`;
           onRefresh={loadFixtures}
           onOpenMatch={openMatch}
           matchStates={matchStates}
+          fetchedAt={fixturesFetchedAt}
         />
       ) : activeMatch ? (
         <MatchView
@@ -697,6 +714,7 @@ function FixturesView({
   onRefresh,
   onOpenMatch,
   matchStates,
+  fetchedAt,
 }: {
   matches: AnalysedMatch[] | null;
   loading: boolean;
@@ -709,6 +727,7 @@ function FixturesView({
   onRefresh: () => void;
   onOpenMatch: (m: AnalysedMatch) => void;
   matchStates: Record<number, MatchState>;
+  fetchedAt: number | null;
 }) {
   const sorted = matches
     ? [...matches].sort(
@@ -716,6 +735,15 @@ function FixturesView({
           new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
       )
     : null;
+
+  const nowMs = now.getTime();
+  const hasCache = fetchedAt != null;
+  const stale = hasCache && isStale(fetchedAt, nowMs);
+  const buttonLabel = loading
+    ? "Loading fixtures…"
+    : hasCache
+      ? "↻ Refresh"
+      : "Find Fixtures";
 
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-10">
@@ -743,8 +771,16 @@ function FixturesView({
             disabled={loading}
             className="rounded-md bg-accent-amber px-5 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "Loading…" : "Refresh Fixtures"}
+            {buttonLabel}
           </button>
+          {hasCache && !loading && (
+            <span
+              className={`font-mono text-xs ${stale ? "text-accent-amber" : "text-slate"}`}
+            >
+              Last updated: {formatAgo(fetchedAt, nowMs)}
+              {stale ? " — may be outdated" : ""}
+            </span>
+          )}
           <span className="font-mono text-xs text-slate">
             API calls used today:{" "}
             <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
@@ -771,8 +807,16 @@ function FixturesView({
 
         {loading && !sorted && (
           <p className="pt-10 text-center text-lg font-medium text-slate">
-            Loading today's fixtures…
+            Loading fixtures…
           </p>
+        )}
+
+        {!sorted && !loading && (
+          <div className="w-full rounded-md border border-border bg-card/40 px-4 py-8 text-center text-sm text-slate">
+            No fixtures loaded yet. Tap{" "}
+            <span className="font-semibold text-accent-amber">Find Fixtures</span>{" "}
+            to load today's and tomorrow's matches.
+          </div>
         )}
 
         {sorted && sorted.length === 0 && (
