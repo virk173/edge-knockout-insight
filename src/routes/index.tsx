@@ -1121,10 +1121,16 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
-                    {/* Normal mode: minimal status summary. Debug mode keeps the
-                        full per-call CollectionPanel + raw debug panels below. */}
-                    {isActive && collection && !debugMode && (
-                      <CallSummaryPanel summary={buildCallSummary(collection)} />
+                    {/* Normal mode: granular per-call status panel with retry.
+                        Debug mode keeps the full per-call CollectionPanel +
+                        raw debug panels below. */}
+                    {isActive && collection && panelSummary && !debugMode && (
+                      <CallStatusPanel
+                        summary={panelSummary}
+                        retrying={retrying}
+                        onRetry={(retryKey) => handleRetryCall(m, retryKey)}
+                        onClearCache={() => handleClearMatchCache(m)}
+                      />
                     )}
                     {isActive && collection && debugMode && (
                       <CollectionPanel result={collection} />
