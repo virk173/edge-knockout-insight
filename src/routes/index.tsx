@@ -1566,6 +1566,29 @@ function MatchView({
                 <div className="rounded-md border border-signal-green/40 bg-signal-green/5 px-4 py-3 font-mono text-xs text-signal-green">
                   ✓ Saved to backtesting log — view it from the Backtest Log tab.
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const report = generateRunReport(
+                      `${match.home} vs ${match.away}`,
+                      match.round ?? "N/A",
+                      formatLocal(match.kickoffUtc),
+                      state.collection,
+                      state.analysisResult as AnalysisResult,
+                      state.analysisRaw ?? "",
+                      state.lastRunAt ? new Date(state.lastRunAt) : new Date(),
+                    );
+                    navigator.clipboard
+                      .writeText(report)
+                      .then(() => toast.success("Copied!", { duration: 2000 }))
+                      .catch(() =>
+                        toast.error("Copy failed — clipboard unavailable"),
+                      );
+                  }}
+                  className="self-start rounded-md border border-accent-amber/50 px-4 py-2 font-mono text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10"
+                >
+                  📋 Copy Run Report
+                </button>
               </>
             ) : (
               <div className="flex flex-col gap-2">
