@@ -449,9 +449,7 @@ function Index() {
   // client-side, on the returned raw response.
   function processClaudeResponse(
     match: AnalysedMatch,
-    res: Awaited<ReturnType<typeof callGetAnalysisResult>> extends { result: infer R }
-      ? R
-      : never,
+    res: ClaudeCallResult,
     startedAt: number,
     away: boolean,
   ) {
