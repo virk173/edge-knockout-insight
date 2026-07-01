@@ -56,10 +56,7 @@ import {
   CRITICAL_THRESHOLD,
 } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
-import {
-  startAnalysis,
-  getAnalysisResult,
-} from "@/lib/analysisJobs.functions";
+import { analyseMatch } from "@/lib/analyse-match.functions";
 import type { ClaudeCallResult } from "@/lib/claude.server";
 import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
