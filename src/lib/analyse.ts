@@ -269,7 +269,115 @@ function scorelinesFrom(list: unknown, limit: number): string[] {
     });
 }
 
-/**
+// ---- Per-block compactors (Claude-facing only) ----------------------------
+// These trim the RAW stored responses down to just the fields Claude actually
+// reads before they are JSON.stringify'd into the prompt. They run ONLY inside
+// formatDataForClaude — the full raw responses stay in callResults / the cache
+// so pipeline logic (dead-rubber, lineup player-id extraction, gap check) is
+// unaffected. Measured savings: CALL 8 ~5000→~350 tok, CALL 6 ~3700→~700 tok,
+// CALL 3 ~3600→~250 tok, CALL 5 ~1300→~250 tok, CALL 2A/2B drop raw blob.
+
+function compactPlayer(p: unknown): { name: unknown; pos: unknown; num: unknown } {
+  const pl = getField(p, ["player"]) ?? p;
+  return {
+    name: getField(pl, ["name"]) ?? null,
+    pos: getField(pl, ["position", "pos"]) ?? null,
+    num: getField(pl, ["jersey_number", "number"]) ?? null,
+  };
+}
+
+function compactLineupSide(side: unknown): Record<string, unknown> {
+  return {
+    team: getField(side, ["team_name", "name"]) ?? getField(getField(side, ["team"]), ["name"]) ?? null,
+    formation: getField(side, ["formation"]) ?? null,
+    starting_xi: extractArray(getField(side, ["starting_xi", "startXI", "startingXi", "startingXI"])).map(compactPlayer),
+    substitutes: extractArray(getField(side, ["substitutes"])).map((p) => compactPlayer(p).name),
+  };
+}
+
+function compactLineup(data: unknown): Record<string, unknown> {
+  const node = getField(data, ["data"]) ?? data;
+  const home = getField(node, ["home"]);
+  const away = getField(node, ["away"]);
+  if (home || away) {
+    return {
+      confirmed: getField(node, ["confirmed"]) ?? null,
+      source: getField(node, ["source"]) ?? null,
+      home: home ? compactLineupSide(home) : null,
+      away: away ? compactLineupSide(away) : null,
+    };
+  }
+  return { sides: extractArray(node).map(compactLineupSide) };
+}
+
+function compactPredictions(data: unknown): Record<string, unknown> {
+  const first = (extractArray(data)[0] ?? data) as unknown;
+  const predictions = getField(first, ["predictions"]);
+  const teams = getField(first, ["teams"]);
+  const formOf = (t: unknown) => {
+    const l5 = getField(t, ["last_5"]);
+    const goals = getField(l5, ["goals"]);
+    return {
+      form: getField(getField(t, ["league"]), ["form"]) ?? getField(l5, ["form"]) ?? null,
+      att: getField(l5, ["att"]) ?? null,
+      def: getField(l5, ["def"]) ?? null,
+      goals_for_avg: getField(getField(goals, ["for"]), ["average"]) ?? null,
+      goals_against_avg: getField(getField(goals, ["against"]), ["average"]) ?? null,
+    };
+  };
+  return {
+    predictions: predictions
+      ? {
+          winner: getField(getField(predictions, ["winner"]), ["name"]) ?? null,
+          advice: getField(predictions, ["advice"]) ?? null,
+          percent: getField(predictions, ["percent"]) ?? null,
+          under_over: getField(predictions, ["under_over"]) ?? null,
+          goals: getField(predictions, ["goals"]) ?? null,
+        }
+      : null,
+    comparison: getField(first, ["comparison"]) ?? null,
+    home_form: teams ? formOf(getField(teams, ["home"])) : null,
+    away_form: teams ? formOf(getField(teams, ["away"])) : null,
+    // NOTE: the embedded h2h array (dup of CALL 3, ~2000 tokens) is dropped.
+  };
+}
+
+function compactInjuries(data: unknown): Array<Record<string, unknown>> {
+  return extractArray(data).map((it) => {
+    const player = getField(it, ["player"]);
+    return {
+      player: getField(player, ["name"]) ?? null,
+      team: getField(getField(it, ["team"]), ["name"]) ?? null,
+      type: getField(player, ["type"]) ?? null,
+      reason: getField(player, ["reason"]) ?? null,
+    };
+  });
+}
+
+// Maps a validated raw response to the compact Claude-facing shape. Calls not
+// listed here (7, 9A, 9B, 10) are already small and pass through unchanged.
+function compactForClaude(n: string, data: unknown): unknown {
+  switch (n) {
+    case "2A":
+    case "2B": {
+      // Drop the raw team-stats blob; ship only the extracted summary fields.
+      const d = data as { extracted?: unknown } | null;
+      return d && d.extracted ? d.extracted : data;
+    }
+    case "3":
+      return { last_meetings: scorelinesFrom(data, 10) };
+    case "5":
+      return compactInjuries(data);
+    case "6":
+      return compactLineup(data);
+    case "8":
+      return compactPredictions(data);
+    default:
+      return data;
+  }
+}
+
+
  * Formats the collected call results into the [CALL N ... END CALL N] blocks
  * that the v3.0 system prompt expects. Call 9A (Stake odds) is split out of the
  * combined "9" result. Missing/empty/errored calls render as EMPTY blocks.
