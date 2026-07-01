@@ -1942,6 +1942,7 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching referee profile (S7)... (9/11)",
     });
+    if (!tryLoadCache("7")) {
     currentDebugCall = "7";
     try {
       let profile: RefereeProfile | null = null;
