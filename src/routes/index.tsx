@@ -1249,6 +1249,8 @@ function MatchView({
   onRunCalls,
   onAnalyse,
   onRetry,
+  onResumeCalls,
+  onResumePoll,
   onClearCache,
   onResetBudget,
   patchState,
@@ -1263,6 +1265,8 @@ function MatchView({
   onRunCalls: () => void;
   onAnalyse: () => void;
   onRetry: (retryKey: string) => void;
+  onResumeCalls: () => void;
+  onResumePoll: () => void;
   onClearCache: () => void;
   onResetBudget: () => void;
   patchState: (partial: Partial<MatchState>) => void;
