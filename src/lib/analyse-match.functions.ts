@@ -69,7 +69,17 @@ export const analyseMatch = createServerFn({ method: "POST" })
     const requestBody = JSON.stringify({
       model: data.model,
       max_tokens: data.maxTokens,
-      system: data.systemPrompt,
+      // Prompt caching (REST format): system is an array of content blocks and
+      // cache_control is attached to the block, not the top level. The large,
+      // static system prompt is cached so subsequent calls read it instead of
+      // re-processing all its tokens.
+      system: [
+        {
+          type: "text",
+          text: data.systemPrompt,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content: data.userMessage }],
     });
 
@@ -80,9 +90,10 @@ export const analyseMatch = createServerFn({ method: "POST" })
         return await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
-            "content-type": "application/json",
+            "Content-Type": "application/json",
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
+            "anthropic-beta": "prompt-caching-2024-07-31",
           },
           body: requestBody,
           signal: controller.signal,
