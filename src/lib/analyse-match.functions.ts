@@ -73,11 +73,17 @@ export const analyseMatch = createServerFn({ method: "POST" })
       // cache_control is attached to the block, not the top level. The large,
       // static system prompt is cached so subsequent calls read it instead of
       // re-processing all its tokens.
+      //
+      // TTL is set to "1h" (extended cache) instead of the default 5 minutes.
+      // Writing a 1h cache costs slightly more, but it keeps the system prompt
+      // warm across same-day matches that kick off 1-3 hours apart — worth it
+      // whenever 2+ matches are analysed within an hour in the same session.
+      // Requires the "extended-cache-ttl-2025-04-11" beta header below.
       system: [
         {
           type: "text",
           text: data.systemPrompt,
-          cache_control: { type: "ephemeral" },
+          cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ],
       messages: [{ role: "user", content: data.userMessage }],
@@ -93,7 +99,7 @@ export const analyseMatch = createServerFn({ method: "POST" })
             "Content-Type": "application/json",
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31",
+            "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11",
           },
           body: requestBody,
           signal: controller.signal,
