@@ -11,6 +11,12 @@ import {
   type TimingBand,
 } from "@/lib/fixtures";
 import {
+  readFixturesCache,
+  writeFixturesCache,
+  isStale,
+  formatAgo,
+} from "@/lib/fixturesCache";
+import {
   collectMatchData,
   formatDataForClaude,
   refetchLineups,
