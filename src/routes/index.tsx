@@ -13,15 +13,11 @@ import {
 import {
   collectMatchData,
   formatDataForClaude,
-  resolveDebugFixture,
-  buildDebugReport,
   refetchLineups,
   retrySingleCall,
   buildCallPanelSummary,
-  DEBUG_FIXTURE_DATE,
   LINEUP_STATE_INFO,
   type CollectionResult,
-  type DebugReport,
   type ProgressUpdate,
 } from "@/lib/analyse";
 import { clearMatchCache } from "@/lib/callCache";
@@ -52,14 +48,15 @@ import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
 
 const CLAUDE_LOADING_MESSAGES = [
-  "Analysing team form and statistics...",
-  "Evaluating tactical matchups...",
-  "Calculating expected value...",
-  "Checking confirmed lineups...",
-  "Building parlay recommendations...",
-  "Validating EV thresholds...",
-  "Generating betting cards...",
+  "Sending data to Claude...",
+  "Claude is processing match data...",
+  "Receiving analysis...",
+  "Running calculations...",
+  "Building recommendations...",
 ];
+
+// Approximate expected Claude turnaround, used for the Section 2 countdown.
+const CLAUDE_COUNTDOWN_START = 25;
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -88,19 +85,13 @@ function formatLocal(iso: string): string {
 
 // Lineups for WC2026 are expected to drop ~75 min before kickoff.
 const LINEUP_DROP_MIN = 75;
-
-// Option B — final near-kickoff re-check. Live observation (France vs Sweden)
-// showed TheStatsAPI only splits the starting XI out of the squad at ~T-0, long
-// after confirmed=true. T-15 is the latest point where a populated lineup still
-// meaningfully changes the analysis, so we fire one last re-check there.
+// Option B — final near-kickoff re-check at T-15.
 const LINEUP_FINAL_RECHECK_MIN = 15;
 
-// Minutes from now until kickoff for a fixture (can be negative).
 function minutesUntil(iso: string, now: Date): number {
   return Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
 }
 
-// "Xh Ym" / "Y min" friendly minutes formatter.
 function fmtMinutes(mins: number): string {
   if (mins <= 0) return "now";
   if (mins < 60) return `${mins} min`;
@@ -109,7 +100,6 @@ function fmtMinutes(mins: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-// Maps a raw pipeline error into a clear, actionable message.
 function friendlyError(raw: string): string {
   const m = raw.toLowerCase();
   if (
@@ -117,26 +107,11 @@ function friendlyError(raw: string): string {
     m.includes("vite_apifootball") ||
     m.includes("api key") ||
     m.includes("not configured") ||
-    m.includes("missing") && m.includes("key")
+    (m.includes("missing") && m.includes("key"))
   ) {
     return "API key not configured.\nAdd VITE_APIFOOTBALL_KEY to your environment variables.";
   }
   return raw;
-}
-
-// Builds a short "next matches" string from the upcoming fixtures.
-function nextMatchesText(matches: AnalysedMatch[], now: Date): string {
-  const upcoming = matches
-    .filter((m) => minutesUntil(m.kickoffUtc, now) > 0)
-    .sort(
-      (a, b) =>
-        new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
-    );
-  if (upcoming.length === 0) return "None scheduled.";
-  return upcoming
-    .slice(0, 3)
-    .map((m) => `${m.home} vs ${m.away} (${formatLocal(m.kickoffUtc)})`)
-    .join(", ");
 }
 
 const HOW_TO_TEXT = `Best time to run: 60-90 minutes before kickoff when lineups are confirmed and odds are sharpest.
@@ -154,7 +129,6 @@ Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C ma
 Total stake per match: $50
 Do not bet unallocated amounts.`;
 
-
 function timingBannerClass(tone: TimingBand["tone"]): string {
   switch (tone) {
     case "green":
@@ -170,59 +144,75 @@ function timingBannerClass(tone: TimingBand["tone"]): string {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Per-match state map. Navigating list ↔ match preserves everything.
+// ─────────────────────────────────────────────────────────────
+interface MatchState {
+  collection: CollectionResult | null;
+  collectError: string | null;
+  progress: ProgressUpdate | null;
+  analysisResult: unknown;
+  analysisRaw: string | null;
+  analysisError: string | null;
+  billingError: boolean;
+  tokenUsage: { input: number; output: number } | null;
+  analysing: boolean;
+  retrying: string[];
+  lastRunAt: number | null;
+}
 
+const EMPTY_MATCH_STATE: MatchState = {
+  collection: null,
+  collectError: null,
+  progress: null,
+  analysisResult: null,
+  analysisRaw: null,
+  analysisError: null,
+  billingError: false,
+  tokenUsage: null,
+  analysing: false,
+  retrying: [],
+  lastRunAt: null,
+};
 
-
+type Tab = "analysis" | "log";
+type View = "fixtures" | "match";
 
 function Index() {
   const [now, setNow] = useState(() => new Date());
+  const [tab, setTab] = useState<Tab>("analysis");
+  const [view, setView] = useState<View>("fixtures");
+  const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
-  const [debugMode, setDebugMode] = useState(false);
-
-  // Top-level view tab.
-  const [tab, setTab] = useState<"analysis" | "log">("analysis");
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
-
-
-  // Per-match data collection state.
-  const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
-  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
-  const [collection, setCollection] = useState<CollectionResult | null>(null);
-  const [collectError, setCollectError] = useState<string | null>(null);
-  // Retry keys currently re-running (individual failed-call retry).
-  const [retrying, setRetrying] = useState<Set<string>>(new Set());
-
-  // Claude analysis state.
-  const [analysing, setAnalysing] = useState(false);
+  const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
-  const [analysisResult, setAnalysisResult] = useState<unknown>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [billingError, setBillingError] = useState(false);
-  const [analysisRaw, setAnalysisRaw] = useState<string | null>(null);
-  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
-
-  // Debug-mode capture: raw HTTP calls + the formatted Claude input.
-  const [formattedDebug, setFormattedDebug] = useState<string | null>(null);
-
-  // Debug-mode two-step state: the data pipeline (Button 1) runs API calls and
-  // formatting only; "Send to Claude" (Button 2) reuses this cached data.
-  const [debugMatch, setDebugMatch] = useState<AnalysedMatch | null>(null);
-  const [pipelineRunning, setPipelineRunning] = useState(false);
-  const [pipelineReady, setPipelineReady] = useState(false);
-  const [pipelineFetchedAt, setPipelineFetchedAt] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(CLAUDE_COUNTDOWN_START);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Tracks fixtures we've already auto-refetched lineups for, so the timer
-  // effect only fires one refetch per match once the lineup-drop time passes.
   const lineupRefetchedRef = useRef<Set<number>>(new Set());
-  // Separate guard for the Option B final T-15 near-kickoff re-check, which is
-  // independent of the earlier lineup-drop refetch above.
   const lineupFinalRecheckRef = useRef<Set<number>>(new Set());
+
+  // Helpers to read/patch per-match state.
+  const getState = (id: number | null): MatchState =>
+    id != null ? (matchStates[id] ?? EMPTY_MATCH_STATE) : EMPTY_MATCH_STATE;
+  const patchState = (id: number, partial: Partial<MatchState>) =>
+    setMatchStates((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? EMPTY_MATCH_STATE), ...partial },
+    }));
+
+  const activeMatch =
+    activeMatchId != null && matches
+      ? matches.find((m) => m.id === activeMatchId) ?? null
+      : null;
+  const activeState = getState(activeMatchId);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -231,10 +221,10 @@ function Index() {
 
   useEffect(() => {
     setApiCalls(getApiCallCount());
-  }, []);
-
-  useEffect(() => {
     setLogEntries(getLogEntries());
+    // Auto-load the fixtures list on mount.
+    void loadFixtures();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
@@ -245,33 +235,35 @@ function Index() {
     setLogEntries(clearLog());
   }
 
-  // Cycle the Claude loading messages every 3 seconds while analysing.
+  // Cycle Claude loading messages + countdown while the active match analyses.
   useEffect(() => {
-    if (!analysing) {
+    if (!activeState.analysing) {
       if (msgTimer.current) clearInterval(msgTimer.current);
       msgTimer.current = null;
       return;
     }
     setAnalysisMsgIndex(0);
+    setCountdown(CLAUDE_COUNTDOWN_START);
     msgTimer.current = setInterval(() => {
       setAnalysisMsgIndex((i) => (i + 1) % CLAUDE_LOADING_MESSAGES.length);
+      setCountdown((c) => (c > 1 ? c - 3 : 1));
     }, 3000);
     return () => {
       if (msgTimer.current) clearInterval(msgTimer.current);
       msgTimer.current = null;
     };
-  }, [analysing]);
+  }, [activeState.analysing]);
 
-  // Auto re-fetch CALL 6 (lineups) when the analysis ran but lineups came back
-  // PENDING (NOT_ANNOUNCED or PROPAGATING). Two distinct attempts per match:
-  //   1. At the lineup-drop window (~T-75) — catches normal on-time publication.
-  //   2. Option B final re-check at ~T-15 — last meaningful chance to catch the
-  //      slow-propagation case (France vs Sweden only split the XI out at ~T-0).
+  // Auto re-fetch lineups (CALL 6) when they came back PENDING. Runs against the
+  // currently-open match: once at the ~T-75 drop window, once at the ~T-15 final
+  // re-check.
   useEffect(() => {
-    if (!collection || activeMatchId == null || !matches) return;
+    if (activeMatchId == null || !matches) return;
+    const st = matchStates[activeMatchId];
+    if (!st || !st.collection) return;
     const match = matches.find((m) => m.id === activeMatchId);
     if (!match) return;
-    const c6 = collection.callResults["6"];
+    const c6 = st.collection.callResults["6"];
     const pending = !c6 || c6.status !== "SUCCESS";
     if (!pending) return;
     const mins = minutesUntil(match.kickoffUtc, now);
@@ -279,22 +271,30 @@ function Index() {
 
     const runRefetch = async (phase: "drop" | "final") => {
       const updated = await refetchLineups(match);
-      setCollection((prev) =>
-        prev
-          ? { ...prev, callResults: { ...prev.callResults, "6": updated } }
-          : prev,
-      );
+      setMatchStates((prev) => {
+        const cur = prev[match.id];
+        if (!cur || !cur.collection) return prev;
+        return {
+          ...prev,
+          [match.id]: {
+            ...cur,
+            collection: {
+              ...cur.collection,
+              callResults: { ...cur.collection.callResults, "6": updated },
+            },
+          },
+        };
+      });
       setApiCalls(getApiCallCount());
       if (updated.status === "SUCCESS") {
         toast.success("Confirmed lineups now available — re-analyse for full data.");
       } else if (phase === "final") {
         toast.warning(
-          "Final lineup re-check at T-15: starting XI still not populated by TheStatsAPI. Proceeding without confirmed XI.",
+          "Final lineup re-check at T-15: starting XI still not populated. Proceeding without confirmed XI.",
         );
       }
     };
 
-    // Final near-kickoff re-check (T-15 .. T-0) — highest priority, runs once.
     if (
       mins <= LINEUP_FINAL_RECHECK_MIN &&
       !lineupFinalRecheckRef.current.has(match.id)
@@ -303,8 +303,6 @@ function Index() {
       void runRefetch("final");
       return;
     }
-
-    // Initial lineup-drop refetch (T-75 .. T-15), runs once.
     if (
       mins <= LINEUP_DROP_MIN &&
       mins > LINEUP_FINAL_RECHECK_MIN &&
@@ -313,13 +311,10 @@ function Index() {
       lineupRefetchedRef.current.add(match.id);
       void runRefetch("drop");
     }
-  }, [now, collection, activeMatchId, matches]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, activeMatchId, matches]);
 
-
-  async function handleRun() {
-    // Debug mode uses the two-step buttons (Run Data Pipeline / Send to Claude),
-    // not this single button.
-    if (debugMode) return;
+  async function loadFixtures() {
     setLoading(true);
     setError(null);
     try {
@@ -333,16 +328,24 @@ function Index() {
     }
   }
 
-  async function runClaudeAnalysis(
-    match: AnalysedMatch,
-    result: CollectionResult,
-  ) {
-    setAnalysing(true);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setBillingError(false);
-    setAnalysisRaw(null);
-    setTokenUsage(null);
+  // Navigation helpers — preserve match state.
+  function openMatch(match: AnalysedMatch) {
+    setActiveMatchId(match.id);
+    setView("match");
+  }
+  function backToFixtures() {
+    setView("fixtures");
+  }
+
+  async function runClaudeAnalysis(match: AnalysedMatch, result: CollectionResult) {
+    patchState(match.id, {
+      analysing: true,
+      analysisResult: null,
+      analysisError: null,
+      billingError: false,
+      analysisRaw: null,
+      tokenUsage: null,
+    });
 
     let formattedData: string;
     try {
@@ -351,7 +354,7 @@ function Index() {
       console.error("formatDataForClaude failed:", e);
       formattedData = "No usable API data could be formatted for analysis.";
     }
-    setFormattedDebug(formattedData);
+
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
 
 MATCH: ${match.home} vs ${match.away}
@@ -378,13 +381,9 @@ Start your response with { and end with }.`;
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
 
-      // Guard: the server function can resolve to undefined if the edge
-      // request times out or the response cannot be deserialized. Reading
-      // `res.ok` directly in that case throws "Cannot read properties of
-      // undefined (reading 'ok')".
       if (!res || !res.ok) {
         if ((res as { error_type?: string } | null)?.error_type === "BILLING") {
-          setBillingError(true);
+          patchState(match.id, { billingError: true, analysing: false });
           toast.error("Anthropic billing issue", {
             description: "Account credit balance is too low.",
           });
@@ -393,40 +392,28 @@ Start your response with { and end with }.`;
         const msg =
           res?.error ??
           "The analysis service did not return a response. It may have timed out — please try again.";
-        setAnalysisError(msg);
+        patchState(match.id, { analysisError: msg, analysing: false });
         toast.error("Analysis failed", { description: msg });
         return;
       }
 
-      const text: string =
-        res.data?.content?.[0]?.text ?? "";
+      const text: string = res.data?.content?.[0]?.text ?? "";
 
-
-
-      // Capture token usage for the debug display.
       const usage = res.data?.usage;
-      if (usage) {
-        setTokenUsage({
-          input: usage.input_tokens ?? 0,
-          output: usage.output_tokens ?? 0,
-        });
-      }
+      const tokenUsage = usage
+        ? { input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 }
+        : null;
 
-      // 1. Strip markdown fences.
       const cleaned = text.replace(/```json|```/g, "").trim();
-      setAnalysisRaw(cleaned);
 
       const tryParse = (): unknown => {
-        // First attempt: parse the cleaned text directly.
         try {
           return JSON.parse(cleaned);
         } catch {
-          // 2. Fall back to extracting the outermost { ... } block.
           const start = cleaned.indexOf("{");
           const end = cleaned.lastIndexOf("}");
           if (start !== -1 && end !== -1 && end > start) {
-            const extracted = cleaned.slice(start, end + 1);
-            return JSON.parse(extracted);
+            return JSON.parse(cleaned.slice(start, end + 1));
           }
           throw new Error("No JSON object found in response.");
         }
@@ -434,13 +421,15 @@ Start your response with { and end with }.`;
 
       try {
         const parsed = tryParse();
-        // Compute all EV / gap / confidence / multiplier / overround figures
-        // in application code from Claude's raw *_inputs variables.
         const enriched = calculateResults(parsed);
-        setAnalysisResult(enriched);
+        patchState(match.id, {
+          analysisRaw: cleaned,
+          analysisResult: enriched,
+          tokenUsage,
+          analysing: false,
+        });
         toast.success("Analysis complete");
 
-        // Auto-save the log_entry (if present) to the backtesting log.
         const logEntry = enriched?.log_entry;
         if (logEntry && typeof logEntry === "object") {
           const updated = appendLogEntry(logEntry);
@@ -448,166 +437,111 @@ Start your response with { and end with }.`;
           toast.success("Saved to backtesting log");
         }
       } catch {
-        // 3. Surface where the response cuts off: first + last 500 chars.
         const head = cleaned.slice(0, 500);
         const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
-        setAnalysisError(
-          `Analysis could not be parsed.\nCheck the Debug tab for raw output.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
-        );
+        patchState(match.id, {
+          analysisRaw: cleaned,
+          tokenUsage,
+          analysing: false,
+          analysisError: `Analysis could not be parsed.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
+        });
         toast.error("Could not parse analysis JSON");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Claude analysis failed.";
-      setAnalysisError(msg);
+      patchState(match.id, { analysisError: msg, analysing: false });
       toast.error("Analysis failed", { description: msg });
-    } finally {
-      setAnalysing(false);
     }
   }
 
-  // BUTTON 1 (normal mode) — Run Calls. Runs the full API pipeline only and
-  // caches the result for Button 2. Does NOT call Claude / consume any tokens.
+  // SECTION 1 — Run All Calls. API pipeline only. No Claude / tokens.
   async function handleRunCalls(match: AnalysedMatch) {
-    setActiveMatchId(match.id);
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
-    setCollection(null);
-    setCollectError(null);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setAnalysisRaw(null);
-    setFormattedDebug(null);
-    setTokenUsage(null);
-    setProgress({ step: 0, total: 11, label: "Starting data collection…" });
+    patchState(match.id, {
+      collection: null,
+      collectError: null,
+      analysisResult: null,
+      analysisError: null,
+      analysisRaw: null,
+      tokenUsage: null,
+      progress: { step: 0, total: 11, label: "Starting data collection…" },
+    });
 
     try {
-      const result = await collectMatchData(match, (p) => setProgress(p), {
-        debug: debugMode,
+      const result = await collectMatchData(
+        match,
+        (p) => patchState(match.id, { progress: p }),
+        { debug: false },
+      );
+      patchState(match.id, {
+        collection: result,
+        progress: null,
+        lastRunAt: Date.now(),
       });
-      setCollection(result);
-      setProgress(null);
       setApiCalls(getApiCallCount());
       toast.success("Calls complete — ready to analyse");
     } catch (e) {
-      setCollectError(friendlyError(e instanceof Error ? e.message : "Data collection failed."));
-      setProgress(null);
+      patchState(match.id, {
+        collectError: friendlyError(
+          e instanceof Error ? e.message : "Data collection failed.",
+        ),
+        progress: null,
+      });
       setApiCalls(getApiCallCount());
     }
   }
 
-  // BUTTON 2 (normal mode) — Analyse. Sends the cached pipeline data to Claude.
-  // Does NOT re-run any API calls; can be clicked repeatedly against the same
-  // cached dataset.
+  // SECTION 2 — Analyse cached data with Claude.
   async function handleAnalyseCached(match: AnalysedMatch) {
-    if (activeMatchId !== match.id || !collection) {
+    const st = getState(match.id);
+    if (!st.collection) {
       toast.error("Run calls first.");
       return;
     }
-    await runClaudeAnalysis(match, collection);
+    await runClaudeAnalysis(match, st.collection);
   }
 
-  // Retry a SINGLE failed/optional call without touching any other call. Merges
-  // the fresh result into the current collection and updates its cache.
   async function handleRetryCall(match: AnalysedMatch, retryKey: string) {
-    setRetrying((prev) => new Set(prev).add(retryKey));
+    patchState(match.id, { retrying: [...getState(match.id).retrying, retryKey] });
     try {
       const updated = await retrySingleCall(match, retryKey);
-      setCollection((prev) =>
-        prev
-          ? { ...prev, callResults: { ...prev.callResults, ...updated } }
-          : prev,
-      );
+      setMatchStates((prev) => {
+        const cur = prev[match.id];
+        if (!cur || !cur.collection) return prev;
+        return {
+          ...prev,
+          [match.id]: {
+            ...cur,
+            collection: {
+              ...cur.collection,
+              callResults: { ...cur.collection.callResults, ...updated },
+            },
+          },
+        };
+      });
       setApiCalls(getApiCallCount());
       const ok = Object.values(updated).some((r) => r.status === "SUCCESS");
       if (ok) toast.success(`Retried ${retryKey} — updated`);
       else toast.warning(`Retried ${retryKey} — still no data`);
-
     } catch (e) {
       toast.error(`Retry failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
-      setRetrying((prev) => {
-        const next = new Set(prev);
-        next.delete(retryKey);
-        return next;
+      patchState(match.id, {
+        retrying: getState(match.id).retrying.filter((k) => k !== retryKey),
       });
     }
   }
 
-  // Wipe every cached call result for this match and reset its status panel.
   function handleClearMatchCache(match: AnalysedMatch) {
     clearMatchCache(match.id);
-    setCollection(null);
-    setCollectError(null);
-    setAnalysisResult(null);
-    setAnalysisRaw(null);
+    patchState(match.id, {
+      collection: null,
+      collectError: null,
+      analysisResult: null,
+      analysisRaw: null,
+    });
     toast.success("Cache cleared — run calls again for a fresh fetch");
-  }
-
-
-
-  // Debug Mode: run the full pipeline against a fixed real fixture
-  // (Germany vs Paraguay, June 29) instead of today's timing-gated matches.
-  //
-  // BUTTON 1 — Run Data Pipeline. Fetches all API-Football + TheStatsAPI data,
-  // formats the [CALL N … END CALL N] injection blocks, and caches everything
-  // for Button 2. Does NOT call Claude / consume any tokens.
-  async function handleRunDebugPipeline() {
-    setPipelineRunning(true);
-    setError(null);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setAnalysisRaw(null);
-    setTokenUsage(null);
-    setFormattedDebug(null);
-    setCollection(null);
-    setCollectError(null);
-    setPipelineReady(false);
-    try {
-      const match = await resolveDebugFixture();
-      setDebugMatch(match);
-      setMatches([match]);
-      setActiveMatchId(match.id);
-      setProgress({ step: 0, total: 11, label: "Starting data collection…" });
-      const result = await collectMatchData(match, (p) => setProgress(p), {
-        debug: true,
-      });
-      setCollection(result);
-      setProgress(null);
-      setApiCalls(getApiCallCount());
-
-      // Format the data that WOULD be sent to Claude — for display only.
-      let formattedData: string;
-      try {
-        formattedData = formatDataForClaude(result.callResults);
-      } catch (e) {
-        console.error("formatDataForClaude failed:", e);
-        formattedData = "No usable API data could be formatted for analysis.";
-      }
-      setFormattedDebug(formattedData);
-
-      setPipelineReady(true);
-      setPipelineFetchedAt(new Date());
-      toast.success("Pipeline complete — data ready for Claude");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error.";
-      console.error("Debug pipeline failed:", err);
-      setError(`Debug pipeline failed: ${friendlyError(msg)}`);
-      setProgress(null);
-      setApiCalls(getApiCallCount());
-    } finally {
-      setPipelineRunning(false);
-    }
-  }
-
-  // BUTTON 2 — Send to Claude. Reuses the cached match + collection from the
-  // last pipeline run. Does NOT re-fetch any API data. Can be clicked multiple
-  // times to re-test against the same dataset.
-  async function handleSendDebugToClaude() {
-    if (!debugMatch || !collection) {
-      toast.error("Run the data pipeline first.");
-      return;
-    }
-    await runClaudeAnalysis(debugMatch, collection);
   }
 
   function handleResetBudget() {
@@ -620,8 +554,6 @@ Start your response with { and end with }.`;
     setApiCalls(getApiCallCount());
     toast.success("API budget counter reset to 0");
   }
-
-
 
   const counterWarning = apiCalls >= WARNING_THRESHOLD;
   const counterCritical = apiCalls >= CRITICAL_THRESHOLD;
@@ -644,14 +576,17 @@ Start your response with { and end with }.`;
         <nav className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setTab("analysis")}
+            onClick={() => {
+              setTab("analysis");
+              setView("fixtures");
+            }}
             className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
               tab === "analysis"
                 ? "bg-accent-amber text-black"
                 : "text-slate hover:text-foreground"
             }`}
           >
-            Analysis
+            Fixtures
           </button>
           <button
             type="button"
@@ -663,7 +598,7 @@ Start your response with { and end with }.`;
             }`}
           >
             <BarChart3 size={14} />
-            Backtesting Log
+            Backtest Log
           </button>
         </nav>
 
@@ -674,32 +609,6 @@ Start your response with { and end with }.`;
           >
             API: {apiCalls}/{DAILY_LIMIT}
           </span>
-
-          <button
-            type="button"
-            role="switch"
-            aria-checked={debugMode}
-            aria-label="Toggle Debug Mode"
-            onClick={() => setDebugMode((v) => !v)}
-            className="flex items-center gap-2"
-          >
-            <span
-              className="text-xs font-semibold uppercase tracking-wide text-slate"
-            >
-              Debug
-            </span>
-            <span
-              className={`relative inline-block h-6 w-11 rounded-full transition-colors duration-200 ${
-                debugMode ? "bg-[#F59E0B]" : "bg-[#334155]"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all duration-200 ${
-                  debugMode ? "left-[22px]" : "left-0.5"
-                }`}
-              />
-            </span>
-          </button>
         </div>
       </header>
 
@@ -711,436 +620,52 @@ Start your response with { and end with }.`;
             onClear={handleClearLog}
           />
         </main>
+      ) : view === "fixtures" ? (
+        <FixturesView
+          matches={matches}
+          loading={loading}
+          error={error}
+          now={now}
+          apiCalls={apiCalls}
+          apiColorClass={apiColorClass}
+          counterWarning={counterWarning}
+          counterCritical={counterCritical}
+          onRefresh={loadFixtures}
+          onOpenMatch={openMatch}
+          matchStates={matchStates}
+        />
+      ) : activeMatch ? (
+        <MatchView
+          match={activeMatch}
+          state={activeState}
+          now={now}
+          retrying={new Set(activeState.retrying)}
+          analysisMsgIndex={analysisMsgIndex}
+          countdown={countdown}
+          onBack={backToFixtures}
+          onRunCalls={() => handleRunCalls(activeMatch)}
+          onAnalyse={() => handleAnalyseCached(activeMatch)}
+          onRetry={(k) => handleRetryCall(activeMatch, k)}
+          onClearCache={() => handleClearMatchCache(activeMatch)}
+          onResetBudget={handleResetBudget}
+          patchState={(partial) => patchState(activeMatch.id, partial)}
+        />
       ) : (
-
-      <main className="flex flex-1 flex-col items-center px-6 py-10">
-        <div className="flex w-full max-w-2xl flex-col items-center gap-6">
-          <div className="flex flex-col items-center gap-3">
-            {debugMode ? (
-              <>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRunDebugPipeline}
-                    disabled={pipelineRunning || analysing}
-                    className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {pipelineRunning ? "Running pipeline…" : "Run Data Pipeline"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSendDebugToClaude}
-                    disabled={!pipelineReady || pipelineRunning || analysing}
-                    className="rounded-md border border-signal-blue bg-signal-blue/15 px-6 py-3 text-sm font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {analysing
-                      ? "Sending to Claude…"
-                      : pipelineReady
-                        ? "Send to Claude (data ready)"
-                        : "Run pipeline first"}
-                  </button>
-
-                  {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      aria-label="How to use this tool"
-                      className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
-                    >
-                      <HelpCircle size={16} />
-                    </button>
-                    <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                      {HOW_TO_TEXT}
-                    </div>
-                  </div>
-                </div>
-                <span className="font-mono text-xs">
-                  Pipeline data:{" "}
-                  <span
-                    className={pipelineReady ? "text-signal-green" : "text-slate"}
-                  >
-                    {pipelineReady ? "READY" : "NOT READY"}
-                  </span>
-                  {pipelineFetchedAt && (
-                    <>
-                      {" "}
-                      <span className="text-slate">
-                        · Last fetched: {pipelineFetchedAt.toLocaleTimeString()}
-                      </span>
-                    </>
-                  )}
-                </span>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleRun}
-                  disabled={loading || analysing}
-                  className="rounded-md bg-accent-amber px-6 py-3 text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {loading ? "Analysing…" : "Run Analysis"}
-                </button>
-
-                {/* How-to-use tooltip (hover on desktop, tap on mobile) */}
-                <div className="group relative">
-                  <button
-                    type="button"
-                    aria-label="How to use this tool"
-                    className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
-                  >
-                    <HelpCircle size={16} />
-                  </button>
-                  <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                    {HOW_TO_TEXT}
-                  </div>
-                </div>
-              </div>
-            )}
-            <span className="font-mono text-xs text-slate">
-              API calls used today:{" "}
-              <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
-            </span>
-          </div>
-
-          {debugMode && (
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex-1 rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-3 text-sm font-semibold text-signal-blue">
-                REAL API TEST — Germany vs Paraguay June 29. Full pipeline
-                verification.
-              </div>
-              <button
-                type="button"
-                onClick={handleResetBudget}
-                className="shrink-0 rounded-md border border-accent-amber/60 px-4 py-2 text-sm font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10 focus:outline-none focus:ring-1 focus:ring-accent-amber"
-              >
-                Reset API Budget
-              </button>
-            </div>
-          )}
-
-
-          {counterCritical ? (
-            <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
-              🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only
-              essential calls running (predictions, referee and bracket calls
-              skipped).
-            </div>
-          ) : counterWarning ? (
-            <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
-              ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Skipping
-              predictions (C8) and bracket (C10) for remaining matches.
-            </div>
-          ) : null}
-
-          {error && (
-            <div className="w-full whitespace-pre-line rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
-          {!matches && !error && (
-            <p className="pt-10 text-lg font-medium text-slate">
-              Run analysis to see today's matches
-            </p>
-          )}
-
-          {matches && matches.length === 0 && (
-            <div className="w-full rounded-md border border-border bg-card/40 px-4 py-5 text-center text-sm text-slate">
-              No World Cup matches scheduled today or tomorrow. Check back closer
-              to the next knockout fixtures.
-            </div>
-          )}
-
-          {matches &&
-            matches.length > 0 &&
-            matches.every((m) =>
-              isMatchBlocked(m.statusShort, minutesUntil(m.kickoffUtc, now)),
-            ) && (
-              <div className="w-full whitespace-pre-line rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-4 text-center text-sm text-accent-amber">
-                All scheduled matches are in progress or finished.
-                {"\n"}Next matches: {nextMatchesText(matches, now)}
-              </div>
-            )}
-
-
-          {matches && matches.length > 0 && (
-            <ul className="flex w-full flex-col gap-3">
-              {matches.map((m) => {
-                const meta = STATUS_META[m.status];
-                const isActive = activeMatchId === m.id;
-                const minsToKickoff = minutesUntil(m.kickoffUtc, now);
-                const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
-                const band = timingBand(minsToKickoff, blocked);
-                const showCountdown = !blocked;
-                const minsToLineups = minsToKickoff - LINEUP_DROP_MIN;
-                // Normal-mode two-button flow only (debug uses top buttons).
-                // Availability is driven ONLY by the live/finished block — a
-                // scheduled match is actionable regardless of how far out it is
-                // (incl. tomorrow's fixtures) or whether it's outside the
-                // optimal lineup window.
-                const canAct = !debugMode && !blocked;
-                const runningThis = isActive && progress !== null;
-                const panelSummary =
-                  isActive && collection
-                    ? buildCallPanelSummary(collection.callResults)
-                    : null;
-                // Analyse is available once all MANDATORY calls have data.
-                const callsReady =
-                  isActive && !!panelSummary && panelSummary.mandatoryReady;
-                return (
-                  <li
-                    key={m.id}
-                    className="flex flex-col gap-3 rounded-md border border-border bg-card/40 px-4 py-3"
-                  >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex flex-col gap-1">
-                        <span className="font-semibold text-foreground">
-                          {m.home} vs {m.away}
-                        </span>
-                        <span className="font-mono text-xs text-slate">
-                          {formatLocal(m.kickoffUtc)}
-                        </span>
-                        {showCountdown && (
-                          <span className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs">
-                            <span className="text-accent-amber">
-                              Lineups drop in:{" "}
-                              {minsToLineups > 0
-                                ? `${fmtMinutes(minsToLineups)} (T-75)`
-                                : "confirmed window (T-75)"}
-                            </span>
-                            <span className="text-slate">
-                              Kickoff in: {fmtMinutes(minsToKickoff)}
-                            </span>
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
-                        >
-                          {meta.emoji} {meta.label}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Timing gate — warning banner only (never blocks pre-kickoff).
-                        Shown for every scheduled match, including tomorrow's. */}
-                    <div
-                      className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
-                        band.tone,
-                      )}`}
-                    >
-                      {band.tone === "blocked" ? "🚫 " : ""}
-                      {band.label}
-                    </div>
-
-                    {/* Two-button flow: Run Calls + Analyse (normal mode) */}
-                    {canAct && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleRunCalls(m)}
-                          disabled={runningThis || analysing}
-                          className="rounded-md bg-accent-amber px-4 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {runningThis ? "Running calls…" : "Run Calls"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAnalyseCached(m)}
-                          disabled={!callsReady || runningThis || analysing}
-                          className="rounded-md border border-signal-blue bg-signal-blue/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {analysing && isActive
-                            ? "Analysing…"
-                            : callsReady
-                              ? "Analyse ▶"
-                              : "Run calls first"}
-                        </button>
-                      </div>
-                    )}
-
-                    {isActive && progress && (
-                      <div className="rounded-md border border-border bg-background/60 px-3 py-3">
-                        <p className="font-mono text-sm text-accent-amber">
-                          {progress.label}
-                        </p>
-                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border">
-                          <div
-                            className="h-full bg-accent-amber transition-all"
-                            style={{
-                              width: `${(progress.step / progress.total) * 100}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {isActive && collectError && (
-                      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                        {collectError}
-                      </div>
-                    )}
-
-                    {/* Normal mode: granular per-call status panel with retry.
-                        Debug mode keeps the full per-call CollectionPanel +
-                        raw debug panels below. */}
-                    {isActive && collection && panelSummary && !debugMode && (
-                      <CallStatusPanel
-                        summary={panelSummary}
-                        retrying={retrying}
-                        onRetry={(retryKey) => handleRetryCall(m, retryKey)}
-                        onClearCache={() => handleClearMatchCache(m)}
-                      />
-                    )}
-                    {isActive && collection && debugMode && (
-                      <CollectionPanel result={collection} />
-                    )}
-
-
-                    {isActive && analysing && (
-                      <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
-                        <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
-                        <p className="font-mono text-sm text-accent-amber">
-                          {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
-                        </p>
-                      </div>
-                    )}
-
-                    {isActive && billingError && (
-                      <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
-                        <p className="text-base font-bold">
-                          ⚠️ Anthropic Billing Issue
-                        </p>
-                        <p className="mt-1 text-sm">
-                          Your account credit balance is too low to run analysis.
-                          Add credits at{" "}
-                          <span className="font-semibold underline">
-                            console.anthropic.com
-                          </span>{" "}
-                          before trying again.
-                        </p>
-                      </div>
-                    )}
-
-                    {isActive && analysisError && (
-                      <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                        {analysisError}
-                      </div>
-                    )}
-
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-        {/* Loading skeletons (prevent layout shift while Claude generates) */}
-        {activeMatchId !== null &&
-          analysing &&
-          analysisResult === null &&
-          !analysisRaw && (
-            <div className="mt-8 w-full max-w-5xl">
-              <SkeletonDashboard />
-            </div>
-          )}
-
-        {/* Wide analysis output area */}
-        {activeMatchId !== null && (analysisResult !== null || analysisRaw) && (
-          <div className="mt-8 w-full max-w-5xl">
-            {analysisResult !== null ? (
-              <BettingDashboard result={analysisResult as AnalysisResult} />
-            ) : (
-              <div className="flex flex-col gap-2">
-                <p className="text-sm font-semibold text-foreground">
-                  Claude raw response (unparsed)
-                </p>
-                <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
-                  {analysisRaw}
-                </pre>
-              </div>
-            )}
-            {tokenUsage && (
-              <p className="mt-3 font-mono text-xs text-slate">
-                Tokens used:{" "}
-                <span className="text-accent-amber">{tokenUsage.input}</span> in,{" "}
-                <span className="text-accent-amber">{tokenUsage.output}</span> out
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Debug raw-response inspector */}
-        {debugMode &&
-          activeMatchId !== null &&
-          (collection || formattedDebug || analysisRaw) && (
-            <div className="mt-8 flex w-full max-w-5xl flex-col gap-4">
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-xs text-slate">
-                <span className="font-semibold text-signal-blue">
-                  DEBUG OUTPUT
-                </span>
-                <span>
-                  API calls used:{" "}
-                  <span className="text-accent-amber">{apiCalls}</span>/{DAILY_LIMIT}{" "}
-                  today
-                </span>
-                {tokenUsage && (
-                  <span>
-                    Tokens:{" "}
-                    <span className="text-accent-amber">{tokenUsage.input}</span> in{" "}
-                    /{" "}
-                    <span className="text-accent-amber">{tokenUsage.output}</span>{" "}
-                    out
-                  </span>
-                )}
-              </div>
-
-
-
-              {collection && (
-                <DebugReportView report={buildDebugReport(collection)} />
-              )}
-
-              {formattedDebug && (
-                <details className="rounded-md border border-border bg-background/60">
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    PART 4 — formatDataForClaude output ([CALL N … END CALL N])
-                  </summary>
-                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
-                    {formattedDebug}
-                  </pre>
-                </details>
-              )}
-
-              {analysisRaw && (
-                <details className="rounded-md border border-border bg-background/60" open>
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
-                    PART 4 — Final Claude JSON output
-                  </summary>
-                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-xs text-slate">
-                    {analysisRaw}
-                  </pre>
-                </details>
-              )}
-
-              {analysisResult !== null && (
-                <ValidationChecksView
-                  result={analysisResult as AnalysisResult}
-                />
-              )}
-            </div>
-          )}
-
-      </main>
+        <main className="flex flex-1 flex-col items-center px-6 py-10">
+          <p className="text-lg font-medium text-slate">Match not found.</p>
+          <button
+            type="button"
+            onClick={backToFixtures}
+            className="mt-4 text-sm text-accent-amber underline"
+          >
+            ← Back to fixtures
+          </button>
+        </main>
       )}
-
 
       <footer className="flex flex-col items-center gap-1 border-t border-border px-6 py-4 text-center">
         <span className="text-xs font-semibold text-foreground">
-          Edge v3.3 — WC2026 Knockout Intelligence
+          Edge v4.0 — WC2026 Knockout Intelligence
         </span>
         <span className="text-xs text-slate">
           Not financial advice. Bet responsibly.
@@ -1157,14 +682,556 @@ Start your response with { and end with }.`;
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// FIXTURES VIEW
+// ─────────────────────────────────────────────────────────────
+function FixturesView({
+  matches,
+  loading,
+  error,
+  now,
+  apiCalls,
+  apiColorClass,
+  counterWarning,
+  counterCritical,
+  onRefresh,
+  onOpenMatch,
+  matchStates,
+}: {
+  matches: AnalysedMatch[] | null;
+  loading: boolean;
+  error: string | null;
+  now: Date;
+  apiCalls: number;
+  apiColorClass: string;
+  counterWarning: boolean;
+  counterCritical: boolean;
+  onRefresh: () => void;
+  onOpenMatch: (m: AnalysedMatch) => void;
+  matchStates: Record<number, MatchState>;
+}) {
+  const sorted = matches
+    ? [...matches].sort(
+        (a, b) =>
+          new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
+      )
+    : null;
+
+  return (
+    <main className="flex flex-1 flex-col items-center px-6 py-10">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
+        <div className="flex flex-col items-center gap-3">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-foreground">Edge — WC2026</h1>
+            <div className="group relative">
+              <button
+                type="button"
+                aria-label="How to use this tool"
+                className="grid h-7 w-7 place-items-center rounded-full border border-border text-slate transition-colors hover:border-accent-amber hover:text-accent-amber focus:border-accent-amber focus:text-accent-amber focus:outline-none"
+              >
+                <HelpCircle size={16} />
+              </button>
+              <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 max-w-[80vw] -translate-x-1/2 whitespace-pre-line rounded-md border border-border bg-card p-3 text-left text-xs leading-relaxed text-slate opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                {HOW_TO_TEXT}
+              </div>
+            </div>
+          </div>
+          <p className="text-sm font-medium text-slate">Upcoming Fixtures</p>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-md bg-accent-amber px-5 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Loading…" : "Refresh Fixtures"}
+          </button>
+          <span className="font-mono text-xs text-slate">
+            API calls used today:{" "}
+            <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
+          </span>
+        </div>
+
+        {counterCritical ? (
+          <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
+            🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only
+            essential calls running.
+          </div>
+        ) : counterWarning ? (
+          <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
+            ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Predictions/bracket
+            calls may be skipped.
+          </div>
+        ) : null}
+
+        {error && (
+          <div className="w-full whitespace-pre-line rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {loading && !sorted && (
+          <p className="pt-10 text-center text-lg font-medium text-slate">
+            Loading today's fixtures…
+          </p>
+        )}
+
+        {sorted && sorted.length === 0 && (
+          <div className="w-full rounded-md border border-border bg-card/40 px-4 py-5 text-center text-sm text-slate">
+            No World Cup matches scheduled today or tomorrow. Check back closer to
+            the next knockout fixtures.
+          </div>
+        )}
+
+        {sorted && sorted.length > 0 && (
+          <ul className="flex w-full flex-col gap-3">
+            {sorted.map((m) => {
+              const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+              const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
+              const band = timingBand(minsToKickoff, blocked);
+              const meta = STATUS_META[m.status];
+              const hasState = !!matchStates[m.id]?.collection;
+              const hasResult = !!matchStates[m.id]?.analysisResult;
+              return (
+                <li
+                  key={m.id}
+                  className="flex flex-col gap-3 rounded-md border border-border bg-card/40 px-4 py-3"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-1">
+                      <span className="font-semibold text-foreground">
+                        {m.home} vs {m.away}
+                      </span>
+                      <span className="font-mono text-xs text-slate">
+                        {formatLocal(m.kickoffUtc)}
+                      </span>
+                      {m.round && (
+                        <span className="font-mono text-[11px] text-slate">
+                          {m.round}
+                        </span>
+                      )}
+                      {!blocked && (
+                        <span className="font-mono text-xs text-slate">
+                          Kickoff in: {fmtMinutes(minsToKickoff)}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
+                    >
+                      {meta.emoji} {meta.label}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                      band.tone,
+                    )}`}
+                  >
+                    {band.tone === "blocked" ? "🚫 " : ""}
+                    {band.label}
+                  </div>
+
+                  {blocked ? (
+                    <p className="font-mono text-xs text-signal-red">
+                      {isMatchBlockedReason(m.statusShort)}
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onOpenMatch(m)}
+                        className="rounded-md bg-accent-amber px-4 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90"
+                      >
+                        Analyse Match ▶
+                      </button>
+                      {hasResult ? (
+                        <span className="font-mono text-[11px] text-signal-green">
+                          ✓ analysis saved
+                        </span>
+                      ) : hasState ? (
+                        <span className="font-mono text-[11px] text-signal-blue">
+                          ✓ calls cached
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function isMatchBlockedReason(statusShort: string): string {
+  const finished = new Set(["FT", "AET", "PEN", "ABD", "AWD", "WO", "CANC"]);
+  if (finished.has(statusShort)) return "Match finished — no pre-match bets available.";
+  return "Match in progress — no pre-match bets available.";
+}
+
+// ─────────────────────────────────────────────────────────────
+// MATCH VIEW
+// ─────────────────────────────────────────────────────────────
+function MatchView({
+  match,
+  state,
+  now,
+  retrying,
+  analysisMsgIndex,
+  countdown,
+  onBack,
+  onRunCalls,
+  onAnalyse,
+  onRetry,
+  onClearCache,
+  onResetBudget,
+  patchState,
+}: {
+  match: AnalysedMatch;
+  state: MatchState;
+  now: Date;
+  retrying: Set<string>;
+  analysisMsgIndex: number;
+  countdown: number;
+  onBack: () => void;
+  onRunCalls: () => void;
+  onAnalyse: () => void;
+  onRetry: (retryKey: string) => void;
+  onClearCache: () => void;
+  onResetBudget: () => void;
+  patchState: (partial: Partial<MatchState>) => void;
+}) {
+  const minsToKickoff = minutesUntil(match.kickoffUtc, now);
+  const blocked = isMatchBlocked(match.statusShort, minsToKickoff);
+  const band = timingBand(minsToKickoff, blocked);
+
+  const panelSummary = state.collection
+    ? buildCallPanelSummary(state.collection.callResults)
+    : null;
+  const callsReady = !!panelSummary && panelSummary.mandatoryReady;
+  const running = state.progress !== null;
+
+  // S3 lineup status for the manual-entry fallback.
+  const c6 = state.collection?.callResults["6"];
+  const lineupPending = !!state.collection && (!c6 || c6.status !== "SUCCESS");
+
+  return (
+    <main className="flex flex-1 flex-col items-center px-6 py-8">
+      <div className="flex w-full max-w-5xl flex-col gap-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="self-start text-sm font-semibold text-accent-amber transition-opacity hover:opacity-80"
+        >
+          ← Fixtures
+        </button>
+
+        {/* Match header */}
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 px-5 py-4">
+          <h1 className="text-2xl font-bold text-foreground">
+            {match.home} vs {match.away}
+          </h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-slate">
+            <span>{formatLocal(match.kickoffUtc)}</span>
+            {match.round && <span>· {match.round}</span>}
+            {!blocked && <span>· Kickoff in {fmtMinutes(minsToKickoff)}</span>}
+          </div>
+          <div
+            className={`mt-1 rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+              band.tone,
+            )}`}
+          >
+            {band.tone === "blocked" ? "🚫 " : ""}
+            {band.label}
+          </div>
+        </div>
+
+        {/* SECTION 1 — Data Calls */}
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-foreground">
+              1 · Data Calls
+            </h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onRunCalls}
+                disabled={running || state.analysing}
+                className="rounded-md bg-accent-amber px-4 py-2 text-xs font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {running ? "Running calls…" : "Run All Calls"}
+              </button>
+              <button
+                type="button"
+                onClick={onResetBudget}
+                className="rounded-md border border-accent-amber/60 px-3 py-2 text-[11px] font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10"
+              >
+                Reset Budget
+              </button>
+            </div>
+          </div>
+
+          {state.lastRunAt && (
+            <p className="font-mono text-[11px] text-slate">
+              Last run: {new Date(state.lastRunAt).toLocaleTimeString()}
+            </p>
+          )}
+
+          {running && state.progress && (
+            <div className="rounded-md border border-border bg-background/60 px-3 py-3">
+              <p className="font-mono text-sm text-accent-amber">
+                {state.progress.label}
+              </p>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border">
+                <div
+                  className="h-full bg-accent-amber transition-all"
+                  style={{
+                    width: `${(state.progress.step / state.progress.total) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {state.collectError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {state.collectError}
+            </div>
+          )}
+
+          {panelSummary && (
+            <CallStatusPanel
+              summary={panelSummary}
+              retrying={retrying}
+              onRetry={onRetry}
+              onClearCache={onClearCache}
+            />
+          )}
+
+          {lineupPending && (
+            <ManualLineupForm
+              onSubmit={(home, away) => {
+                if (!state.collection) return;
+                const injected = {
+                  key: "6",
+                  label: "Lineups (manual entry)",
+                  status: "SUCCESS" as const,
+                  data: {
+                    source: "manual",
+                    home: { starting_xi: home },
+                    away: { starting_xi: away },
+                  },
+                  fetchedAt: Date.now(),
+                };
+                patchState({
+                  collection: {
+                    ...state.collection,
+                    callResults: {
+                      ...state.collection.callResults,
+                      "6": injected,
+                    },
+                    lineupState: "POPULATED",
+                    lineupResolved: true,
+                  },
+                });
+                toast.success("Manual lineup saved — re-analyse for full data.");
+              }}
+            />
+          )}
+
+          {!state.collection && !running && (
+            <p className="font-mono text-xs text-slate">
+              Press “Run All Calls” to fetch API data for this match. Results are
+              cached — retry individual calls without re-running the rest.
+            </p>
+          )}
+        </section>
+
+        {/* SECTION 2 — Claude Analysis */}
+        {callsReady && (
+          <section className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 px-5 py-4">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-foreground">
+              2 · Claude Analysis
+            </h2>
+
+            <button
+              type="button"
+              onClick={onAnalyse}
+              disabled={state.analysing}
+              className="self-start rounded-md border border-signal-blue bg-signal-blue/15 px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-signal-blue transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {state.analysing ? "Analysing…" : "🔍 Analyse with Claude ▶"}
+            </button>
+
+            {state.analysing && (
+              <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+                <p className="font-mono text-sm text-accent-amber">
+                  {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+                </p>
+                <span className="ml-auto font-mono text-xs text-slate">
+                  ~{countdown}s
+                </span>
+              </div>
+            )}
+
+            {state.billingError && (
+              <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
+                <p className="text-base font-bold">⚠️ Anthropic Billing Issue</p>
+                <p className="mt-1 text-sm">
+                  Your account credit balance is too low to run analysis. Add
+                  credits at{" "}
+                  <span className="font-semibold underline">
+                    console.anthropic.com
+                  </span>{" "}
+                  before trying again.
+                </p>
+              </div>
+            )}
+
+            {state.analysisError && (
+              <div className="whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+                {state.analysisError}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* SECTION 3 — Results */}
+        {state.analysing && state.analysisResult === null && !state.analysisRaw && (
+          <section className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 px-5 py-4">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-foreground">
+              3 · Results
+            </h2>
+            <SkeletonDashboard />
+          </section>
+        )}
+
+        {(state.analysisResult !== null || state.analysisRaw) && (
+          <section className="flex flex-col gap-4 rounded-lg border border-border bg-background/40 px-5 py-4">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-foreground">
+              3 · Results
+            </h2>
+
+            {state.analysisResult !== null ? (
+              <>
+                <BettingDashboard result={state.analysisResult as AnalysisResult} />
+                <ValidationChecksView result={state.analysisResult as AnalysisResult} />
+                <div className="rounded-md border border-signal-green/40 bg-signal-green/5 px-4 py-3 font-mono text-xs text-signal-green">
+                  ✓ Saved to backtesting log — view it from the Backtest Log tab.
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-semibold text-foreground">
+                  Claude raw response (unparsed)
+                </p>
+                <pre className="max-h-96 overflow-auto rounded-md border border-border bg-background/80 p-3 font-mono text-xs text-slate">
+                  {state.analysisRaw}
+                </pre>
+              </div>
+            )}
+
+            {state.tokenUsage && (
+              <p className="font-mono text-xs text-slate">
+                Tokens used:{" "}
+                <span className="text-accent-amber">{state.tokenUsage.input}</span>{" "}
+                in,{" "}
+                <span className="text-accent-amber">{state.tokenUsage.output}</span>{" "}
+                out
+              </p>
+            )}
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
+// Manual lineup entry — shown when TheStatsAPI lineups stay pending. One player
+// per line for each side. Injects a synthetic CALL 6 SUCCESS result.
+function ManualLineupForm({
+  onSubmit,
+}: {
+  onSubmit: (home: string[], away: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [home, setHome] = useState("");
+  const [away, setAway] = useState("");
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="self-start rounded-md border border-accent-amber/50 px-3 py-1.5 text-[11px] font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10"
+      >
+        Lineups not propagating — enter manually
+      </button>
+    );
+  }
+
+  const parse = (s: string) =>
+    s
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-3">
+      <p className="text-xs font-semibold text-accent-amber">
+        Manual lineup entry — one player per line
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] text-slate">Home starting XI</label>
+          <textarea
+            value={home}
+            onChange={(e) => setHome(e.target.value)}
+            rows={11}
+            className="rounded-md border border-border bg-background/80 p-2 font-mono text-xs text-foreground focus:border-accent-amber focus:outline-none"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] text-slate">Away starting XI</label>
+          <textarea
+            value={away}
+            onChange={(e) => setAway(e.target.value)}
+            rows={11}
+            className="rounded-md border border-border bg-background/80 p-2 font-mono text-xs text-foreground focus:border-accent-amber focus:outline-none"
+          />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            onSubmit(parse(home), parse(away));
+            setOpen(false);
+          }}
+          className="rounded-md bg-accent-amber px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-black"
+        >
+          Save Lineups
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-md border border-border px-4 py-1.5 text-[11px] font-semibold text-slate"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ValidationChecksView({ result }: { result: AnalysisResult }) {
   const mp = result.model_probabilities;
   const ec = result.ensemble_check;
   const dw = result.dimension_weights_validation;
 
-  // Recompute the ensemble impact straight from the signals so we can show,
-  // side by side, that ensemble_check (and the confidence math, which uses the
-  // same helper) and a fresh calculateEnsembleAlignment() never disagree.
   const recomputed =
     ec &&
     calculateEnsembleAlignment({
@@ -1179,7 +1246,7 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
         Validation Checks
       </summary>
       <div className="space-y-4 border-t border-border px-3 py-3 font-mono text-xs text-slate">
-        {/* GAP 1 */}
+        {/* model_probabilities */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
             model_probabilities
@@ -1195,21 +1262,13 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
               <div>
                 raw_sum:{" "}
                 <span className="text-accent-amber">
-                  {typeof mp.raw_sum === "number"
-                    ? mp.raw_sum.toFixed(2)
-                    : "—"}
+                  {typeof mp.raw_sum === "number" ? mp.raw_sum.toFixed(2) : "—"}
                 </span>
               </div>
               <div>
                 normalized: {Number(mp.home).toFixed(2)} /{" "}
-                {Number(mp.draw).toFixed(2)} / {Number(mp.away).toFixed(2)}{" "}
-                (sum{" "}
-                {(
-                  Number(mp.home) +
-                  Number(mp.draw) +
-                  Number(mp.away)
-                ).toFixed(2)}
-                )
+                {Number(mp.draw).toFixed(2)} / {Number(mp.away).toFixed(2)} (sum{" "}
+                {(Number(mp.home) + Number(mp.draw) + Number(mp.away)).toFixed(2)})
               </div>
             </div>
           ) : (
@@ -1217,7 +1276,7 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           )}
         </div>
 
-        {/* GAP 2 */}
+        {/* ensemble_check.alignment */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
             ensemble_check.alignment
@@ -1230,15 +1289,11 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
               </div>
               <div>
                 confidence_impact (stored):{" "}
-                <span className="text-accent-amber">
-                  {ec.confidence_impact}
-                </span>
+                <span className="text-accent-amber">{ec.confidence_impact}</span>
               </div>
               <div>
                 recomputed alignment:{" "}
-                <span className="text-accent-amber">
-                  {recomputed?.alignment}
-                </span>{" "}
+                <span className="text-accent-amber">{recomputed?.alignment}</span>{" "}
                 | confidence_impact:{" "}
                 <span className="text-accent-amber">
                   {recomputed?.confidence_impact}
@@ -1252,16 +1307,14 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
                 className={
                   recomputed &&
                   ec.alignment === recomputed.alignment &&
-                  ec.confidence_impact ===
-                    recomputed.confidence_impact.toString()
+                  ec.confidence_impact === recomputed.confidence_impact.toString()
                     ? "text-signal-blue"
                     : "text-destructive"
                 }
               >
                 {recomputed &&
                 ec.alignment === recomputed.alignment &&
-                ec.confidence_impact ===
-                  recomputed.confidence_impact.toString()
+                ec.confidence_impact === recomputed.confidence_impact.toString()
                   ? "✓ stored matches confidence-math source"
                   : "✗ MISMATCH between stored and recomputed"}
               </div>
@@ -1271,7 +1324,7 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           )}
         </div>
 
-        {/* GAP 3 */}
+        {/* dimension_weights_validation */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
             dimension_weights_validation
@@ -1310,232 +1363,5 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
         </div>
       </div>
     </details>
-  );
-}
-
-
-const STATUS_DOT: Record<string, string> = {
-  SUCCESS: "text-accent-amber",
-  EMPTY: "text-slate",
-  FAILED: "text-destructive",
-  SKIPPED: "text-slate",
-};
-
-function CollectionPanel({ result }: { result: CollectionResult }) {
-  const entries = Object.values(result.callResults);
-  return (
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-background/60 px-3 py-3">
-      <p className="text-sm font-semibold text-foreground">
-        Data collection complete:{" "}
-        <span className="text-accent-amber">{result.succeeded}</span>/11 calls
-        succeeded.{" "}
-        <span className="text-slate">
-          {result.emptyOrFailed} calls empty or failed.
-        </span>
-      </p>
-
-      {result.warning && (
-        <p className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 text-xs text-accent-amber">
-          {result.warning}
-        </p>
-      )}
-
-      <ul className="flex flex-col gap-1">
-        {entries.map((c) => (
-          <li
-            key={c.key}
-            className="flex items-start justify-between gap-3 font-mono text-xs"
-          >
-            <span className="text-slate">
-              [{c.key}] {c.label.replace(/\s*\(\d+\/11\)/, "")}
-            </span>
-            <span className={`whitespace-nowrap font-semibold ${STATUS_DOT[c.status]}`}>
-              {c.status}
-              {c.error ? ` — ${c.error}` : ""}
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      {result.failedCalls.length > 0 && (
-        <p className="text-xs text-slate">
-          Failed/empty calls:{" "}
-          <span className="text-destructive">{result.failedCalls.join(", ")}</span>
-        </p>
-      )}
-    </div>
-  );
-}
-
-function DebugReportView({ report }: { report: DebugReport }) {
-  const afRows = report.rows.filter((r) => r.api === "API-Football");
-  const saRows = report.rows.filter((r) => r.api === "TheStatsAPI");
-  
-
-  return (
-    <div className="flex flex-col gap-4">
-      <DebugCallGroup title="API-Football calls" rows={afRows} />
-      {saRows.length > 0 && (
-        <DebugCallGroup
-          title="TheStatsAPI calls (S0 lookup, S2A/S2B team stats, S3 lineups, S4 players, S5 Pinnacle, S6 all-groups standings — 3rd-place-aware dead-rubber check)"
-          rows={saRows}
-        />
-      )}
-
-      {/* Summary */}
-      <div className="flex flex-col gap-1 rounded-md border border-signal-blue/40 bg-signal-blue/5 px-4 py-3 font-mono text-sm">
-        <span className="font-semibold text-signal-blue">SUMMARY</span>
-        <span className="text-slate">
-          API-Football:{" "}
-          <span className="text-accent-amber">
-            {report.afSucceeded}/{report.afTotal}
-          </span>{" "}
-          calls succeeded
-          {report.call10ExpectedEmpty && (
-            <span className="text-slate">
-              {" "}
-              (Call 10 empty — expected, next round not yet scheduled)
-            </span>
-          )}
-        </span>
-
-
-        <span className="text-slate">
-          TheStatsAPI:{" "}
-          <span className="text-accent-amber">
-            {report.statsapiSucceeded}/{report.statsapiTotal}
-          </span>{" "}
-          calls succeeded
-        </span>
-
-        <span className="text-slate">
-          Dead rubber check (3rd-place aware):{" "}
-          {report.deadRubberTriggered ? (
-            <span className="text-accent-amber">
-              {report.deadRubberFlagged} fixture(s) flagged across both teams
-            </span>
-          ) : (
-            <span className="text-slate">
-              NOT TRIGGERED — all last-5 fixtures are knockout stage
-            </span>
-          )}
-        </span>
-
-        <span className="text-slate">
-          Round of 32 historical caveat:{" "}
-          <span
-            className={
-              report.historicalCaveatEligible
-                ? "text-accent-amber"
-                : "text-slate"
-            }
-          >
-            {report.historicalCaveatEligible ? "TRIGGERED" : "NOT TRIGGERED"}
-          </span>
-          <span className="block pl-2 text-[11px] leading-snug text-slate">
-            {report.historicalCaveatReason}
-          </span>
-        </span>
-
-        <span className="text-slate">
-          Penalty shootout (score.final_score):{" "}
-          <span
-            className={
-              report.wentToPenalties ? "text-accent-amber" : "text-slate"
-            }
-          >
-            {report.wentToPenalties ? "WENT TO PENALTIES" : "NO"}
-          </span>
-          <span className="block pl-2 text-[11px] leading-snug text-slate">
-            {report.penaltyShootoutNote}
-          </span>
-        </span>
-
-        <span className="text-slate">
-          Lineup state:{" "}
-          <span
-            className={
-              report.lineupResolved ? "text-signal-green" : "text-signal-red"
-            }
-          >
-            {LINEUP_STATE_INFO[report.lineupState].label}
-          </span>
-          <span className="block pl-2 text-[11px] leading-snug text-slate">
-            {LINEUP_STATE_INFO[report.lineupState].note}
-          </span>
-          {!report.lineupResolved && (
-            <span className="block pl-2 text-[11px] leading-snug text-signal-red">
-              ⚠️ DATA QUALITY: Debug Mode runs against FINISHED matches, and per
-              the TheStatsAPI spec finished matches always have an official
-              lineup record available. A finished match still showing LINEUP
-              PENDING is a genuine data gap worth flagging — not something to
-              accept silently.
-            </span>
-          )}
-        </span>
-
-
-        <span className="text-slate">
-          Ready for Claude:{" "}
-          <span
-            className={
-              report.readyForClaude ? "text-signal-green" : "text-signal-red"
-            }
-          >
-            {report.readyForClaude ? "YES" : "NO"}
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-
-function DebugCallGroup({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: ReturnType<typeof buildDebugReport>["rows"];
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm font-semibold text-foreground">{title}</p>
-      {rows.map((row, i) => (
-        <details
-          key={i}
-          className="rounded-md border border-border bg-background/60"
-        >
-          <summary className="cursor-pointer px-3 py-2 font-mono text-xs leading-relaxed">
-            <span className="font-semibold text-foreground">
-              {row.callLabel}
-            </span>{" "}
-            <span className="text-slate">— {row.api} {row.endpoint}</span>{" "}
-            <span className={row.ok ? "text-signal-green" : "text-signal-red"}>
-              — Status: {String(row.status)}
-            </span>{" "}
-            — Data extracted:{" "}
-            <span
-              className={
-                row.dataExtracted ? "text-signal-green" : "text-signal-red"
-              }
-            >
-              {row.dataExtracted ? "YES" : "NO"}
-            </span>
-            {row.error ? (
-              <span className="text-signal-red"> — {row.error}</span>
-            ) : null}
-          </summary>
-          <div className="border-t border-border px-3 py-2">
-            <p className="mb-1 break-all font-mono text-[11px] text-slate">
-              URL: {row.url}
-            </p>
-            <pre className="max-h-80 overflow-auto font-mono text-xs text-slate">
-              {JSON.stringify(row.json, null, 2)}
-            </pre>
-          </div>
-        </details>
-      ))}
-    </div>
   );
 }
