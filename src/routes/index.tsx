@@ -56,10 +56,7 @@ import {
   CRITICAL_THRESHOLD,
 } from "@/lib/apiCounter";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
-import {
-  startAnalysis,
-  getAnalysisResult,
-} from "@/lib/analysisJobs.functions";
+import { analyseMatch } from "@/lib/analyse-match.functions";
 import type { ClaudeCallResult } from "@/lib/claude.server";
 import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
@@ -183,9 +180,6 @@ interface MatchState {
   lastRunAt: number | null;
   analysisSavedAt: number | null; // when the persisted result was written
   loadedFromCache: boolean; // true when analysisResult was hydrated from localStorage
-  analysisJobId: string | null; // id of the in-flight background analysis job
-  analysisCompletedAway: boolean; // job finished while the tab was backgrounded
-  pollStalled: boolean; // polling failed 5x in a row — show a Retry button
   usedFallbackModel: boolean; // analysis completed on the fallback model
   fallbackReason: string | null;
 }
@@ -204,28 +198,9 @@ const EMPTY_MATCH_STATE: MatchState = {
   lastRunAt: null,
   analysisSavedAt: null,
   loadedFromCache: false,
-  analysisJobId: null,
-  analysisCompletedAway: false,
-  pollStalled: false,
   usedFallbackModel: false,
   fallbackReason: null,
 };
-
-// ─────────────────────────────────────────────────────────────
-// Background-analysis polling
-// ─────────────────────────────────────────────────────────────
-interface PollController {
-  timer: ReturnType<typeof setInterval> | null;
-  jobId: string;
-  failCount: number;
-  startedAt: number;
-  canceled: boolean;
-  inFlight: boolean;
-}
-
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_FAILURES = 5;
-const jobStorageKey = (matchId: number) => `edge_job_${matchId}`;
 
 type Tab = "analysis" | "log";
 type View = "fixtures" | "match";
@@ -247,17 +222,10 @@ function Index() {
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
   const [analysisElapsedSec, setAnalysisElapsedSec] = useState(0);
 
-  const callStartAnalysis = useServerFn(startAnalysis);
-  const callGetAnalysisResult = useServerFn(getAnalysisResult);
+  const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const lineupRefetchedRef = useRef<Set<number>>(new Set());
   const lineupFinalRecheckRef = useRef<Set<number>>(new Set());
-  // Active analysis-poll controllers, keyed by match id. Lets a background job
-  // keep being polled independently of which match view is open.
-  const pollControllers = useRef<Map<number, PollController>>(new Map());
-  // Match ids whose analysis was running while the tab was backgrounded — used
-  // to show the "completed while you were away" banner on return.
-  const backgroundedRef = useRef<Set<number>>(new Set());
 
   // Helpers to read/patch per-match state.
   const getState = (id: number | null): MatchState =>
@@ -279,17 +247,7 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
-  // Clear any live poll timers when the component unmounts.
-  useEffect(() => {
-    const controllers = pollControllers.current;
-    return () => {
-      for (const c of controllers.values()) {
-        c.canceled = true;
-        if (c.timer) clearInterval(c.timer);
-      }
-      controllers.clear();
-    };
-  }, []);
+
 
 
   useEffect(() => {
@@ -332,44 +290,7 @@ function Index() {
     });
   }, [matches]);
 
-  // Resume any in-flight background analysis jobs when fixtures load or when the
-  // tab regains focus after being backgrounded. If a job finished while away,
-  // the poll picks up the completed result and the "away" banner is shown.
-  useEffect(() => {
-    if (!matches) return;
 
-    const resumeAll = (markAway: boolean) => {
-      for (const m of matches) resumeIfPending(m.id, markAway);
-    };
-
-    // When the tab goes hidden, flag any actively-analysing matches so that a
-    // completion that happens while hidden surfaces the "while you were away"
-    // banner on return.
-    const onHidden = () => {
-      for (const m of matches) {
-        const st = matchStates[m.id];
-        if (st?.analysing || pollControllers.current.has(m.id)) {
-          backgroundedRef.current.add(m.id);
-        }
-      }
-    };
-
-    // Initial mount: resume without treating as "away".
-    resumeAll(false);
-
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") onHidden();
-      else resumeAll(true);
-    };
-    const onFocus = () => resumeAll(true);
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", onFocus);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches]);
 
 
 
@@ -492,25 +413,17 @@ function Index() {
     setView("fixtures");
   }
 
-  // ── Background-job analysis ────────────────────────────────
-  // Stop polling a match's job and drop its controller.
-  function cancelPolling(matchId: number) {
-    const c = pollControllers.current.get(matchId);
-    if (c) {
-      c.canceled = true;
-      if (c.timer) clearInterval(c.timer);
-      pollControllers.current.delete(matchId);
-    }
-  }
-
-  // Process a completed Claude response — identical logic to the old
-  // synchronous success/error path. calculateResults() still runs here,
-  // client-side, on the returned raw response.
+  // ── Synchronous Claude analysis ────────────────────────────
+  // The formatted prompt is small (~13k input tokens after per-block trimming),
+  // so Claude responds in ~15-25s. A direct synchronous server-function call is
+  // simpler and more reliable than the old background job store, which was only
+  // justified when the prompt approached the 200k context limit.
+  // Process the completed Claude response. calculateResults() runs client-side
+  // on the returned raw response.
   function processClaudeResponse(
     match: AnalysedMatch,
     res: ClaudeCallResult,
     startedAt: number,
-    away: boolean,
   ) {
     const responseTimeMs = Date.now() - startedAt;
 
@@ -519,7 +432,6 @@ function Index() {
         patchState(match.id, {
           billingError: true,
           analysing: false,
-          analysisJobId: null,
         });
         toast.error("Anthropic billing issue", {
           description: "Account credit balance is too low.",
@@ -532,7 +444,6 @@ function Index() {
       patchState(match.id, {
         analysisError: msg,
         analysing: false,
-        analysisJobId: null,
       });
       toast.error("Analysis failed", { description: msg });
       return;
@@ -569,8 +480,6 @@ function Index() {
         analysing: false,
         analysisSavedAt: savedAt,
         loadedFromCache: false,
-        analysisJobId: null,
-        analysisCompletedAway: away,
         usedFallbackModel: res.used_fallback_model === true,
         fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
@@ -584,7 +493,7 @@ function Index() {
         responseTimeMs,
         savedAt,
       });
-      toast.success(away ? "Analysis completed while you were away" : "Analysis complete");
+      toast.success("Analysis complete");
 
       const logEntry = enriched?.log_entry;
       if (logEntry && typeof logEntry === "object") {
@@ -599,114 +508,14 @@ function Index() {
         analysisRaw: cleaned,
         tokenUsage,
         analysing: false,
-        analysisJobId: null,
         analysisError: `Analysis could not be parsed.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
       });
       toast.error("Could not parse analysis JSON");
     }
   }
 
-  // Start polling a job every 3s. `away` marks completions that should show the
-  // "completed while you were away" banner.
-  function startPolling(
-    match: AnalysedMatch,
-    jobId: string,
-    startedAt: number,
-    away: boolean,
-  ) {
-    cancelPolling(match.id);
-    const controller: PollController = {
-      timer: null,
-      jobId,
-      failCount: 0,
-      startedAt,
-      canceled: false,
-      inFlight: false,
-    };
-    pollControllers.current.set(match.id, controller);
-    patchState(match.id, {
-      analysing: true,
-      analysisJobId: jobId,
-      pollStalled: false,
-      analysisError: null,
-      billingError: false,
-    });
-
-    const tick = async () => {
-      if (controller.canceled || controller.inFlight) return;
-      controller.inFlight = true;
-      try {
-        const poll = await callGetAnalysisResult({ data: { jobId } });
-        controller.failCount = 0;
-        if (controller.canceled) return;
-        if (poll.status === "pending") return;
-        if (poll.status === "failed") {
-          cancelPolling(match.id);
-          try {
-            localStorage.removeItem(jobStorageKey(match.id));
-          } catch {
-            /* ignore */
-          }
-          patchState(match.id, {
-            analysing: false,
-            analysisJobId: null,
-            analysisError: poll.error,
-          });
-          toast.error("Analysis failed", { description: poll.error });
-          return;
-        }
-        // complete
-        cancelPolling(match.id);
-        try {
-          localStorage.removeItem(jobStorageKey(match.id));
-        } catch {
-          /* ignore */
-        }
-        const wasAway = away || backgroundedRef.current.has(match.id);
-        backgroundedRef.current.delete(match.id);
-        processClaudeResponse(match, poll.result, controller.startedAt, wasAway);
-      } catch {
-        controller.failCount += 1;
-        if (controller.failCount >= MAX_POLL_FAILURES) {
-          cancelPolling(match.id);
-          patchState(match.id, { analysing: false, pollStalled: true });
-          toast.error("Lost connection to the analysis", {
-            description: "Tap Retry to resume from where it left off.",
-          });
-        }
-      } finally {
-        controller.inFlight = false;
-      }
-    };
-
-    controller.timer = setInterval(tick, POLL_INTERVAL_MS);
-    void tick(); // immediate first poll
-  }
-
-  // Resume polling a stored job for a match if one exists and we're not already
-  // polling and don't already have a result. Called on returning from
-  // background / opening a match.
-  function resumeIfPending(matchId: number, markAway = true) {
-    if (pollControllers.current.has(matchId)) return;
-    let jobId: string | null = null;
-    try {
-      jobId = localStorage.getItem(jobStorageKey(matchId));
-    } catch {
-      jobId = null;
-    }
-    if (!jobId) return;
-    const st = getState(matchId);
-    if (st.analysisResult) return;
-    const match = matches?.find((m) => m.id === matchId);
-    if (!match) return;
-    startPolling(match, jobId, Date.now(), markAway);
-  }
-
-  // Start a fresh analysis job. If one is already running for this match, cancel
-  // its poll first and replace it.
+  // Run a fresh synchronous analysis for a match.
   async function runClaudeAnalysis(match: AnalysedMatch, result: CollectionResult) {
-    cancelPolling(match.id);
-    backgroundedRef.current.delete(match.id);
     patchState(match.id, {
       analysing: true,
       analysisResult: null,
@@ -714,9 +523,6 @@ function Index() {
       billingError: false,
       analysisRaw: null,
       tokenUsage: null,
-      analysisJobId: null,
-      analysisCompletedAway: false,
-      pollStalled: false,
     });
 
     let formattedData: string;
@@ -750,42 +556,21 @@ Start your response with { and end with }.`;
 
     const startedAt = Date.now();
     try {
-      const { jobId } = await callStartAnalysis({
+      const res = await callAnalyseMatch({
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
-      try {
-        localStorage.setItem(jobStorageKey(match.id), jobId);
-      } catch {
-        /* ignore */
-      }
-      startPolling(match, jobId, startedAt, false);
+      processClaudeResponse(match, res, startedAt);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not start the analysis job.";
+      const msg = e instanceof Error ? e.message : "Could not run the analysis.";
       patchState(match.id, {
         analysisError: msg,
         analysing: false,
-        analysisJobId: null,
       });
       toast.error("Analysis failed", { description: msg });
     }
   }
 
-  // Resume polling after a 5-failure stall, using the stored job id.
-  function handleResumePoll(match: AnalysedMatch) {
-    let jobId = getState(match.id).analysisJobId;
-    if (!jobId) {
-      try {
-        jobId = localStorage.getItem(jobStorageKey(match.id));
-      } catch {
-        jobId = null;
-      }
-    }
-    if (!jobId) {
-      toast.error("No job to resume — re-run analysis.");
-      return;
-    }
-    startPolling(match, jobId, Date.now(), true);
-  }
+
 
 
   // SECTION 1 — Run All Calls. API pipeline only. No Claude / tokens.
@@ -1005,7 +790,6 @@ Start your response with { and end with }.`;
           onAnalyse={() => handleAnalyseCached(activeMatch)}
           onRetry={(k) => handleRetryCall(activeMatch, k)}
           onResumeCalls={() => handleResumeCalls(activeMatch)}
-          onResumePoll={() => handleResumePoll(activeMatch)}
           onClearCache={() => handleClearMatchCache(activeMatch)}
           onResetBudget={handleResetBudget}
           patchState={(partial) => patchState(activeMatch.id, partial)}
@@ -1274,7 +1058,6 @@ function MatchView({
   onAnalyse,
   onRetry,
   onResumeCalls,
-  onResumePoll,
   onClearCache,
   onResetBudget,
   patchState,
@@ -1290,7 +1073,6 @@ function MatchView({
   onAnalyse: () => void;
   onRetry: (retryKey: string) => void;
   onResumeCalls: () => void;
-  onResumePoll: () => void;
   onClearCache: () => void;
   onResetBudget: () => void;
   patchState: (partial: Partial<MatchState>) => void;
@@ -1498,33 +1280,13 @@ function MatchView({
                   Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </p>
                 <p className="mt-1 font-mono text-[11px] text-slate/80">
-                  Runs on the server — safe to switch tabs or lock your phone. The
-                  result loads automatically when you return.
+                  Typically completes in 15-25s. Keep this tab open until it
+                  finishes.
                 </p>
               </div>
             )}
 
-            {state.pollStalled && (
-              <div className="flex flex-col gap-2 rounded-md border border-signal-red/50 bg-signal-red/10 px-3 py-3">
-                <p className="font-mono text-xs font-semibold text-signal-red">
-                  ⚠️ Lost connection to the analysis. Your job may still be
-                  running on the server.
-                </p>
-                <button
-                  type="button"
-                  onClick={onResumePoll}
-                  className="self-start rounded-md border border-signal-red bg-signal-red/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-red transition-opacity hover:opacity-90"
-                >
-                  ↻ Retry
-                </button>
-              </div>
-            )}
 
-            {state.analysisCompletedAway && state.analysisResult !== null && (
-              <div className="rounded-md border border-signal-green/50 bg-signal-green/10 px-3 py-2 font-mono text-xs font-semibold text-signal-green">
-                ✓ Analysis completed while you were away
-              </div>
-            )}
 
             {state.usedFallbackModel && state.analysisResult !== null && (
               <div className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 font-mono text-xs font-semibold text-accent-amber">
