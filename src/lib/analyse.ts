@@ -1813,29 +1813,22 @@ export async function collectMatchData(
 
   // 4 step 1: home recent form
   let homeFixtureIds: number[] = [];
-  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () => {
-    const r = await afGet(
-      `/fixtures?team=${match.homeId}&last=5&league=1&season=2026`,
-      afKey,
-    );
-    homeFixtureIds = extractArray(r)
-      .map((f) => getField(getField(f, ["fixture"]), ["id"]))
-      .filter((id): id is number => typeof id === "number");
-    return r;
-  });
+  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () =>
+    afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+  );
+  // Derive ids AFTER the step so a cached 4-1 (fn not executed) still feeds 4-3.
+  homeFixtureIds = extractArray(callResults["4-1"]?.data)
+    .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+    .filter((id): id is number => typeof id === "number");
 
   // 4 step 2: away recent form
   let awayFixtureIds: number[] = [];
-  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () => {
-    const r = await afGet(
-      `/fixtures?team=${match.awayId}&last=5&league=1&season=2026`,
-      afKey,
-    );
-    awayFixtureIds = extractArray(r)
-      .map((f) => getField(getField(f, ["fixture"]), ["id"]))
-      .filter((id): id is number => typeof id === "number");
-    return r;
-  });
+  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () =>
+    afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+  );
+  awayFixtureIds = extractArray(callResults["4-2"]?.data)
+    .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+    .filter((id): id is number => typeof id === "number");
 
   // 4 step 3: combined batch
   await runStep("4-3", "Fetching recent form batch... (6/11)", () => {
