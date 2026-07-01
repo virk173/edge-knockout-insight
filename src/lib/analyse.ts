@@ -16,6 +16,32 @@ import {
 import { apiFootballGet } from "./apiFootball";
 import { readCallCache, writeCallCache } from "./callCache";
 
+/*
+ * KNOWN GAPS — documented, not bugs
+ *
+ * GAP 1: Pipeline test coverage
+ * analyse.ts has no automated test suite. collectMatchData(),
+ * formatDataForClaude(), and the per-call retry/cache logic are verified
+ * manually via Debug Mode live runs only. Adding Vitest coverage here (with
+ * mocked API responses) is the next hardening priority before scaling stakes.
+ *
+ * GAP 2: Pinnacle odds unverified live
+ * All WC2026 matches tested to date have returned Bet365 from TheStatsAPI,
+ * not Pinnacle. The Pinnacle extraction path in S5 (buildPinnacleSummary, line
+ * movement calculation, adjustEVForPinnacleGap) is correctly implemented but
+ * has never been exercised with real Pinnacle data. ev_confidence is correctly
+ * set to MEDIUM when Pinnacle is absent.
+ *
+ * GAP 3: Opponent-strength normalization
+ * Gap Score in calculate.ts weights a player's actual_goals and actual_assists
+ * from tournament stats without adjusting for opponent quality. A goal scored
+ * against a weak group-stage opponent receives the same weight as one scored
+ * against an elite side. This is a known bias (Bias #1) that was deliberately
+ * not fixed due to data availability constraints — opponent quality index is
+ * not available from either API.
+ */
+
+
 const SA_BASE = "https://api.thestatsapi.com/api";
 // Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
 const STATSAPI_COMPETITION_ID = "comp_6107";
@@ -555,7 +581,7 @@ export function verifyFixture(
 //   - On HTTP 429: log the error body + Retry-After header, wait 3s, retry ONCE.
 //     If it 429s again the error is thrown so the caller marks that single call
 //     EMPTY/FAILED and the pipeline continues (it does not block everything).
-//   - After EVERY call we wait STATSAPI_DELAY_MS (400ms) so the next sequential
+//   - After EVERY call we wait STATSAPI_DELAY_MS (600ms) so the next sequential
 //     TheStatsAPI call is spaced out. Callers must never run saGet in parallel.
 //   - On 404 we return null (used for lineups "not announced yet").
 async function saGet(path: string): Promise<unknown> {

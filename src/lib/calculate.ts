@@ -28,6 +28,21 @@ import type {
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
 
+/*
+ * KNOWN GAPS — see also analyse.ts
+ *
+ * GAP 3 (continued): Opponent-strength normalization is absent from
+ * computeGapScore(). The function uses raw tournament goals/assists without
+ * weighting by opponent quality. Intentional — no data source available to
+ * fix this.
+ *
+ * GAP 2 (continued): adjustEVForPinnacleGap() is correctly implemented and
+ * will fire correctly when pinnacle_odds is not null. As of WC2026 Round of
+ * 32, all tested matches returned Bet365 from TheStatsAPI. This path is
+ * unverified with real Pinnacle data but structurally correct.
+ */
+
+
 // ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
