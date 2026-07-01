@@ -781,7 +781,9 @@ function buildPinnacleSummary(
     if (ahOutcomes.length) markets.push({ market: "Asian Handicap", outcomes: ahOutcomes });
   }
 
-  return markets.length ? { bookmaker: bookmakerName, markets, raw: chosen } : null;
+  return markets.length
+    ? { bookmaker: bookmakerName, is_pinnacle, markets, raw: chosen }
+    : null;
 }
 
 // Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.
