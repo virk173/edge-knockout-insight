@@ -1690,6 +1690,9 @@ export async function collectMatchData(
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
+  // fetchedAt of any result loaded from cache, so record() can preserve the
+  // original fetch time instead of stamping "now".
+  const cachedAtMap: Record<string, number> = {};
 
   const record = (
     key: string,
@@ -1697,10 +1700,31 @@ export async function collectMatchData(
     status: CallStatus,
     data?: unknown,
     error?: string,
+    fromCache = false,
   ) => {
     const validated = data !== undefined ? replaceNulls(data) : undefined;
-    callResults[key] = { key, label, status, data: validated, error };
-    console.log(`[analyse] ${key} (${label}): ${status}`, error ?? "");
+    const fetchedAt = fromCache ? (cachedAtMap[key] ?? Date.now()) : Date.now();
+    callResults[key] = { key, label, status, data: validated, error, cached: fromCache, fetchedAt };
+    // Persist fresh (non-cache) results so a later run / individual retry can
+    // reuse them. FAILED and SKIPPED are never cached (so they always re-run);
+    // lineups ("6") are excluded inside writeCallCache.
+    if (!fromCache && status !== "FAILED" && status !== "SKIPPED") {
+      writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
+    }
+    console.log(
+      `[analyse] ${key} (${label}): ${status}${fromCache ? " [CACHED]" : ""}`,
+      error ?? "",
+    );
+  };
+
+  // Load a valid (non-expired) cached result for `key` and record it as CACHED.
+  // Returns true when a cache hit was used (so the caller skips the real call).
+  const tryLoadCache = (key: string): boolean => {
+    const c = readCallCache(match.id, key);
+    if (!c) return false;
+    cachedAtMap[key] = c.fetchedAt;
+    record(key, c.label, c.status as CallStatus, c.data, c.error, true);
+    return true;
   };
 
 
@@ -1719,6 +1743,8 @@ export async function collectMatchData(
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
     }
+    // Persistent per-call cache: reuse a fresh cached result instead of calling.
+    if (tryLoadCache(key)) return;
     currentDebugCall = key;
     try {
       const response = await fn();
