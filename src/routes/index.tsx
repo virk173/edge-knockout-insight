@@ -193,6 +193,7 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
+  const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
