@@ -901,6 +901,7 @@ function FixturesView({
               const meta = STATUS_META[m.status];
               const hasState = !!matchStates[m.id]?.collection;
               const hasResult = !!matchStates[m.id]?.analysisResult;
+              const savedAt = matchStates[m.id]?.analysisSavedAt ?? null;
               return (
                 <li
                   key={m.id}
@@ -956,7 +957,7 @@ function FixturesView({
                       </button>
                       {hasResult ? (
                         <span className="font-mono text-[11px] text-signal-green">
-                          ✓ analysis saved
+                          ✓ Analysed{savedAt ? ` ${formatResultAgo(savedAt, now.getTime())}` : ""}
                         </span>
                       ) : hasState ? (
                         <span className="font-mono text-[11px] text-signal-blue">
