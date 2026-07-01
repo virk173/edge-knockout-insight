@@ -66,6 +66,32 @@ export function computeEv(
   return round(p * o - 1);
 }
 
+/**
+ * Single-bet EV from a raw-variable object (EvInputs shape).
+ * Thin, object-input wrapper over computeEv so call sites and tests can use
+ * the same { model_probability, decimal_odds } convention as the rest of the
+ * codebase. Returns a concrete number: an invalid/empty input floors to -1
+ * (total stake loss), never NaN or undefined.
+ */
+export function calculateEV(inputs: {
+  model_probability?: number;
+  decimal_odds?: number;
+}): number {
+  return computeEv(inputs.model_probability, inputs.decimal_odds) ?? -1;
+}
+
+/**
+ * Same-game-parlay / parlay EV from raw variables (ParlayEvInputs shape):
+ *   ev = p_final × effective_sgp_price − 1
+ * Identical math to a single bet; kept as a named export for call-site clarity.
+ */
+export function calculateSGPEV(inputs: {
+  p_final?: number;
+  effective_sgp_price?: number;
+}): number {
+  return computeEv(inputs.p_final, inputs.effective_sgp_price) ?? -1;
+}
+
 // ─────────────────────────────────────────────────────────────
 // 1b — Stake-anchoring bias correction.
 //   EV is computed against Stake's line. When a Pinnacle (sharp)
@@ -521,12 +547,26 @@ export const validateModelProbabilities = (probs: {
 //   because Claude's weighted reasoning already happened upstream.
 // ─────────────────────────────────────────────────────────────
 export const validateDimensionWeights = (inputs: {
-  weights: DimensionWeights;
+  weights: DimensionWeights | null;
   call4_fixture_count: number;
   h2h_gate_passed: boolean;
   critical_absence_present: boolean;
   all_players_confirmed_fit: boolean;
 }): DimensionWeightsValidation => {
+  // Guard: Claude can omit dimension_weights entirely. Report a NOT-RUN state
+  // rather than throwing on a null dereference below.
+  if (!inputs.weights) {
+    return {
+      weights: null,
+      expected_weights: null,
+      mismatch_flags: [
+        "dimension_weights field was missing — validation could not run.",
+      ],
+      sum_valid: false,
+      validation_ran: false,
+    };
+  }
+
   // Determine expected weights from actual data conditions, independent
   // of what Claude claimed.
   const expected: DimensionWeights = {
@@ -556,23 +596,24 @@ export const validateDimensionWeights = (inputs: {
     expected.D1 = 40;
   }
 
+  const weights = inputs.weights;
   const mismatchFlags: string[] = [];
   (Object.keys(expected) as (keyof DimensionWeights)[]).forEach((k) => {
-    if (Math.abs(inputs.weights[k] - expected[k]) > 2) {
+    if (Math.abs(weights[k] - expected[k]) > 2) {
       mismatchFlags.push(
-        `${k}: Claude used ${inputs.weights[k]}, expected ${expected[k]} given data conditions.`,
+        `${k}: Claude used ${weights[k]}, expected ${expected[k]} given data conditions.`,
       );
     }
   });
 
-  const sum = Object.values(inputs.weights).reduce((a, b) => a + b, 0);
+  const sum = Object.values(weights).reduce((a, b) => a + b, 0);
   const sumValid = Math.abs(sum - 100) < 1;
   if (!sumValid) {
     mismatchFlags.push(`Dimension weights sum to ${sum}, not 100.`);
   }
 
   return {
-    weights: inputs.weights,
+    weights,
     expected_weights: expected,
     mismatch_flags: mismatchFlags,
     sum_valid: sumValid,
