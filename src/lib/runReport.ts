@@ -1,4 +1,9 @@
-import type { CollectionResult, CallResult, LineupState } from "@/lib/analyse";
+import {
+  extractStakeMarkets,
+  type CollectionResult,
+  type CallResult,
+  type LineupState,
+} from "@/lib/analyse";
 import type {
   AnalysisResult,
   Absence,
@@ -15,6 +20,16 @@ export type CallStatusMap = CollectionResult | null;
 
 /** The Claude output enriched with app-side computed numbers (calculate.ts). */
 export type EnrichedResult = AnalysisResult | null | undefined;
+
+/** Fixture-level metadata (from the AnalysedMatch) for the CALL DATA header. */
+export interface RunReportMeta {
+  home?: string | null;
+  away?: string | null;
+  venueName?: string | null;
+  venueCity?: string | null;
+  referee?: string | null;
+  fixtureId?: number | null;
+}
 
 const NA = "N/A";
 const RULE = "─────────────────────────────────";
