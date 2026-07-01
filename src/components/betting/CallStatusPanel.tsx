@@ -292,7 +292,7 @@ function ReadinessBanner({ summary }: { summary: CallPanelSummary }) {
   if (!summary.mandatoryReady) {
     return (
       <div className="rounded-md border border-signal-red/60 bg-signal-red/10 px-3 py-2 text-signal-red">
-        <p className="font-bold">❌ Not ready — {summary.notReadyMandatory.join(", ")} failed</p>
+        <p className="font-bold">❌ Not ready — {summary.notReadyMandatory.join(", ")} not ready</p>
         <p className="mt-0.5 text-[11px]">
           Retry {summary.notReadyMandatory.join(", ")} before analysing.
         </p>
@@ -300,12 +300,13 @@ function ReadinessBanner({ summary }: { summary: CallPanelSummary }) {
     );
   }
 
-  if (summary.failedOptional.length > 0) {
+  const reducedReasons = [...summary.emptyMandatory, ...summary.failedOptional];
+  if (reducedReasons.length > 0) {
     return (
       <div className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 text-accent-amber">
         <p className="font-bold">⚠️ Ready with reduced data</p>
         <p className="mt-0.5 text-[11px]">
-          {summary.failedOptional.join(", ")} failed — confidence will be lower.
+          {reducedReasons.join(", ")} returned no data — confidence will be lower.
         </p>
         <p className="mt-0.5 text-[11px] text-slate">[{counts}]</p>
       </div>
