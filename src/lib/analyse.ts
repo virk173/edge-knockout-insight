@@ -14,6 +14,7 @@ import {
   CRITICAL_THRESHOLD,
 } from "./apiCounter";
 import { apiFootballGet } from "./apiFootball";
+import { readCallCache, writeCallCache } from "./callCache";
 
 const SA_BASE = "https://api.thestatsapi.com/api";
 // Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
@@ -41,6 +42,11 @@ export interface CallResult {
   status: CallStatus;
   data?: unknown;
   error?: string;
+  // True when this result was loaded from the persistent per-call cache rather
+  // than freshly fetched during this run. Drives the "CACHED" panel badge.
+  cached?: boolean;
+  // Epoch ms the underlying data was fetched (from cache metadata or now()).
+  fetchedAt?: number;
 }
 
 export interface ProgressUpdate {
@@ -1684,6 +1690,9 @@ export async function collectMatchData(
 
   const callResults: Record<string, CallResult> = {};
   const stepKeys: string[] = [];
+  // fetchedAt of any result loaded from cache, so record() can preserve the
+  // original fetch time instead of stamping "now".
+  const cachedAtMap: Record<string, number> = {};
 
   const record = (
     key: string,
@@ -1691,10 +1700,31 @@ export async function collectMatchData(
     status: CallStatus,
     data?: unknown,
     error?: string,
+    fromCache = false,
   ) => {
     const validated = data !== undefined ? replaceNulls(data) : undefined;
-    callResults[key] = { key, label, status, data: validated, error };
-    console.log(`[analyse] ${key} (${label}): ${status}`, error ?? "");
+    const fetchedAt = fromCache ? (cachedAtMap[key] ?? Date.now()) : Date.now();
+    callResults[key] = { key, label, status, data: validated, error, cached: fromCache, fetchedAt };
+    // Persist fresh (non-cache) results so a later run / individual retry can
+    // reuse them. FAILED and SKIPPED are never cached (so they always re-run);
+    // lineups ("6") are excluded inside writeCallCache.
+    if (!fromCache && status !== "FAILED" && status !== "SKIPPED") {
+      writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
+    }
+    console.log(
+      `[analyse] ${key} (${label}): ${status}${fromCache ? " [CACHED]" : ""}`,
+      error ?? "",
+    );
+  };
+
+  // Load a valid (non-expired) cached result for `key` and record it as CACHED.
+  // Returns true when a cache hit was used (so the caller skips the real call).
+  const tryLoadCache = (key: string): boolean => {
+    const c = readCallCache(match.id, key);
+    if (!c) return false;
+    cachedAtMap[key] = c.fetchedAt;
+    record(key, c.label, c.status as CallStatus, c.data, c.error, true);
+    return true;
   };
 
 
@@ -1713,6 +1743,8 @@ export async function collectMatchData(
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
     }
+    // Persistent per-call cache: reuse a fresh cached result instead of calling.
+    if (tryLoadCache(key)) return;
     currentDebugCall = key;
     try {
       const response = await fn();
@@ -1781,29 +1813,22 @@ export async function collectMatchData(
 
   // 4 step 1: home recent form
   let homeFixtureIds: number[] = [];
-  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () => {
-    const r = await afGet(
-      `/fixtures?team=${match.homeId}&last=5&league=1&season=2026`,
-      afKey,
-    );
-    homeFixtureIds = extractArray(r)
-      .map((f) => getField(getField(f, ["fixture"]), ["id"]))
-      .filter((id): id is number => typeof id === "number");
-    return r;
-  });
+  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () =>
+    afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+  );
+  // Derive ids AFTER the step so a cached 4-1 (fn not executed) still feeds 4-3.
+  homeFixtureIds = extractArray(callResults["4-1"]?.data)
+    .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+    .filter((id): id is number => typeof id === "number");
 
   // 4 step 2: away recent form
   let awayFixtureIds: number[] = [];
-  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () => {
-    const r = await afGet(
-      `/fixtures?team=${match.awayId}&last=5&league=1&season=2026`,
-      afKey,
-    );
-    awayFixtureIds = extractArray(r)
-      .map((f) => getField(getField(f, ["fixture"]), ["id"]))
-      .filter((id): id is number => typeof id === "number");
-    return r;
-  });
+  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () =>
+    afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+  );
+  awayFixtureIds = extractArray(callResults["4-2"]?.data)
+    .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+    .filter((id): id is number => typeof id === "number");
 
   // 4 step 3: combined batch
   await runStep("4-3", "Fetching recent form batch... (6/11)", () => {
@@ -1917,6 +1942,7 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching referee profile (S7)... (9/11)",
     });
+    if (!tryLoadCache("7")) {
     currentDebugCall = "7";
     try {
       let profile: RefereeProfile | null = null;
@@ -1986,6 +2012,7 @@ export async function collectMatchData(
     } finally {
       currentDebugCall = null;
     }
+    }
   }
 
 
@@ -2040,6 +2067,7 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching Pinnacle odds (TheStatsAPI)...",
     });
+    if (!tryLoadCache("9B")) {
     currentDebugCall = "9B";
     // Spacing between TheStatsAPI calls is handled centrally in saGet
     // (STATSAPI_DELAY_MS); no extra burst cool-down needed here.
@@ -2102,7 +2130,9 @@ export async function collectMatchData(
     } finally {
       currentDebugCall = null;
     }
+    }
   }
+
 
   // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
   // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists, and
@@ -2306,7 +2336,9 @@ export async function collectMatchData(
 
   // CALL 10: next-round bracket (extra; not part of the 11 progress steps)
   const nr = nextRound(match.round);
-  if (counterWarning) {
+  if (tryLoadCache("10")) {
+    /* reused fresh cached bracket */
+  } else if (counterWarning) {
     record("10", "Next-round bracket", "SKIPPED", undefined,
       "Skipped — daily API budget near limit (>=85).");
   } else if (!nr) {
@@ -2560,4 +2592,430 @@ export async function resolveDebugFixture(): Promise<AnalysedMatch> {
     // Debug fixtures are finished matches; never block the debug pipeline on it.
     blocked: false,
   };
+}
+
+
+// ============================================================================
+// GRANULAR CALL PANEL — display mapping + per-call retry
+// ============================================================================
+//
+// The normal Run Calls flow shows one row per logical call. These specs map the
+// user-facing call ids (C1..C10 / S0..S7) to the internal callResults keys the
+// pipeline records, plus mandatory/optional classification and the retry key.
+
+export interface CallDisplaySpec {
+  id: string; // "C1", "C3", ..., "S7"
+  label: string; // "Fixtures", "Head to Head", ...
+  api: "API-FOOTBALL" | "THESTATSAPI";
+  keys: string[]; // internal callResults keys this row aggregates
+  mandatory: boolean;
+  retryKey?: string; // passed to retrySingleCall (undefined = not retryable)
+}
+
+export const CALL_DISPLAY_SPECS: CallDisplaySpec[] = [
+  // ---- API-FOOTBALL ----
+  { id: "C1", label: "Fixtures", api: "API-FOOTBALL", keys: ["C1"], mandatory: true },
+  { id: "C3", label: "Head to Head", api: "API-FOOTBALL", keys: ["3"], mandatory: false, retryKey: "3" },
+  { id: "C4", label: "Last 5 Form", api: "API-FOOTBALL", keys: ["4-1", "4-2", "4-3"], mandatory: false, retryKey: "4" },
+  { id: "C5", label: "Injuries", api: "API-FOOTBALL", keys: ["5"], mandatory: false, retryKey: "5" },
+  { id: "C7", label: "Referee", api: "API-FOOTBALL", keys: ["7"], mandatory: false, retryKey: "7" },
+  { id: "C8", label: "Predictions", api: "API-FOOTBALL", keys: ["8"], mandatory: false, retryKey: "8" },
+  { id: "C9A", label: "Stake Odds", api: "API-FOOTBALL", keys: ["9"], mandatory: true, retryKey: "9" },
+  { id: "C10", label: "Bracket", api: "API-FOOTBALL", keys: ["10"], mandatory: false, retryKey: "10" },
+  // ---- THESTATSAPI ----
+  { id: "S0", label: "Match Lookup", api: "THESTATSAPI", keys: ["S0"], mandatory: true, retryKey: "S0" },
+  { id: "S2A", label: "Home Stats", api: "THESTATSAPI", keys: ["2A"], mandatory: true, retryKey: "2A" },
+  { id: "S2B", label: "Away Stats", api: "THESTATSAPI", keys: ["2B"], mandatory: true, retryKey: "2B" },
+  { id: "S3", label: "Lineups", api: "THESTATSAPI", keys: ["6"], mandatory: false, retryKey: "6" },
+  { id: "S5", label: "Pinnacle Odds", api: "THESTATSAPI", keys: ["9B"], mandatory: false, retryKey: "9B" },
+  { id: "S6", label: "Standings", api: "THESTATSAPI", keys: ["S6"], mandatory: false, retryKey: "S6" },
+  { id: "S7", label: "Referee Detail", api: "THESTATSAPI", keys: ["7"], mandatory: false, retryKey: "7" },
+];
+
+export type DisplayStatus =
+  | "SUCCESS"
+  | "CACHED"
+  | "EMPTY"
+  | "PROPAGATING"
+  | "FAILED"
+  | "PENDING";
+
+export function deriveDisplayStatus(
+  spec: CallDisplaySpec,
+  callResults: Record<string, CallResult>,
+): DisplayStatus {
+  // C1 (fixtures) is satisfied by the match existing in the list.
+  if (spec.id === "C1") return "SUCCESS";
+
+  // Lineups are never cached and their absence is expected/optional — surface
+  // PROPAGATING vs EMPTY rather than a hard FAILED.
+  if (spec.id === "S3") {
+    const c6 = callResults["6"];
+    if (!c6) return "PENDING";
+    if (c6.status === "SUCCESS") return "SUCCESS";
+    const err = (c6.error ?? "").toUpperCase();
+    return err.includes("PROPAGATING") ? "PROPAGATING" : "EMPTY";
+  }
+
+  const results = spec.keys.map((k) => callResults[k]).filter(Boolean) as CallResult[];
+  if (results.length === 0) return "PENDING";
+  if (results.some((r) => r.status === "FAILED")) return "FAILED";
+
+  const withData = results.filter((r) => r.status === "SUCCESS");
+  if (withData.length === 0) return "EMPTY";
+  return withData.every((r) => r.cached) ? "CACHED" : "SUCCESS";
+}
+
+export interface CallPanelRow {
+  spec: CallDisplaySpec;
+  status: DisplayStatus;
+}
+
+export interface CallPanelSummary {
+  rows: CallPanelRow[];
+  totalCount: number;
+  successCount: number;
+  cachedCount: number;
+  mandatoryReady: boolean;
+  notReadyMandatory: string[]; // display ids of mandatory calls without data
+  failedOptional: string[]; // display ids of optional calls that FAILED
+}
+
+export function buildCallPanelSummary(
+  callResults: Record<string, CallResult>,
+): CallPanelSummary {
+  const rows: CallPanelRow[] = CALL_DISPLAY_SPECS.map((spec) => ({
+    spec,
+    status: deriveDisplayStatus(spec, callResults),
+  }));
+
+  const has = (s: DisplayStatus) => s === "SUCCESS" || s === "CACHED";
+  const successCount = rows.filter((r) => r.status === "SUCCESS").length;
+  const cachedCount = rows.filter((r) => r.status === "CACHED").length;
+
+  const notReadyMandatory = rows
+    .filter((r) => r.spec.mandatory && !has(r.status))
+    .map((r) => r.spec.id);
+  const failedOptional = rows
+    .filter((r) => !r.spec.mandatory && r.status === "FAILED")
+    .map((r) => r.spec.id);
+
+  return {
+    rows,
+    totalCount: rows.length,
+    successCount,
+    cachedCount,
+    mandatoryReady: notReadyMandatory.length === 0,
+    notReadyMandatory,
+    failedOptional,
+  };
+}
+
+/**
+ * Re-run a SINGLE logical call for a match and return the updated callResults
+ * entries to merge into the existing collection. Successful/empty results are
+ * written to the per-call cache (lineups excepted). No other call is touched.
+ */
+export async function retrySingleCall(
+  match: AnalysedMatch,
+  retryKey: string,
+): Promise<Record<string, CallResult>> {
+  const out: Record<string, CallResult> = {};
+  const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  const rec = (
+    key: string,
+    label: string,
+    status: CallStatus,
+    data?: unknown,
+    error?: string,
+  ) => {
+    const validated = data !== undefined ? replaceNulls(data) : undefined;
+    const fetchedAt = Date.now();
+    out[key] = { key, label, status, data: validated, error, cached: false, fetchedAt };
+    if (status !== "FAILED" && status !== "SKIPPED") {
+      writeCallCache(match.id, key, { key, label, status, data: validated, error, fetchedAt });
+    }
+  };
+
+  const counterWarning = getApiCallCount() >= WARNING_THRESHOLD;
+  const counterCritical = getApiCallCount() >= CRITICAL_THRESHOLD;
+
+  currentDebugCall = retryKey;
+  try {
+    switch (retryKey) {
+      case "3": {
+        try {
+          const r = await afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`);
+          rec("3", "Head-to-head", isEmptyResponse(r) ? "EMPTY" : "SUCCESS", r);
+        } catch (e) {
+          rec("3", "Head-to-head", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "4": {
+        let homeIds: number[] = [];
+        let awayIds: number[] = [];
+        try {
+          const r1 = await afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`);
+          rec("4-1", "Recent form (home)", isEmptyResponse(r1) ? "EMPTY" : "SUCCESS", r1);
+          homeIds = extractArray(r1)
+            .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+            .filter((id): id is number => typeof id === "number");
+        } catch (e) {
+          rec("4-1", "Recent form (home)", "FAILED", undefined, msg(e));
+        }
+        try {
+          const r2 = await afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`);
+          rec("4-2", "Recent form (away)", isEmptyResponse(r2) ? "EMPTY" : "SUCCESS", r2);
+          awayIds = extractArray(r2)
+            .map((f) => getField(getField(f, ["fixture"]), ["id"]))
+            .filter((id): id is number => typeof id === "number");
+        } catch (e) {
+          rec("4-2", "Recent form (away)", "FAILED", undefined, msg(e));
+        }
+        try {
+          const ids = Array.from(new Set([...homeIds, ...awayIds])).slice(0, 10);
+          const r3 = ids.length ? await afGet(`/fixtures?ids=${ids.join("-")}`) : null;
+          rec("4-3", "Recent form batch", isEmptyResponse(r3) ? "EMPTY" : "SUCCESS", r3);
+        } catch (e) {
+          rec("4-3", "Recent form batch", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "5": {
+        try {
+          const r = await afGet(`/injuries?fixture=${match.id}`);
+          rec("5", "Injuries", isEmptyResponse(r) ? "EMPTY" : "SUCCESS", r);
+        } catch (e) {
+          rec("5", "Injuries", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "8": {
+        try {
+          const r = await afGet(`/predictions?fixture=${match.id}`);
+          rec("8", "Predictions", isEmptyResponse(r) ? "EMPTY" : "SUCCESS", r);
+        } catch (e) {
+          rec("8", "Predictions", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "9": {
+        try {
+          let stakeId: string | null =
+            typeof window !== "undefined"
+              ? window.localStorage.getItem("stake_bookmaker_id")
+              : null;
+          if (!stakeId) {
+            const bookmakers = await afGet(`/odds/bookmakers`);
+            const stake = extractArray(bookmakers).find((b) => {
+              const name = getField(b, ["name"]);
+              return typeof name === "string" && normalize(name).includes("stake");
+            });
+            const id = getField(stake, ["id"]);
+            if (id !== undefined) {
+              stakeId = String(id);
+              if (typeof window !== "undefined")
+                window.localStorage.setItem("stake_bookmaker_id", stakeId);
+            }
+          }
+          const afOdds = await afGet(
+            `/odds?fixture=${match.id}${stakeId ? `&bookmaker=${stakeId}` : ""}`,
+          );
+          rec("9", "Odds (Stake)", isEmptyResponse(afOdds) ? "EMPTY" : "SUCCESS", { stakeOdds: afOdds });
+        } catch (e) {
+          rec("9", "Odds (Stake)", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "10": {
+        const nr = nextRound(match.round);
+        if (!nr) {
+          rec("10", "Next-round bracket", "SKIPPED", undefined, "Could not derive next round.");
+          break;
+        }
+        try {
+          const r = await afGet(`/fixtures?league=1&season=2026&round=${encodeURIComponent(nr)}`);
+          if (isEmptyResponse(r)) {
+            rec("10", "Next-round bracket", "EXPECTED_EMPTY", r, `Next round (${nr}) fixtures not yet determined.`);
+          } else {
+            rec("10", "Next-round bracket", "SUCCESS", r);
+          }
+        } catch (e) {
+          rec("10", "Next-round bracket", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "S0": {
+        try {
+          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
+          if (!ref) {
+            rec("S0", "TheStatsAPI match lookup", "FAILED", undefined, "STATSAPI_ID_NOT_FOUND — no match resolved.");
+          } else {
+            rec("S0", "TheStatsAPI match lookup", "SUCCESS", {
+              match_id: ref.id,
+              home_team: { id: ref.homeTeamId, name: ref.homeTeamName },
+              away_team: { id: ref.awayTeamId, name: ref.awayTeamName },
+              went_to_penalties: ref.wentToPenalties,
+              penalty_shootout: ref.penaltyShootout,
+            });
+          }
+        } catch (e) {
+          rec("S0", "TheStatsAPI match lookup", "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "2A":
+      case "2B": {
+        const isHome = retryKey === "2A";
+        const label = isHome ? "Home team stats (TheStatsAPI)" : "Away team stats (TheStatsAPI)";
+        try {
+          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
+          const teamId = isHome ? ref?.homeTeamId : ref?.awayTeamId;
+          if (!teamId) {
+            rec(retryKey, label, "FAILED", undefined, "No TheStatsAPI team id from match lookup.");
+            break;
+          }
+          const raw = await saGet(`/football/teams/${teamId}/stats?season_id=${STATSAPI_SEASON_ID}`);
+          if (isEmptyResponse(raw)) {
+            rec(retryKey, label, "FAILED", undefined, "No TheStatsAPI team stats returned.");
+          } else {
+            rec(retryKey, label, "SUCCESS", { teamId, extracted: extractTeamStats(raw), raw });
+          }
+        } catch (e) {
+          rec(retryKey, label, "FAILED", undefined, msg(e));
+        }
+        break;
+      }
+      case "6": {
+        // Lineups: reuse the dedicated refetch path (never cached).
+        const result = await refetchLineups(match);
+        out["6"] = { ...result, cached: false, fetchedAt: Date.now() };
+        break;
+      }
+      case "9B": {
+        try {
+          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
+          const matchId = ref?.id ?? null;
+          if (!matchId) {
+            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, "No TheStatsAPI match matched this fixture.");
+            break;
+          }
+          const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
+          const summary = buildPinnacleSummary(oddsJson);
+          if (!summary) {
+            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", { matchId }, "No bookmaker markets returned.");
+          } else {
+            const stakeRoot = readCallCache(match.id, "9")?.data as { stakeOdds?: unknown } | undefined;
+            const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
+            rec("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
+              matchId,
+              bookmaker: summary.bookmaker,
+              markets: summary.markets,
+              gap_check: gapCheck,
+              note: `Odds source bookmaker: ${summary.bookmaker}. movement_pct = (last_seen - opening) / opening * 100.`,
+            });
+          }
+        } catch (e) {
+          rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, `Pinnacle data unavailable — ${msg(e)}`);
+        }
+        break;
+      }
+      case "7": {
+        try {
+          let profile: RefereeProfile | null = null;
+          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
+          const matchId = ref?.id ?? null;
+          if (matchId) {
+            try {
+              const refJson = await saGet(`/football/matches/${matchId}/referee`);
+              const refNode = getField(getField(refJson, ["data"]) ?? refJson, ["referee"]);
+              profile = buildRefereeProfileFromStatsApi(refNode);
+            } catch (e) {
+              console.warn("[retry] S7 referee endpoint failed", e);
+            }
+          }
+          const afName = (typeof profile?.referee === "string" && profile.referee) || match.referee;
+          if (afName && !counterCritical) {
+            try {
+              const afProfile = await buildRefereeProfile(afName, !counterWarning);
+              if (afProfile) {
+                if (!profile) {
+                  profile = afProfile;
+                } else {
+                  profile.avg_fouls_per_game = afProfile.avg_fouls_per_game;
+                  profile.penalties_awarded = afProfile.penalties_awarded;
+                  if (profile.avg_yellow_cards_per_game === "NOT_AVAILABLE") {
+                    profile.avg_yellow_cards_per_game = afProfile.avg_yellow_cards_per_game;
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("[retry] CALL 7 API-Football referee enrichment failed", e);
+            }
+          }
+          if (profile) {
+            rec("7", "Referee profile (S7 + API-Football)", "SUCCESS", profile);
+          } else {
+            rec("7", "Referee profile", "EMPTY", undefined, "Referee strictness UNKNOWN — no referee resolved.");
+          }
+        } catch (e) {
+          rec("7", "Referee profile", "EMPTY", undefined, `Referee profile unavailable — ${msg(e)}`);
+        }
+        break;
+      }
+      case "S6": {
+        try {
+          const homeList = readCallCache(match.id, "4-1")?.data ?? null;
+          const awayList = readCallCache(match.id, "4-2")?.data ?? null;
+          const homeNeeds = parseLast5(homeList, match.homeId).some((f) => f.is_group_stage);
+          const awayNeeds = parseLast5(awayList, match.awayId).some((f) => f.is_group_stage);
+          let all: AllStandings | null = null;
+          if (homeNeeds || awayNeeds) all = await getStatsApiAllStandings();
+          const homeDr = await computeTeamDeadRubber(homeList, match.homeId, all);
+          const awayDr = await computeTeamDeadRubber(awayList, match.awayId, all);
+          const flagged = homeDr.adjustment.dead_rubber_count + awayDr.adjustment.dead_rubber_count;
+          rec("4-deadrubber", "Recency-weighted & dead-rubber-adjusted form", "SUCCESS", {
+            home: {
+              team: match.home,
+              adjusted_goals_avg: homeDr.adjustment.adjusted_goals_avg,
+              adjusted_shots_avg: homeDr.adjustment.adjusted_shots_avg,
+              dead_rubber_count: homeDr.adjustment.dead_rubber_count,
+              note: homeDr.adjustment.note,
+            },
+            away: {
+              team: match.away,
+              adjusted_goals_avg: awayDr.adjustment.adjusted_goals_avg,
+              adjusted_shots_avg: awayDr.adjustment.adjusted_shots_avg,
+              dead_rubber_count: awayDr.adjustment.dead_rubber_count,
+              note: awayDr.adjustment.note,
+            },
+            dead_rubber_count: flagged,
+          });
+          const triggered = homeDr.triggered || awayDr.triggered;
+          if (!triggered) {
+            rec("S6", "All-groups standings (dead-rubber check)", "SKIPPED", undefined, "NOT TRIGGERED — all last-5 fixtures are knockout stage.");
+          } else {
+            rec("S6", "All-groups standings (dead-rubber check)", all && all.groupRows.length ? "SUCCESS" : "EMPTY", {
+              wc2026_qualification: WC2026_QUALIFICATION,
+              all_groups_standings: all?.groupRows ?? [],
+              home: { dead_rubbers_flagged: homeDr.adjustment.dead_rubber_count, reason: homeDr.reason },
+              away: { dead_rubbers_flagged: awayDr.adjustment.dead_rubber_count, reason: awayDr.reason },
+            });
+          }
+        } catch (e) {
+          rec("S6", "All-groups standings (dead-rubber check)", "EMPTY", undefined, `Dead-rubber check unavailable — ${msg(e)}`);
+        }
+        break;
+      }
+      default: {
+        console.warn(`[retry] unknown retry key: ${retryKey}`);
+      }
+    }
+  } finally {
+    currentDebugCall = null;
+  }
+
+  return out;
 }

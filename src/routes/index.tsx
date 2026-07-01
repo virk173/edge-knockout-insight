@@ -16,12 +16,16 @@ import {
   resolveDebugFixture,
   buildDebugReport,
   refetchLineups,
+  retrySingleCall,
+  buildCallPanelSummary,
   DEBUG_FIXTURE_DATE,
   LINEUP_STATE_INFO,
   type CollectionResult,
   type DebugReport,
   type ProgressUpdate,
 } from "@/lib/analyse";
+import { clearMatchCache } from "@/lib/callCache";
+import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
@@ -150,143 +154,6 @@ Output: Tier 1 anchor bet + Tier 2 same-game parlay + Tier 3 jackpot (CLASS C ma
 Total stake per match: $50
 Do not bet unallocated amounts.`;
 
-// ---- Minimal "Run Calls" status summary (normal mode only) ----------------
-
-interface CallSummary {
-  callsLabel: string;
-  failedLabel: string | null;
-  lineupsLabel: string;
-  lineupsTone: "green" | "amber" | "red";
-  quality: "FULL" | "PARTIAL" | "THIN";
-  injuries: string;
-  ready: boolean;
-}
-
-function extractInjuryItems(data: unknown): unknown[] {
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === "object") {
-    const resp = (data as { response?: unknown }).response;
-    if (Array.isArray(resp)) return resp;
-  }
-  return [];
-}
-
-function buildCallSummary(result: CollectionResult): CallSummary {
-  // Count from ONE consistent set (all recorded calls minus intentionally
-  // skipped ones), so numerator and denominator can never disagree.
-  const counted = Object.values(result.callResults).filter(
-    (c) => c.status !== "SKIPPED",
-  );
-  const total = counted.length;
-  // A provider "OK" response is either real data (SUCCESS) or a legitimate
-  // empty 200 — e.g. "no injuries reported" or a bracket not yet scheduled
-  // (EXPECTED_EMPTY). Those are NOT failures. Only FAILED is a true error.
-  const returnedOk = counted.filter(
-    (c) =>
-      c.status === "SUCCESS" ||
-      c.status === "EMPTY" ||
-      c.status === "EXPECTED_EMPTY",
-  ).length;
-  const withData = counted.filter((c) => c.status === "SUCCESS").length;
-  const failed = counted.filter((c) => c.status === "FAILED").length;
-
-  const lineupMap: Record<
-    string,
-    { label: string; tone: "green" | "amber" | "red" }
-  > = {
-    POPULATED: { label: "CONFIRMED", tone: "green" },
-    PROPAGATING: { label: "PROPAGATING", tone: "amber" },
-    NOT_ANNOUNCED: { label: "NOT ANNOUNCED", tone: "red" },
-  };
-  const lineup = lineupMap[result.lineupState] ?? lineupMap.NOT_ANNOUNCED;
-
-  // Data quality reflects how many calls returned usable data.
-  const ratio = total > 0 ? withData / total : 0;
-  const quality: CallSummary["quality"] =
-    ratio >= 0.8 ? "FULL" : ratio >= 0.5 ? "PARTIAL" : "THIN";
-
-  const injuryCall = result.callResults["5"];
-  let injuries: string;
-  if (!injuryCall || injuryCall.status === "FAILED" || injuryCall.status === "SKIPPED") {
-    injuries = "data unavailable";
-  } else {
-    const items = extractInjuryItems(injuryCall.data);
-    injuries =
-      items.length > 0
-        ? `${items.length} absence${items.length === 1 ? "" : "s"}`
-        : "none reported";
-  }
-
-  return {
-    callsLabel: `${returnedOk}/${total} OK`,
-    failedLabel: failed > 0 ? `${failed} failed` : null,
-    lineupsLabel: lineup.label,
-    lineupsTone: lineup.tone,
-    quality,
-    injuries,
-    ready: quality !== "THIN",
-  };
-}
-
-function toneClass(tone: "green" | "amber" | "red"): string {
-  if (tone === "green") return "text-signal-green";
-  if (tone === "amber") return "text-accent-amber";
-  return "text-signal-red";
-}
-
-function CallSummaryPanel({ summary }: { summary: CallSummary }) {
-  return (
-    <div className="flex w-full flex-col gap-1.5 rounded-md border border-border bg-background/60 px-4 py-3 font-mono text-xs">
-      <Row label="API calls" value={summary.callsLabel} valueClass="text-accent-amber" />
-      {summary.failedLabel && (
-        <Row
-          label="Errored"
-          value={summary.failedLabel}
-          valueClass="text-signal-red"
-        />
-      )}
-      <Row
-        label="Lineups"
-        value={summary.lineupsLabel}
-        valueClass={toneClass(summary.lineupsTone)}
-      />
-      <Row
-        label="Data quality"
-        value={summary.quality}
-        valueClass={
-          summary.quality === "FULL"
-            ? "text-signal-green"
-            : summary.quality === "PARTIAL"
-              ? "text-accent-amber"
-              : "text-signal-red"
-        }
-      />
-      <Row label="Injuries" value={summary.injuries} valueClass="text-slate" />
-      <Row
-        label="Ready to analyse"
-        value={summary.ready ? "YES" : "NO"}
-        valueClass={summary.ready ? "text-signal-green" : "text-signal-red"}
-      />
-    </div>
-  );
-}
-
-function Row({
-  label,
-  value,
-  valueClass,
-}: {
-  label: string;
-  value: string;
-  valueClass: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-slate">{label}</span>
-      <span className={`font-semibold ${valueClass}`}>{value}</span>
-    </div>
-  );
-}
 
 function timingBannerClass(tone: TimingBand["tone"]): string {
   switch (tone) {
@@ -326,6 +193,8 @@ function Index() {
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [collection, setCollection] = useState<CollectionResult | null>(null);
   const [collectError, setCollectError] = useState<string | null>(null);
+  // Retry keys currently re-running (individual failed-call retry).
+  const [retrying, setRetrying] = useState<Set<string>>(new Set());
 
   // Claude analysis state.
   const [analysing, setAnalysing] = useState(false);
@@ -636,6 +505,45 @@ Start your response with { and end with }.`;
     }
     await runClaudeAnalysis(match, collection);
   }
+
+  // Retry a SINGLE failed/optional call without touching any other call. Merges
+  // the fresh result into the current collection and updates its cache.
+  async function handleRetryCall(match: AnalysedMatch, retryKey: string) {
+    setRetrying((prev) => new Set(prev).add(retryKey));
+    try {
+      const updated = await retrySingleCall(match, retryKey);
+      setCollection((prev) =>
+        prev
+          ? { ...prev, callResults: { ...prev.callResults, ...updated } }
+          : prev,
+      );
+      setApiCalls(getApiCallCount());
+      const ok = Object.values(updated).some((r) => r.status === "SUCCESS");
+      if (ok) toast.success(`Retried ${retryKey} — updated`);
+      else toast.warning(`Retried ${retryKey} — still no data`);
+
+    } catch (e) {
+      toast.error(`Retry failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setRetrying((prev) => {
+        const next = new Set(prev);
+        next.delete(retryKey);
+        return next;
+      });
+    }
+  }
+
+  // Wipe every cached call result for this match and reset its status panel.
+  function handleClearMatchCache(match: AnalysedMatch) {
+    clearMatchCache(match.id);
+    setCollection(null);
+    setCollectError(null);
+    setAnalysisResult(null);
+    setAnalysisRaw(null);
+    toast.success("Cache cleared — run calls again for a fresh fetch");
+  }
+
+
 
   // Debug Mode: run the full pipeline against a fixed real fixture
   // (Germany vs Paraguay, June 29) instead of today's timing-gated matches.
@@ -974,8 +882,13 @@ Start your response with { and end with }.`;
                 // optimal lineup window.
                 const canAct = !debugMode && !blocked;
                 const runningThis = isActive && progress !== null;
+                const panelSummary =
+                  isActive && collection
+                    ? buildCallPanelSummary(collection.callResults)
+                    : null;
+                // Analyse is available once all MANDATORY calls have data.
                 const callsReady =
-                  isActive && collection !== null && !collectError;
+                  isActive && !!panelSummary && panelSummary.mandatoryReady;
                 return (
                   <li
                     key={m.id}
@@ -1071,10 +984,16 @@ Start your response with { and end with }.`;
                       </div>
                     )}
 
-                    {/* Normal mode: minimal status summary. Debug mode keeps the
-                        full per-call CollectionPanel + raw debug panels below. */}
-                    {isActive && collection && !debugMode && (
-                      <CallSummaryPanel summary={buildCallSummary(collection)} />
+                    {/* Normal mode: granular per-call status panel with retry.
+                        Debug mode keeps the full per-call CollectionPanel +
+                        raw debug panels below. */}
+                    {isActive && collection && panelSummary && !debugMode && (
+                      <CallStatusPanel
+                        summary={panelSummary}
+                        retrying={retrying}
+                        onRetry={(retryKey) => handleRetryCall(m, retryKey)}
+                        onClearCache={() => handleClearMatchCache(m)}
+                      />
                     )}
                     {isActive && collection && debugMode && (
                       <CollectionPanel result={collection} />
