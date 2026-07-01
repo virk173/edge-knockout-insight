@@ -2827,14 +2827,24 @@ export type DisplayStatus =
   | "EMPTY"
   | "PROPAGATING"
   | "FAILED"
+  | "BLOCKED"
+  | "MISMATCH"
   | "PENDING";
 
 export function deriveDisplayStatus(
   spec: CallDisplaySpec,
   callResults: Record<string, CallResult>,
 ): DisplayStatus {
-  // C1 (fixtures) is satisfied by the match existing in the list.
-  if (spec.id === "C1") return "SUCCESS";
+  // C1 is the fixture-verification step. Reflect the real result: VERIFIED
+  // (SUCCESS), MISMATCH (hard FAILED), or PENDING before it has run. An
+  // inconclusive EMPTY still shows SUCCESS-ish (verified with caveat).
+  if (spec.id === "C1") {
+    const c1 = callResults["C1"];
+    if (!c1) return "PENDING";
+    if (c1.status === "FAILED") return "MISMATCH";
+    if (c1.status === "EMPTY") return "EMPTY";
+    return c1.cached ? "CACHED" : "SUCCESS";
+  }
 
   // Lineups are never cached and their absence is expected/optional — surface
   // PROPAGATING vs EMPTY rather than a hard FAILED.
@@ -2848,6 +2858,8 @@ export function deriveDisplayStatus(
 
   const results = spec.keys.map((k) => callResults[k]).filter(Boolean) as CallResult[];
   if (results.length === 0) return "PENDING";
+  // A BLOCKED dependent call (C1 mismatch) takes precedence over any other state.
+  if (results.some((r) => r.status === "BLOCKED")) return "BLOCKED";
   if (results.some((r) => r.status === "FAILED")) return "FAILED";
 
   const withData = results.filter((r) => r.status === "SUCCESS");
