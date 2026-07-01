@@ -606,7 +606,7 @@ export const validateDimensionWeights = (inputs: {
     }
   });
 
-  const sum = Object.values(inputs.weights).reduce((a, b) => a + b, 0);
+  const sum = Object.values(weights).reduce((a, b) => a + b, 0);
   const sumValid = Math.abs(sum - 100) < 1;
   if (!sumValid) {
     mismatchFlags.push(`Dimension weights sum to ${sum}, not 100.`);
