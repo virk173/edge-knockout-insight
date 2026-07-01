@@ -4,15 +4,17 @@ import type { ClaudeCallResult } from "./claude.server";
 /**
  * analyse-match
  *
- * Synchronous server-side proxy to the Anthropic Messages API. Kept for
- * backward compatibility / one-shot calls. The preferred path is now the
- * background-job API (startAnalysis + getAnalysisResult) so a running analysis
- * survives the browser being backgrounded.
+ * Synchronous server-side proxy to the Anthropic Messages API. This is the
+ * ONLY analysis path: the formatted prompt is small (~13k input tokens after
+ * per-block trimming in formatDataForClaude), so Claude responds in ~15-25s and
+ * a direct synchronous call is simpler and more reliable than a background job
+ * store (which was only warranted when the prompt approached the 200k limit).
  *
  * The actual Claude request lives in callClaude() (claude.server.ts) so its
- * config — model, max_tokens, prompt caching, timeout, retry — is identical
- * whether it runs synchronously here or inside a background job.
+ * config — model, max_tokens, prompt caching, timeout, retry — stays in one
+ * place.
  */
+
 
 interface AnalyseMatchInput {
   systemPrompt: string;
