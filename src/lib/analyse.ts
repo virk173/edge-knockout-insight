@@ -196,7 +196,7 @@ export function validateCall(callKey: string, data: unknown): unknown {
     // CALL 7 is a derived referee profile object (no envelope) OR a raw response.
     "7": () => !!(d.referee || d.matches_officiated !== undefined) || resp !== undefined,
     "8": () => !!firstResp?.predictions || resp !== undefined,
-    "9A": () => resp !== undefined,
+    "9A": () => d.markets !== undefined || resp !== undefined,
     "9B": () => d.bookmakerOdds !== undefined || d.data !== undefined || d.markets !== undefined,
     "10": () => resp !== undefined,
   };
