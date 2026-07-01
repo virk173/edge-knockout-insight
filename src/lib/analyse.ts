@@ -2240,7 +2240,7 @@ export async function collectMatchData(
       afKey,
     );
     return { stakeOdds: afOdds };
-  });
+  }, blockOpts);
 
   // CALL 9B: TheStatsAPI Pinnacle odds + line movement.
   // Reuses the TheStatsAPI match_id resolved for CALL 6. Fetches
