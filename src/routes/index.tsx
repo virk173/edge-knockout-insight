@@ -1019,11 +1019,17 @@ function FixturesView({
                         </span>
                       )}
                     </div>
-                    <span
-                      className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
-                    >
-                      {meta.emoji} {meta.label}
-                    </span>
+                    {completed ? (
+                      <span className="whitespace-nowrap rounded-md border border-signal-red/40 bg-signal-red/10 px-2.5 py-1 text-sm font-bold text-signal-red">
+                        🏁 Finished
+                      </span>
+                    ) : (
+                      <span
+                        className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
+                      >
+                        {meta.emoji} {meta.label}
+                      </span>
+                    )}
                   </div>
 
                   <div
