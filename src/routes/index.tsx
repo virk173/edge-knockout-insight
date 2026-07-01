@@ -7,6 +7,7 @@ import {
   STATUS_META,
   timingBand,
   isMatchBlocked,
+  isMatchCompleted,
   type AnalysedMatch,
   type TimingBand,
 } from "@/lib/fixtures";
@@ -589,6 +590,22 @@ Start your response with { and end with }.`;
 
   // SECTION 1 — Run All Calls. API pipeline only. No Claude / tokens.
   async function handleRunCalls(match: AnalysedMatch) {
+    // ── PRE-CALL TIMING GATE ──────────────────────────────────────────
+    // Block the pipeline BEFORE any API call fires when the match is already
+    // finished (status FT/AET/PEN/… or cancelled) OR clearly past kickoff.
+    // Prevents burning API quota on a match that can't produce actionable bets.
+    const minsToKickoff = minutesUntil(match.kickoffUtc, new Date());
+    if (isMatchCompleted(match.statusShort, minsToKickoff)) {
+      const msg = `⛔ Match already finished — ${match.home} vs ${match.away}. No analysis possible.`;
+      patchState(match.id, {
+        collectError: msg,
+        collection: null,
+        progress: null,
+      });
+      toast.error("Match already finished — no calls run.");
+      return;
+    }
+
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
     patchState(match.id, {
@@ -971,6 +988,7 @@ function FixturesView({
           <ul className="flex w-full flex-col gap-3">
             {sorted.map((m) => {
               const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+              const completed = isMatchCompleted(m.statusShort, minsToKickoff);
               const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
               const band = timingBand(minsToKickoff, blocked);
               const meta = STATUS_META[m.status];
@@ -1001,23 +1019,35 @@ function FixturesView({
                         </span>
                       )}
                     </div>
-                    <span
-                      className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
+                    {completed ? (
+                      <span className="whitespace-nowrap rounded-md border border-signal-red/40 bg-signal-red/10 px-2.5 py-1 text-sm font-bold text-signal-red">
+                        🏁 Finished
+                      </span>
+                    ) : (
+                      <span
+                        className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
+                      >
+                        {meta.emoji} {meta.label}
+                      </span>
+                    )}
+                  </div>
+
+                  {!completed && (
+                    <div
+                      className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
+                        band.tone,
+                      )}`}
                     >
-                      {meta.emoji} {meta.label}
-                    </span>
-                  </div>
+                      {band.tone === "blocked" ? "🚫 " : ""}
+                      {band.label}
+                    </div>
+                  )}
 
-                  <div
-                    className={`rounded-md border px-3 py-2 font-mono text-xs font-semibold ${timingBannerClass(
-                      band.tone,
-                    )}`}
-                  >
-                    {band.tone === "blocked" ? "🚫 " : ""}
-                    {band.label}
-                  </div>
-
-                  {blocked ? (
+                  {completed ? (
+                    <p className="font-mono text-xs text-signal-red">
+                      🏁 Match finished — no pre-match bets available.
+                    </p>
+                  ) : blocked ? (
                     <p className="font-mono text-xs text-signal-red">
                       {isMatchBlockedReason(m.statusShort)}
                     </p>

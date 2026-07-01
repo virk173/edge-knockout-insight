@@ -72,6 +72,29 @@ export function isMatchBlocked(
   return false;
 }
 
+// Grace period after kickoff before we treat a match as completed even when the
+// feed status hasn't flipped to FT yet (feeds can lag). A WC match + stoppage
+// lasts well over 30 min, but by then no pre-match markets remain, so any
+// attempt to analyse would only burn API quota.
+export const COMPLETED_GRACE_MIN = 30;
+
+// Whether the match is finished / no longer actionable for PRE-MATCH bets.
+// Used to hard-block the data pipeline BEFORE any API calls fire. Distinct
+// from isMatchBlocked() (which also blocks live matches): this is specifically
+// "already over" — finished/cancelled status OR clearly past kickoff+grace.
+export function isMatchCompleted(
+  statusShort: string,
+  minutesUntilKickoff: number,
+  graceMin: number = COMPLETED_GRACE_MIN,
+): boolean {
+  if (FINISHED_STATUSES.has(statusShort)) return true;
+  if (CALLED_OFF_STATUSES.has(statusShort)) return true;
+  // More than `graceMin` minutes past kickoff → treat as completed even if the
+  // feed still says NS/PST/etc.
+  if (minutesUntilKickoff < -graceMin) return true;
+  return false;
+}
+
 export type TimingTone = "green" | "amber" | "red" | "slate" | "blocked";
 
 export interface TimingBand {
