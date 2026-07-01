@@ -807,8 +807,16 @@ function FixturesView({
 
         {loading && !sorted && (
           <p className="pt-10 text-center text-lg font-medium text-slate">
-            Loading today's fixtures…
+            Loading fixtures…
           </p>
+        )}
+
+        {!sorted && !loading && (
+          <div className="w-full rounded-md border border-border bg-card/40 px-4 py-8 text-center text-sm text-slate">
+            No fixtures loaded yet. Tap{" "}
+            <span className="font-semibold text-accent-amber">Find Fixtures</span>{" "}
+            to load today's and tomorrow's matches.
+          </div>
         )}
 
         {sorted && sorted.length === 0 && (
