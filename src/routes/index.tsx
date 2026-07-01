@@ -105,6 +105,12 @@ function fmtMinutes(mins: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+function formatMaxSeconds(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
 function friendlyError(raw: string): string {
   const m = raw.toLowerCase();
   if (
@@ -1121,6 +1127,7 @@ function MatchView({
                 </p>
                 <span className="ml-auto font-mono text-xs text-slate">
                   Elapsed: {analysisElapsedSec}s / 3:00 max
+                  Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </span>
               </div>
             )}
