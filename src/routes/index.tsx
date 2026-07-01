@@ -321,30 +321,32 @@ function Index() {
     if (!matches) return;
 
     const resumeAll = (markAway: boolean) => {
-      // Mark every match that currently believes it is analysing as having been
-      // backgrounded, so completions surface the "while you were away" banner.
-      if (markAway) {
-        for (const m of matches) {
-          const st = matchStates[m.id];
-          if (st?.analysing || pollControllers.current.has(m.id)) {
-            backgroundedRef.current.add(m.id);
-          }
+      for (const m of matches) resumeIfPending(m.id, markAway);
+    };
+
+    // When the tab goes hidden, flag any actively-analysing matches so that a
+    // completion that happens while hidden surfaces the "while you were away"
+    // banner on return.
+    const onHidden = () => {
+      for (const m of matches) {
+        const st = matchStates[m.id];
+        if (st?.analysing || pollControllers.current.has(m.id)) {
+          backgroundedRef.current.add(m.id);
         }
       }
-      for (const m of matches) resumeIfPending(m.id, markAway);
     };
 
     // Initial mount: resume without treating as "away".
     resumeAll(false);
 
-    const onVisible = () => {
-      if (document.visibilityState === "visible") resumeAll(true);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") onHidden();
+      else resumeAll(true);
     };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", () => resumeAll(true));
     return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
