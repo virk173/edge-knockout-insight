@@ -102,6 +102,410 @@ function fmtLeg(leg: TierLeg, i: number): string {
   return `  Leg ${leg?.leg_number ?? i + 1}: ${na(leg?.selection)} @ ${num(leg?.odds)}`;
 }
 
+// ─────────────────────────────────────────────────────────────
+// CALL DATA helpers — pull the ACTUAL extracted values out of each
+// call's stored `data` payload (not just success/fail). All access is
+// defensive: unknown shapes fall back to N/A.
+// ─────────────────────────────────────────────────────────────
+
+/** First-present key lookup on an unknown object. */
+function field(obj: unknown, keys: string[]): unknown {
+  if (obj == null || typeof obj !== "object") return undefined;
+  const rec = obj as Record<string, unknown>;
+  for (const k of keys) {
+    if (rec[k] !== undefined && rec[k] !== null) return rec[k];
+  }
+  return undefined;
+}
+
+/** Pull an array out of common API envelopes ({response|data|results}) or a raw array. */
+function asArray(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object") {
+    const obj = payload as Record<string, unknown>;
+    for (const f of ["response", "data", "results"]) {
+      if (Array.isArray(obj[f])) return obj[f] as unknown[];
+    }
+  }
+  return [];
+}
+
+function callData(cr: Record<string, CallResult>, key: string): unknown {
+  const c = cr[key];
+  return c && c.status === "SUCCESS" ? (c.data ?? null) : null;
+}
+
+/** Value like "1.85" from an outcome name inside an extractStakeMarkets market. */
+function stakePrice(
+  markets: Record<string, Array<{ value: string; odd: string }>> | undefined,
+  label: string,
+  valueMatch: (v: string) => boolean,
+): string {
+  const rows = markets?.[label];
+  if (!Array.isArray(rows)) return NA;
+  const hit = rows.find((row) => valueMatch(String(row.value).toLowerCase()));
+  return hit && hit.odd ? na(hit.odd) : NA;
+}
+
+/** Sum of implied probabilities (1/odd) for 1X2 → overround, e.g. "1.062". */
+function stakeOverround(
+  markets: Record<string, Array<{ value: string; odd: string }>> | undefined,
+): string {
+  const rows = markets?.["1X2 (Match Winner)"];
+  if (!Array.isArray(rows) || !rows.length) return NA;
+  let sum = 0;
+  let counted = 0;
+  for (const row of rows) {
+    const o = Number.parseFloat(row.odd);
+    if (Number.isFinite(o) && o > 0) {
+      sum += 1 / o;
+      counted++;
+    }
+  }
+  return counted ? sum.toFixed(3) : NA;
+}
+
+interface PinOutcome {
+  name?: string;
+  current?: number | null;
+  opening?: number | null;
+  movement_pct?: number | null;
+  signal?: string;
+}
+interface PinMarket {
+  market?: string;
+  outcomes?: PinOutcome[];
+}
+
+/** Format a single Pinnacle/retail outcome movement line. */
+function fmtPinLine(o: PinOutcome): string {
+  const mv =
+    typeof o?.movement_pct === "number" && Number.isFinite(o.movement_pct)
+      ? `${o.movement_pct >= 0 ? "+" : ""}${o.movement_pct}%`
+      : NA;
+  return `      ${na(o?.name)}: opening ${num(o?.opening)} last ${num(
+    o?.current,
+  )} movement ${mv} ${na(o?.signal)}`;
+}
+
+/** First N starter names from one side of a lineup payload. */
+function starters(side: unknown, n: number): string[] {
+  const xi = field(side, ["starting_xi", "startingXi", "startingXI", "lineup"]);
+  const arr = Array.isArray(xi) ? xi : [];
+  return arr
+    .slice(0, n)
+    .map((p) => {
+      const name = field(p, ["name"]) ?? field(field(p, ["player"]), ["name"]);
+      return typeof name === "string" && name.trim() ? name.trim() : null;
+    })
+    .filter((x): x is string => !!x);
+}
+
+/**
+ * Build the CALL DATA section: the actual extracted values from every logical
+ * call. Sits between PIPELINE and CONFIDENCE in the report.
+ */
+function buildCallData(
+  cr: Record<string, CallResult>,
+  lineupState: LineupState | undefined,
+  lineupResolved: boolean,
+  meta: RunReportMeta,
+): string[] {
+  const out: string[] = [];
+  const p = (s = "") => out.push(s);
+
+  p("CALL DATA");
+  p("─────────────────");
+
+  // ── C1 — Fixture verification ─────────────────────────────
+  const c1 = cr["C1"]?.data as
+    | {
+        verified?: boolean;
+        fixtureId?: number;
+        actualHome?: string | null;
+        actualAway?: string | null;
+        expectedHome?: string;
+        expectedAway?: string;
+      }
+    | null
+    | undefined;
+  const home = na(meta.home ?? c1?.actualHome ?? c1?.expectedHome);
+  const away = na(meta.away ?? c1?.actualAway ?? c1?.expectedAway);
+  const venue =
+    meta.venueName || meta.venueCity
+      ? [meta.venueName, meta.venueCity].filter(Boolean).join(", ")
+      : NA;
+  p(`C1  Fixture: ${home} vs ${away}`);
+  p(`    Venue: ${venue}`);
+  p(`    Referee: ${na(meta.referee)}`);
+  p(`    Fixture ID: ${na(c1?.fixtureId ?? meta.fixtureId)}`);
+  p(`    Verified: ${c1?.verified ? "YES" : c1 ? "NO" : NA}`);
+
+  // ── C3 — Head to Head ─────────────────────────────────────
+  const h2h = callData(cr, "3");
+  const h2hCount = asArray(h2h).length;
+  if (cr["3"]?.status === "SUCCESS" && h2hCount > 0) {
+    p(`C3  H2H: ${h2hCount} meetings`);
+  } else {
+    p("C3  H2H: EMPTY — no competitive H2H");
+  }
+
+  // ── C4 — Recency-weighted / dead-rubber-adjusted form ─────
+  const dr = cr["4-deadrubber"]?.data as
+    | {
+        home?: Record<string, unknown>;
+        away?: Record<string, unknown>;
+      }
+    | null
+    | undefined;
+  const drHome = dr?.home ?? {};
+  const drAway = dr?.away ?? {};
+  p("C4  Home last 5:");
+  p(`      goals avg: ${na(field(drHome, ["adjusted_goals_avg"]))}`);
+  p(`      shots avg: ${na(field(drHome, ["adjusted_shots_avg"]))}`);
+  p(`      dead rubber discounted: ${na(field(drHome, ["dead_rubber_count"]))}`);
+  p("    Away last 5:");
+  p(`      goals avg: ${na(field(drAway, ["adjusted_goals_avg"]))}`);
+  p(`      shots avg: ${na(field(drAway, ["adjusted_shots_avg"]))}`);
+  p(`      dead rubber discounted: ${na(field(drAway, ["dead_rubber_count"]))}`);
+
+  // ── C5 — Injuries ─────────────────────────────────────────
+  const injuries = asArray(callData(cr, "5"));
+  if (injuries.length) {
+    p(`C5  Injuries: ${injuries.length} absences`);
+    for (const it of injuries) {
+      const player =
+        field(it, ["player"]) && typeof field(it, ["player"]) === "object"
+          ? field(field(it, ["player"]), ["name"])
+          : field(it, ["player"]);
+      const team = field(field(it, ["team"]), ["name"]) ?? field(it, ["team"]);
+      const reason =
+        field(field(it, ["player"]), ["reason", "type"]) ??
+        field(it, ["reason", "type"]);
+      p(`    ${na(player)} (${na(team)}) — ${na(reason)}`);
+    }
+  } else {
+    p("C5  Injuries: none reported");
+  }
+
+  // ── C7 — Referee (resolved profile) ───────────────────────
+  const ref = cr["7"]?.data as
+    | {
+        referee?: string;
+        matches_officiated?: number;
+        avg_yellow_cards_per_game?: number | string;
+        source?: string;
+        career_totals?: {
+          games?: number | null;
+          yellow_cards?: number | null;
+        };
+      }
+    | null
+    | undefined;
+  if (ref && cr["7"]?.status === "SUCCESS") {
+    const avgY = ref.avg_yellow_cards_per_game;
+    const avgYNum = typeof avgY === "number" ? avgY : NaN;
+    p(`C7  Referee: ${na(ref.referee)}`);
+    p(
+      `    avg yellows: ${na(avgY)} over ${na(ref.matches_officiated)} games`,
+    );
+    p(`    strictness score: ${num(avgYNum, 2)}`);
+    p(
+      `    ${
+        Number.isFinite(avgYNum)
+          ? avgYNum >= 4
+            ? "HIGH"
+            : avgYNum >= 3
+              ? "MEDIUM"
+              : "LOW"
+          : NA
+      }`,
+    );
+    const src = String(ref.source ?? "");
+    p(
+      `    Source: ${
+        /thestatsapi/i.test(src)
+          ? "TheStatsAPI S7"
+          : /api-football/i.test(src)
+            ? "API-Football C7"
+            : "UNKNOWN"
+      }`,
+    );
+  } else {
+    p("C7  Referee: UNKNOWN");
+    p("    Source: UNKNOWN");
+  }
+
+  // ── C8 — Predictions ──────────────────────────────────────
+  const predArr = asArray(callData(cr, "8"));
+  const pred = field(predArr[0], ["predictions"]);
+  if (pred) {
+    const pct = field(pred, ["percent"]);
+    const goals = field(pred, ["goals"]);
+    p(
+      `C8  Predictions: home ${na(field(pct, ["home"]))} draw ${na(
+        field(pct, ["draw"]),
+      )} away ${na(field(pct, ["away"]))}`,
+    );
+    p(
+      `    Poisson goals: home ${na(field(goals, ["home"]))} away ${na(
+        field(goals, ["away"]),
+      )}`,
+    );
+  } else {
+    p("C8  Predictions: EMPTY — skipped/failed");
+  }
+
+  // ── C9A — Stake odds ──────────────────────────────────────
+  const stakeRoot = cr["9"]?.data as { stakeOdds?: unknown } | null | undefined;
+  const stake = extractStakeMarkets(stakeRoot?.stakeOdds ?? null);
+  const sm = stake?.markets;
+  p("C9A Stake odds:");
+  p(
+    `    Home: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
+      v.includes("home"),
+    )} Draw: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
+      v.includes("draw"),
+    )} Away: ${stakePrice(sm, "1X2 (Match Winner)", (v) => v.includes("away"))}`,
+  );
+  p(
+    `    Over 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
+      v.includes("over"),
+    )} Under 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
+      v.includes("under"),
+    )}`,
+  );
+  p(
+    `    BTTS Yes: ${stakePrice(sm, "Both Teams To Score", (v) =>
+      v.includes("yes"),
+    )} No: ${stakePrice(sm, "Both Teams To Score", (v) => v.includes("no"))}`,
+  );
+  p(
+    `    Corners 9.5 over: ${stakePrice(sm, "Corners Over/Under 9.5", (v) =>
+      v.includes("over"),
+    )}`,
+  );
+  p("    Cards 3.5 over: N/A");
+  p(`    Overround: ${stakeOverround(sm)}`);
+
+  // ── C9B — Pinnacle / retail odds + line movement ──────────
+  const pin = cr["9B"]?.data as
+    | { bookmaker?: string; is_pinnacle?: boolean; markets?: PinMarket[] }
+    | null
+    | undefined;
+  p("C9B Pinnacle odds:");
+  if (pin && cr["9B"]?.status === "SUCCESS") {
+    const source = pin.is_pinnacle
+      ? "PINNACLE"
+      : String(pin.bookmaker ?? "").toUpperCase() || "EMPTY";
+    p(`    Source: ${source}`);
+    if (!pin.is_pinnacle) {
+      p(
+        `    ⚠ NOTE: Pinnacle unavailable — ${
+          pin.bookmaker ?? "retail book"
+        } returned as fallback. adjustEVForPinnacleGap did not fire. ev_confidence set to MEDIUM.`,
+      );
+    }
+    const markets = Array.isArray(pin.markets) ? pin.markets : [];
+    const oneX2 = markets.find((m) =>
+      /1x2/i.test(String(m?.market ?? "")),
+    );
+    const ou = markets.find((m) =>
+      /goal/i.test(String(m?.market ?? "")),
+    );
+    const lines: PinOutcome[] = [];
+    for (const o of oneX2?.outcomes ?? []) lines.push(o);
+    const over25 = (ou?.outcomes ?? []).find((o) =>
+      /over 2\.5/i.test(String(o?.name ?? "")),
+    );
+    if (over25) lines.push(over25);
+    if (lines.length) {
+      for (const o of lines) p(fmtPinLine(o));
+    } else {
+      p("    No odds data returned");
+    }
+  } else {
+    p("    Source: EMPTY");
+    p("    No odds data returned");
+  }
+
+  // ── S2A — Home season stats ───────────────────────────────
+  const s2a = field(cr["2A"]?.data, ["extracted"]) as
+    | Record<string, unknown>
+    | undefined;
+  const emitTeamStats = (id: string, label: string, s: Record<string, unknown> | undefined, teamName?: string | null) => {
+    p(`${id}  ${label}:`);
+    if (s) {
+      const gf = field(s, ["goals_for"]);
+      const ga = field(s, ["goals_against"]);
+      const gd =
+        typeof gf === "number" && typeof ga === "number" ? gf - ga : undefined;
+      p(
+        `    ${na(teamName)}: ${na(field(s, ["wins"]))}W ${na(
+          field(s, ["draws"]),
+        )}D ${na(field(s, ["losses"]))}L`,
+      );
+      p(`    GF:${na(gf)} GA:${na(ga)} GD:${gd === undefined ? NA : gd}`);
+      p(`    Form: ${na(field(s, ["form"]))}`);
+      p(`    Position: ${na(field(s, ["position"]))}`);
+    } else {
+      p(`    ${na(teamName)}: EMPTY — no season stats returned`);
+    }
+  };
+  emitTeamStats("S2A", "Home team season stats", s2a, meta.home);
+
+  // ── S2B — Away season stats ───────────────────────────────
+  const s2b = field(cr["2B"]?.data, ["extracted"]) as
+    | Record<string, unknown>
+    | undefined;
+  emitTeamStats("S2B", "Away team season stats", s2b, meta.away);
+
+  // ── S3 — Lineups ──────────────────────────────────────────
+  const lineup = callData(cr, "6");
+  const lnode = (field(lineup, ["data"]) ?? lineup) as unknown;
+  const lState =
+    lineupState === "POPULATED"
+      ? "CONFIRMED"
+      : lineupState === "PROPAGATING"
+        ? "PROPAGATING"
+        : lineupState === "NOT_ANNOUNCED"
+          ? "PENDING"
+          : NA;
+  const lSource = String(field(lnode, ["source"]) ?? "");
+  const lTag = lineupResolved
+    ? /api-football/i.test(lSource)
+      ? "CONFIRMED — fallback: API-Football"
+      : "CONFIRMED"
+    : lState;
+  const homeSide = field(lnode, ["home"]);
+  const awaySide = field(lnode, ["away"]);
+  const homeStarters = starters(homeSide, 3);
+  const awayStarters = starters(awaySide, 3);
+  p("S3  Lineups:");
+  p(`    Home: ${na(field(homeSide, ["formation"]))} — ${lTag}`);
+  p(`      ${homeStarters.length ? homeStarters.join(", ") : "not available"}`);
+  p(`    Away: ${na(field(awaySide, ["formation"]))} — ${lTag}`);
+  p(`      ${awayStarters.length ? awayStarters.join(", ") : "not available"}`);
+
+  // ── S7 — Referee (TheStatsAPI career totals) ──────────────
+  const career = ref?.career_totals;
+  const careerGames = field(career, ["games"]);
+  const careerYellows = field(career, ["yellow_cards"]);
+  p("S7  Referee (TheStatsAPI):");
+  if (ref && career && typeof careerGames === "number" && careerGames > 0) {
+    const avg =
+      typeof careerYellows === "number"
+        ? (careerYellows / careerGames).toFixed(2)
+        : NA;
+    p(`    ${na(ref.referee)} — ${na(careerGames)} career games`);
+    p(`    yellows: ${na(careerYellows)} (${avg} per game)`);
+  } else {
+    p("    EMPTY — used API-Football C7 instead");
+  }
+
+  return out;
+}
+
 export function generateRunReport(
   match: string,
   round: string,
@@ -110,6 +514,7 @@ export function generateRunReport(
   analysisResult: EnrichedResult,
   claudeRaw: string,
   lastRunAt: Date,
+  meta: RunReportMeta = {},
 ): string {
   const cr = callStatuses?.callResults ?? {};
   const r = analysisResult ?? {};
