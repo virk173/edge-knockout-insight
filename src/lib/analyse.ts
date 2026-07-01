@@ -2384,13 +2384,14 @@ export async function collectMatchData(
           record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
             matchId,
             bookmaker: summary.bookmaker,
+            is_pinnacle: summary.is_pinnacle,
             markets: summary.markets,
             gap_check: gapCheck,
             note:
               `Odds source bookmaker: ${summary.bookmaker}. ` +
-              (normalize(summary.bookmaker).includes("pinnacle")
-                ? ""
-                : "Pinnacle not offered for this match; line-movement/sharp-money signals from this non-Pinnacle book are weaker — weight accordingly. ") +
+              (summary.is_pinnacle
+                ? "This IS Pinnacle (sharp). You MAY populate pinnacle_odds from these prices. "
+                : `This is NOT Pinnacle — it is a RETAIL book (${summary.bookmaker}). Pinnacle was not offered for this match. Set pinnacle_odds to null for the anchor and every leg; do NOT use these prices as a sharp reference. They are provided only as a secondary retail cross-check and for line movement. `) +
               "movement_pct = (last_seen - opening) / opening * 100. opening may be null (only last_seen captured) → movement UNKNOWN. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
           });
         }
