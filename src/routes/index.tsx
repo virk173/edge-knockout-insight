@@ -205,6 +205,22 @@ const EMPTY_MATCH_STATE: MatchState = {
   pollStalled: false,
 };
 
+// ─────────────────────────────────────────────────────────────
+// Background-analysis polling
+// ─────────────────────────────────────────────────────────────
+interface PollController {
+  timer: ReturnType<typeof setInterval> | null;
+  jobId: string;
+  failCount: number;
+  startedAt: number;
+  canceled: boolean;
+  inFlight: boolean;
+}
+
+const POLL_INTERVAL_MS = 3000;
+const MAX_POLL_FAILURES = 5;
+const jobStorageKey = (matchId: number) => `edge_job_${matchId}`;
+
 type Tab = "analysis" | "log";
 type View = "fixtures" | "match";
 
