@@ -59,6 +59,7 @@ import {
   startAnalysis,
   getAnalysisResult,
 } from "@/lib/analysisJobs.functions";
+import type { ClaudeCallResult } from "@/lib/claude.server";
 import { formatMatchTime } from "@/lib/formatMatchTime";
 import { BarChart3, HelpCircle } from "lucide-react";
 
