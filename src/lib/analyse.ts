@@ -162,7 +162,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "TheStatsAPI Pinnacle odds" },
+  { key: "9B", n: "9B", endpoint: "TheStatsAPI /odds (Pinnacle if available, else retail)" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
