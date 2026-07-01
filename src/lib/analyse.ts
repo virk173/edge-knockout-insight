@@ -34,7 +34,15 @@ const GROUP_TOTAL_MATCHDAYS = 3;
 
 
 
-export type CallStatus = "SUCCESS" | "EMPTY" | "EXPECTED_EMPTY" | "FAILED" | "SKIPPED";
+export type CallStatus =
+  | "SUCCESS"
+  | "EMPTY"
+  | "EXPECTED_EMPTY"
+  | "FAILED"
+  | "SKIPPED"
+  // Dependent call was refused because the C1 fixture-id verification failed
+  // (resolved fixture belongs to a different match). Never runs the HTTP call.
+  | "BLOCKED";
 
 export interface CallResult {
   key: string;
