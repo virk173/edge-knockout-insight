@@ -679,15 +679,26 @@ function summariseOutcome(name: string, node: unknown) {
 // the keys dynamically and keep whatever lines are actually present.
 function buildPinnacleSummary(
   oddsJson: unknown,
-): { bookmaker: string; markets: PinnacleMarketSummary[]; raw: unknown } | null {
+): {
+  bookmaker: string;
+  is_pinnacle: boolean;
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
   const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
   if (!bookmakers.length) return null;
-  // Prefer Pinnacle; otherwise fall back to the first available bookmaker.
-  const chosen =
-    bookmakers.find((b) => {
-      const name = getField(b, ["bookmaker", "name"]);
-      return typeof name === "string" && normalize(name).includes("pinnacle");
-    }) ?? bookmakers[0];
+  // Only a bookmaker named exactly "Pinnacle" (case-insensitive) counts as the
+  // sharp reference. If Pinnacle is absent we STILL extract the first available
+  // book (often Bet365) so its markets can serve as a RETAIL reference for the
+  // overround/C9B block — but is_pinnacle stays false so the pipeline never
+  // feeds those prices into pinnacle_odds (which would wrongly trigger the 15%
+  // Stake-anchoring EV reduction against a non-sharp book).
+  const truePinnacle = bookmakers.find((b) => {
+    const name = getField(b, ["bookmaker", "name"]);
+    return typeof name === "string" && normalize(name) === "pinnacle";
+  });
+  const chosen = truePinnacle ?? bookmakers[0];
+  const is_pinnacle = !!truePinnacle;
   const bookmakerName = (getField(chosen, ["bookmaker", "name"]) as string) ?? "UNKNOWN";
   const m = getField(chosen, ["markets"]);
   if (!m || typeof m !== "object") return null;
