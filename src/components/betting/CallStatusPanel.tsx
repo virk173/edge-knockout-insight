@@ -24,6 +24,8 @@ const STATUS_META: Record<
   EMPTY: { icon: "⚠️", label: "EMPTY", className: "text-accent-amber" },
   PROPAGATING: { icon: "⚠️", label: "PROPAGATING", className: "text-accent-amber" },
   FAILED: { icon: "❌", label: "FAILED", className: "text-signal-red" },
+  BLOCKED: { icon: "⛔", label: "BLOCKED", className: "text-signal-red" },
+  MISMATCH: { icon: "❌", label: "MISMATCH", className: "text-signal-red" },
   PENDING: { icon: "…", label: "PENDING", className: "text-slate" },
 };
 
