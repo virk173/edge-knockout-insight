@@ -62,7 +62,7 @@ const DEFAULT_MAX_TOKENS = 8000;
 const TIMEOUT_MS = 90_000;
 const WAIT_BETWEEN_MS = 10_000;
 const TIMEOUT_MESSAGE =
-  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 60s each). Please retry.";
+  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 90s each). Please retry.";
 
 // Retry plan: primary model twice, then the fallback model once.
 // Attempt 1: claude-sonnet-4-6  (60s)  -> wait 10s
