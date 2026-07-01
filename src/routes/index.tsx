@@ -253,6 +253,19 @@ function Index() {
   useEffect(() => {
     setApiCalls(getApiCallCount());
     setLogEntries(getLogEntries());
+    // One-time cleanup: the old background-job pattern wrote edge_job_* keys.
+    // That pattern no longer exists (analysis is a direct synchronous call), so
+    // purge any stale entries left over from a previous version.
+    try {
+      for (let i = window.localStorage.length - 1; i >= 0; i--) {
+        const key = window.localStorage.key(i);
+        if (key && key.startsWith("edge_job_")) {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      /* ignore storage access errors */
+    }
     // Load whatever fixtures list is already cached for today — NO fetch.
     // A fresh fetch only happens when the user clicks the Find/Refresh button.
     const cached = readFixturesCache();
@@ -262,6 +275,7 @@ function Index() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   // Hydrate persisted analysis results (localStorage) into matchStates whenever
   // the fixtures list changes — so a reload restores the "✓ Analysed" indicator
