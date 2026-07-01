@@ -19,7 +19,7 @@ interface AnalyseMatchInput {
 }
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_TOKENS = 16000;
+const DEFAULT_MAX_TOKENS = 8000;
 
 function validateInput(input: unknown): AnalyseMatchInput {
   if (typeof input !== "object" || input === null) {
@@ -59,11 +59,13 @@ export const analyseMatch = createServerFn({ method: "POST" })
       };
     }
 
-    // Anthropic sits behind Cloudflare; a very large prompt can make Claude take
-    // >100s and the edge returns a 524 origin-timeout. We cap the wait at 90s
-    // client-side and retry ONCE (after 10s) for transient timeouts / 5xx before
-    // surfacing a clear error.
-    const TIMEOUT_MS = 90_000;
+    // Anthropic sits behind Cloudflare; during peak load / degraded service the
+    // response can exceed the normal 15-30s window. Cap each request at 3 minutes
+    // and retry ONCE (after 10s) for transient timeouts / 5xx before surfacing a
+    // clear error.
+    const TIMEOUT_MS = 180_000;
+    const TIMEOUT_MESSAGE =
+      "Analysis timed out after 3 minutes. Anthropic API may be experiencing slow response times. Check status.anthropic.com and retry.";
     const requestBody = JSON.stringify({
       model: data.model,
       max_tokens: data.maxTokens,
@@ -105,12 +107,11 @@ export const analyseMatch = createServerFn({ method: "POST" })
     } catch (err) {
       const isAbort = err instanceof Error && err.name === "AbortError";
       if (isAbort) {
-        console.error("analyse-match: Anthropic request timed out after 90s", err);
+        console.error("analyse-match: Anthropic request timed out after 180s", err);
         return {
           ok: false as const,
           error_type: "TIMEOUT" as const,
-          error:
-            "Analysis timed out — Claude took longer than 90 seconds to respond. This usually means the input data is too large. Retry or check the injection block sizes.",
+          error: TIMEOUT_MESSAGE,
         };
       }
       // Retry once on a network error before giving up.
@@ -150,10 +151,7 @@ export const analyseMatch = createServerFn({ method: "POST" })
         return {
           ok: false as const,
           error_type: "TIMEOUT" as const,
-          error:
-            "Analysis timed out — Claude took longer than 90 seconds to respond (upstream " +
-            response.status +
-            "). This usually means the input data is too large. Retry or check the injection block sizes.",
+          error: TIMEOUT_MESSAGE,
           status: response.status,
         };
       }

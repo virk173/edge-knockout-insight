@@ -61,8 +61,7 @@ const CLAUDE_LOADING_MESSAGES = [
   "Building recommendations...",
 ];
 
-// Approximate expected Claude turnaround, used for the Section 2 countdown.
-const CLAUDE_COUNTDOWN_START = 25;
+const CLAUDE_MAX_SECONDS = 180;
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -104,6 +103,12 @@ function fmtMinutes(mins: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatMaxSeconds(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
 function friendlyError(raw: string): string {
@@ -199,7 +204,7 @@ function Index() {
 
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
   const [analysisMsgIndex, setAnalysisMsgIndex] = useState(0);
-  const [countdown, setCountdown] = useState(CLAUDE_COUNTDOWN_START);
+  const [analysisElapsedSec, setAnalysisElapsedSec] = useState(0);
 
   const callAnalyseMatch = useServerFn(analyseMatch);
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -247,7 +252,7 @@ function Index() {
     setLogEntries(clearLog());
   }
 
-  // Cycle Claude loading messages + countdown while the active match analyses.
+  // Cycle Claude loading messages + elapsed timer while the active match analyses.
   useEffect(() => {
     if (!activeState.analysing) {
       if (msgTimer.current) clearInterval(msgTimer.current);
@@ -255,11 +260,16 @@ function Index() {
       return;
     }
     setAnalysisMsgIndex(0);
-    setCountdown(CLAUDE_COUNTDOWN_START);
+    setAnalysisElapsedSec(0);
     msgTimer.current = setInterval(() => {
-      setAnalysisMsgIndex((i) => (i + 1) % CLAUDE_LOADING_MESSAGES.length);
-      setCountdown((c) => (c > 1 ? c - 3 : 1));
-    }, 3000);
+      setAnalysisElapsedSec((seconds) => {
+        const next = seconds + 1;
+        if (next % 3 === 0) {
+          setAnalysisMsgIndex((i) => (i + 1) % CLAUDE_LOADING_MESSAGES.length);
+        }
+        return next;
+      });
+    }, 1000);
     return () => {
       if (msgTimer.current) clearInterval(msgTimer.current);
       msgTimer.current = null;
@@ -658,7 +668,7 @@ Start your response with { and end with }.`;
           now={now}
           retrying={new Set(activeState.retrying)}
           analysisMsgIndex={analysisMsgIndex}
-          countdown={countdown}
+          analysisElapsedSec={analysisElapsedSec}
           onBack={backToFixtures}
           onRunCalls={() => handleRunCalls(activeMatch)}
           onAnalyse={() => handleAnalyseCached(activeMatch)}
@@ -924,7 +934,7 @@ function MatchView({
   now,
   retrying,
   analysisMsgIndex,
-  countdown,
+  analysisElapsedSec,
   onBack,
   onRunCalls,
   onAnalyse,
@@ -938,7 +948,7 @@ function MatchView({
   now: Date;
   retrying: Set<string>;
   analysisMsgIndex: number;
-  countdown: number;
+  analysisElapsedSec: number;
   onBack: () => void;
   onRunCalls: () => void;
   onAnalyse: () => void;
@@ -1110,14 +1120,16 @@ function MatchView({
             </button>
 
             {state.analysing && (
-              <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
-                <p className="font-mono text-sm text-accent-amber">
-                  {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+              <div className="rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+                  <p className="font-mono text-sm text-accent-amber">
+                    {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+                  </p>
+                </div>
+                <p className="mt-2 font-mono text-xs text-slate">
+                  Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </p>
-                <span className="ml-auto font-mono text-xs text-slate">
-                  ~{countdown}s
-                </span>
               </div>
             )}
 
