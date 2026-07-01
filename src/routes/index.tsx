@@ -330,6 +330,8 @@ function Index() {
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [collection, setCollection] = useState<CollectionResult | null>(null);
   const [collectError, setCollectError] = useState<string | null>(null);
+  // Retry keys currently re-running (individual failed-call retry).
+  const [retrying, setRetrying] = useState<Set<string>>(new Set());
 
   // Claude analysis state.
   const [analysing, setAnalysing] = useState(false);
