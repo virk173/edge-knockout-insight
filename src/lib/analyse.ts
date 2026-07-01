@@ -244,8 +244,16 @@ export function validateCall(callKey: string, data: unknown): unknown {
  * averages appended below, so the raw batch is redundant.
  */
 function extractLast5Scorelines(list: unknown): string[] {
+  return scorelinesFrom(list, 5);
+}
+
+// Generic scoreline summariser used for CALL 4 (last 5) and CALL 3 (h2h, up to
+// 10). Turns a raw API-Football fixtures array into compact one-line strings so
+// we never ship the full ~1.5KB-per-fixture objects (logos, venue, timestamps,
+// periods) to Claude — none of which it uses.
+function scorelinesFrom(list: unknown, limit: number): string[] {
   return extractArray(list)
-    .slice(0, 5)
+    .slice(0, limit)
     .map((item) => {
       const fx = getField(item, ["fixture"]);
       const date = String(getField(fx, ["date"]) ?? "").slice(0, 10);
