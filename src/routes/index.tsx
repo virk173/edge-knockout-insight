@@ -413,25 +413,17 @@ function Index() {
     setView("fixtures");
   }
 
-  // ── Background-job analysis ────────────────────────────────
-  // Stop polling a match's job and drop its controller.
-  function cancelPolling(matchId: number) {
-    const c = pollControllers.current.get(matchId);
-    if (c) {
-      c.canceled = true;
-      if (c.timer) clearInterval(c.timer);
-      pollControllers.current.delete(matchId);
-    }
-  }
-
-  // Process a completed Claude response — identical logic to the old
-  // synchronous success/error path. calculateResults() still runs here,
-  // client-side, on the returned raw response.
+  // ── Synchronous Claude analysis ────────────────────────────
+  // The formatted prompt is small (~13k input tokens after per-block trimming),
+  // so Claude responds in ~15-25s. A direct synchronous server-function call is
+  // simpler and more reliable than the old background job store, which was only
+  // justified when the prompt approached the 200k context limit.
+  // Process the completed Claude response. calculateResults() runs client-side
+  // on the returned raw response.
   function processClaudeResponse(
     match: AnalysedMatch,
     res: ClaudeCallResult,
     startedAt: number,
-    away: boolean,
   ) {
     const responseTimeMs = Date.now() - startedAt;
 
@@ -440,7 +432,6 @@ function Index() {
         patchState(match.id, {
           billingError: true,
           analysing: false,
-          analysisJobId: null,
         });
         toast.error("Anthropic billing issue", {
           description: "Account credit balance is too low.",
@@ -453,7 +444,6 @@ function Index() {
       patchState(match.id, {
         analysisError: msg,
         analysing: false,
-        analysisJobId: null,
       });
       toast.error("Analysis failed", { description: msg });
       return;
@@ -490,8 +480,6 @@ function Index() {
         analysing: false,
         analysisSavedAt: savedAt,
         loadedFromCache: false,
-        analysisJobId: null,
-        analysisCompletedAway: away,
         usedFallbackModel: res.used_fallback_model === true,
         fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
@@ -505,7 +493,7 @@ function Index() {
         responseTimeMs,
         savedAt,
       });
-      toast.success(away ? "Analysis completed while you were away" : "Analysis complete");
+      toast.success("Analysis complete");
 
       const logEntry = enriched?.log_entry;
       if (logEntry && typeof logEntry === "object") {
@@ -520,114 +508,14 @@ function Index() {
         analysisRaw: cleaned,
         tokenUsage,
         analysing: false,
-        analysisJobId: null,
         analysisError: `Analysis could not be parsed.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
       });
       toast.error("Could not parse analysis JSON");
     }
   }
 
-  // Start polling a job every 3s. `away` marks completions that should show the
-  // "completed while you were away" banner.
-  function startPolling(
-    match: AnalysedMatch,
-    jobId: string,
-    startedAt: number,
-    away: boolean,
-  ) {
-    cancelPolling(match.id);
-    const controller: PollController = {
-      timer: null,
-      jobId,
-      failCount: 0,
-      startedAt,
-      canceled: false,
-      inFlight: false,
-    };
-    pollControllers.current.set(match.id, controller);
-    patchState(match.id, {
-      analysing: true,
-      analysisJobId: jobId,
-      pollStalled: false,
-      analysisError: null,
-      billingError: false,
-    });
-
-    const tick = async () => {
-      if (controller.canceled || controller.inFlight) return;
-      controller.inFlight = true;
-      try {
-        const poll = await callGetAnalysisResult({ data: { jobId } });
-        controller.failCount = 0;
-        if (controller.canceled) return;
-        if (poll.status === "pending") return;
-        if (poll.status === "failed") {
-          cancelPolling(match.id);
-          try {
-            localStorage.removeItem(jobStorageKey(match.id));
-          } catch {
-            /* ignore */
-          }
-          patchState(match.id, {
-            analysing: false,
-            analysisJobId: null,
-            analysisError: poll.error,
-          });
-          toast.error("Analysis failed", { description: poll.error });
-          return;
-        }
-        // complete
-        cancelPolling(match.id);
-        try {
-          localStorage.removeItem(jobStorageKey(match.id));
-        } catch {
-          /* ignore */
-        }
-        const wasAway = away || backgroundedRef.current.has(match.id);
-        backgroundedRef.current.delete(match.id);
-        processClaudeResponse(match, poll.result, controller.startedAt, wasAway);
-      } catch {
-        controller.failCount += 1;
-        if (controller.failCount >= MAX_POLL_FAILURES) {
-          cancelPolling(match.id);
-          patchState(match.id, { analysing: false, pollStalled: true });
-          toast.error("Lost connection to the analysis", {
-            description: "Tap Retry to resume from where it left off.",
-          });
-        }
-      } finally {
-        controller.inFlight = false;
-      }
-    };
-
-    controller.timer = setInterval(tick, POLL_INTERVAL_MS);
-    void tick(); // immediate first poll
-  }
-
-  // Resume polling a stored job for a match if one exists and we're not already
-  // polling and don't already have a result. Called on returning from
-  // background / opening a match.
-  function resumeIfPending(matchId: number, markAway = true) {
-    if (pollControllers.current.has(matchId)) return;
-    let jobId: string | null = null;
-    try {
-      jobId = localStorage.getItem(jobStorageKey(matchId));
-    } catch {
-      jobId = null;
-    }
-    if (!jobId) return;
-    const st = getState(matchId);
-    if (st.analysisResult) return;
-    const match = matches?.find((m) => m.id === matchId);
-    if (!match) return;
-    startPolling(match, jobId, Date.now(), markAway);
-  }
-
-  // Start a fresh analysis job. If one is already running for this match, cancel
-  // its poll first and replace it.
+  // Run a fresh synchronous analysis for a match.
   async function runClaudeAnalysis(match: AnalysedMatch, result: CollectionResult) {
-    cancelPolling(match.id);
-    backgroundedRef.current.delete(match.id);
     patchState(match.id, {
       analysing: true,
       analysisResult: null,
@@ -635,9 +523,6 @@ function Index() {
       billingError: false,
       analysisRaw: null,
       tokenUsage: null,
-      analysisJobId: null,
-      analysisCompletedAway: false,
-      pollStalled: false,
     });
 
     let formattedData: string;
@@ -671,42 +556,21 @@ Start your response with { and end with }.`;
 
     const startedAt = Date.now();
     try {
-      const { jobId } = await callStartAnalysis({
+      const res = await callAnalyseMatch({
         data: { systemPrompt: SYSTEM_PROMPT, userMessage },
       });
-      try {
-        localStorage.setItem(jobStorageKey(match.id), jobId);
-      } catch {
-        /* ignore */
-      }
-      startPolling(match, jobId, startedAt, false);
+      processClaudeResponse(match, res, startedAt);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not start the analysis job.";
+      const msg = e instanceof Error ? e.message : "Could not run the analysis.";
       patchState(match.id, {
         analysisError: msg,
         analysing: false,
-        analysisJobId: null,
       });
       toast.error("Analysis failed", { description: msg });
     }
   }
 
-  // Resume polling after a 5-failure stall, using the stored job id.
-  function handleResumePoll(match: AnalysedMatch) {
-    let jobId = getState(match.id).analysisJobId;
-    if (!jobId) {
-      try {
-        jobId = localStorage.getItem(jobStorageKey(match.id));
-      } catch {
-        jobId = null;
-      }
-    }
-    if (!jobId) {
-      toast.error("No job to resume — re-run analysis.");
-      return;
-    }
-    startPolling(match, jobId, Date.now(), true);
-  }
+
 
 
   // SECTION 1 — Run All Calls. API pipeline only. No Claude / tokens.
