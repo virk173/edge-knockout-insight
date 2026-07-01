@@ -897,7 +897,7 @@ tier_2_parlay:
   probability_derivation with:
     p_independent, correlation_factor,
     correlation_basis, p_joint,
-    hold_rate, p_final
+    hold_rate (diagnostic only)
   legs array each with:
     leg_number, market, selection,
     odds, model_probability,
@@ -913,7 +913,8 @@ tier_2_parlay:
     potential_return_realistic,
     basis_note
   parlay_ev_inputs with:
-    p_final, effective_sgp_price
+    p_joint, stake_sgp
+    (hold_rate is NOT included here)
   (app computes parlay_ev and ev_rating)
   reasoning
 tier_3_jackpot:
