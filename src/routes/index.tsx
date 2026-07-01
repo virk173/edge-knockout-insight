@@ -30,6 +30,12 @@ import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import {
+  readResultCache,
+  writeResultCache,
+  extractSgpChain,
+  formatResultAgo,
+} from "@/lib/resultCache";
 import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
