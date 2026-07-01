@@ -1974,14 +1974,20 @@ export async function collectMatchData(
   });
 
   // 3: head-to-head
-  await runStep("3", "Fetching head-to-head data... (3/11)", () =>
-    afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`, afKey),
+  await runStep(
+    "3",
+    "Fetching head-to-head data... (3/11)",
+    () => afGet(`/fixtures/headtohead?h2h=${match.homeId}-${match.awayId}&last=10`, afKey),
+    blockOpts,
   );
 
   // 4 step 1: home recent form
   let homeFixtureIds: number[] = [];
-  await runStep("4-1", "Fetching recent form step 1... (4/11)", async () =>
-    afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+  await runStep(
+    "4-1",
+    "Fetching recent form step 1... (4/11)",
+    async () => afGet(`/fixtures?team=${match.homeId}&last=5&league=1&season=2026`, afKey),
+    blockOpts,
   );
   // Derive ids AFTER the step so a cached 4-1 (fn not executed) still feeds 4-3.
   homeFixtureIds = extractArray(callResults["4-1"]?.data)
@@ -1990,23 +1996,34 @@ export async function collectMatchData(
 
   // 4 step 2: away recent form
   let awayFixtureIds: number[] = [];
-  await runStep("4-2", "Fetching recent form step 2... (5/11)", async () =>
-    afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+  await runStep(
+    "4-2",
+    "Fetching recent form step 2... (5/11)",
+    async () => afGet(`/fixtures?team=${match.awayId}&last=5&league=1&season=2026`, afKey),
+    blockOpts,
   );
   awayFixtureIds = extractArray(callResults["4-2"]?.data)
     .map((f) => getField(getField(f, ["fixture"]), ["id"]))
     .filter((id): id is number => typeof id === "number");
 
   // 4 step 3: combined batch
-  await runStep("4-3", "Fetching recent form batch... (6/11)", () => {
-    const ids = Array.from(new Set([...homeFixtureIds, ...awayFixtureIds])).slice(0, 10);
-    if (ids.length === 0) return Promise.resolve(null);
-    return afGet(`/fixtures?ids=${ids.join("-")}`, afKey);
-  });
+  await runStep(
+    "4-3",
+    "Fetching recent form batch... (6/11)",
+    () => {
+      const ids = Array.from(new Set([...homeFixtureIds, ...awayFixtureIds])).slice(0, 10);
+      if (ids.length === 0) return Promise.resolve(null);
+      return afGet(`/fixtures?ids=${ids.join("-")}`, afKey);
+    },
+    blockOpts,
+  );
 
   // 5: injuries
-  await runStep("5", "Fetching injuries... (7/11)", () =>
-    afGet(`/injuries?fixture=${match.id}`, afKey),
+  await runStep(
+    "5",
+    "Fetching injuries... (7/11)",
+    () => afGet(`/injuries?fixture=${match.id}`, afKey),
+    blockOpts,
   );
 
   // 6 (S3): confirmed lineups (TheStatsAPI).
