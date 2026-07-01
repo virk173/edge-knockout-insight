@@ -14,6 +14,7 @@ import {
   CRITICAL_THRESHOLD,
 } from "./apiCounter";
 import { apiFootballGet } from "./apiFootball";
+import { readCallCache, writeCallCache } from "./callCache";
 
 const SA_BASE = "https://api.thestatsapi.com/api";
 // Hardcoded TheStatsAPI FIFA World Cup 2026 competition + season IDs.
