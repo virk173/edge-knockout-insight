@@ -343,10 +343,12 @@ function Index() {
       if (document.visibilityState === "hidden") onHidden();
       else resumeAll(true);
     };
+    const onFocus = () => resumeAll(true);
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", () => resumeAll(true));
+    window.addEventListener("focus", onFocus);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
