@@ -256,6 +256,33 @@ function Index() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Hydrate persisted analysis results (localStorage) into matchStates whenever
+  // the fixtures list changes — so a reload restores the "✓ Analysed" indicator
+  // and opening a match shows its saved result without a fresh Claude call.
+  useEffect(() => {
+    if (!matches) return;
+    setMatchStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const m of matches) {
+        const existing = prev[m.id];
+        if (existing?.analysisResult) continue; // fresh in-memory result wins
+        const cached = readResultCache(m.id);
+        if (!cached) continue;
+        next[m.id] = {
+          ...(existing ?? EMPTY_MATCH_STATE),
+          analysisResult: cached.result,
+          analysisRaw: cached.rawClaudeJson,
+          tokenUsage: cached.tokenUsage,
+          analysisSavedAt: cached.savedAt,
+          loadedFromCache: true,
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [matches]);
+
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
     setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
   }
