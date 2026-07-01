@@ -7,6 +7,7 @@ import {
   STATUS_META,
   timingBand,
   isMatchBlocked,
+  isMatchCompleted,
   type AnalysedMatch,
   type TimingBand,
 } from "@/lib/fixtures";
