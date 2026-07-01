@@ -180,9 +180,6 @@ interface MatchState {
   lastRunAt: number | null;
   analysisSavedAt: number | null; // when the persisted result was written
   loadedFromCache: boolean; // true when analysisResult was hydrated from localStorage
-  analysisJobId: string | null; // id of the in-flight background analysis job
-  analysisCompletedAway: boolean; // job finished while the tab was backgrounded
-  pollStalled: boolean; // polling failed 5x in a row — show a Retry button
   usedFallbackModel: boolean; // analysis completed on the fallback model
   fallbackReason: string | null;
 }
@@ -201,28 +198,9 @@ const EMPTY_MATCH_STATE: MatchState = {
   lastRunAt: null,
   analysisSavedAt: null,
   loadedFromCache: false,
-  analysisJobId: null,
-  analysisCompletedAway: false,
-  pollStalled: false,
   usedFallbackModel: false,
   fallbackReason: null,
 };
-
-// ─────────────────────────────────────────────────────────────
-// Background-analysis polling
-// ─────────────────────────────────────────────────────────────
-interface PollController {
-  timer: ReturnType<typeof setInterval> | null;
-  jobId: string;
-  failCount: number;
-  startedAt: number;
-  canceled: boolean;
-  inFlight: boolean;
-}
-
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_FAILURES = 5;
-const jobStorageKey = (matchId: number) => `edge_job_${matchId}`;
 
 type Tab = "analysis" | "log";
 type View = "fixtures" | "match";
