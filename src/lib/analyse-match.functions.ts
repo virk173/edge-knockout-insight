@@ -99,7 +99,7 @@ export const analyseMatch = createServerFn({ method: "POST" })
             "Content-Type": "application/json",
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31",
+            "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11",
           },
           body: requestBody,
           signal: controller.signal,
