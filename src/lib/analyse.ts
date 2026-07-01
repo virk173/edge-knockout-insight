@@ -41,6 +41,11 @@ export interface CallResult {
   status: CallStatus;
   data?: unknown;
   error?: string;
+  // True when this result was loaded from the persistent per-call cache rather
+  // than freshly fetched during this run. Drives the "CACHED" panel badge.
+  cached?: boolean;
+  // Epoch ms the underlying data was fetched (from cache metadata or now()).
+  fetchedAt?: number;
 }
 
 export interface ProgressUpdate {
