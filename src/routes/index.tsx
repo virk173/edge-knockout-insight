@@ -1281,6 +1281,16 @@ function MatchView({
   const callsReady = !!panelSummary && panelSummary.mandatoryReady;
   const running = state.progress !== null;
 
+  // Interrupted-pipeline detection: some calls FAILED while others SUCCEEDED —
+  // the pipeline didn't complete cleanly (e.g. tab backgrounded mid-run).
+  const failedCount = panelSummary
+    ? panelSummary.rows.filter((r) => r.status === "FAILED").length
+    : 0;
+  const succeededCount = panelSummary
+    ? panelSummary.rows.filter((r) => r.status === "SUCCESS" || r.status === "CACHED").length
+    : 0;
+  const pipelineInterrupted = !running && failedCount > 0 && succeededCount > 0;
+
   // S3 lineup status for the manual-entry fallback.
   const c6 = state.collection?.callResults["6"];
   const lineupPending = !!state.collection && (!c6 || c6.status !== "SUCCESS");
