@@ -2803,7 +2803,7 @@ export interface CallDisplaySpec {
 
 export const CALL_DISPLAY_SPECS: CallDisplaySpec[] = [
   // ---- API-FOOTBALL ----
-  { id: "C1", label: "Fixtures", api: "API-FOOTBALL", keys: ["C1"], mandatory: true },
+  { id: "C1", label: "Fixture verification", api: "API-FOOTBALL", keys: ["C1"], mandatory: true, retryKey: "C1" },
   { id: "C3", label: "Head to Head", api: "API-FOOTBALL", keys: ["3"], mandatory: false, retryKey: "3" },
   { id: "C4", label: "Last 5 Form", api: "API-FOOTBALL", keys: ["4-1", "4-2", "4-3"], mandatory: false, retryKey: "4" },
   { id: "C5", label: "Injuries", api: "API-FOOTBALL", keys: ["5"], mandatory: false, retryKey: "5" },
