@@ -1303,10 +1303,17 @@ async function fetchApiFootballLineupFallback(match: {
   try {
     raw = await afGet(`/fixtures/lineups?fixture=${match.id}`);
   } catch (e) {
-    console.warn("[S3 lineups/AF-fallback] request failed", e);
+    console.warn(
+      `[S3 lineups/AF-fallback] request failed for fixture=${match.id} (${match.home} vs ${match.away})`,
+      e,
+    );
     return null;
   }
   const entries = extractArray(raw);
+  console.log(
+    `[S3 lineups/AF-fallback] API-Football /fixtures/lineups?fixture=${match.id} ` +
+      `(${match.home} vs ${match.away}) returned ${entries.length} team block(s).`,
+  );
   if (entries.length < 2) return null;
 
   const mapPlayer = (p: unknown) => {
