@@ -2130,7 +2130,9 @@ export async function collectMatchData(
     } finally {
       currentDebugCall = null;
     }
+    }
   }
+
 
   // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
   // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists, and
