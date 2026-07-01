@@ -1473,8 +1473,35 @@ function MatchView({
                 <p className="mt-2 font-mono text-xs text-slate">
                   Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </p>
+                <p className="mt-1 font-mono text-[11px] text-slate/80">
+                  Runs on the server — safe to switch tabs or lock your phone. The
+                  result loads automatically when you return.
+                </p>
               </div>
             )}
+
+            {state.pollStalled && (
+              <div className="flex flex-col gap-2 rounded-md border border-signal-red/50 bg-signal-red/10 px-3 py-3">
+                <p className="font-mono text-xs font-semibold text-signal-red">
+                  ⚠️ Lost connection to the analysis. Your job may still be
+                  running on the server.
+                </p>
+                <button
+                  type="button"
+                  onClick={onResumePoll}
+                  className="self-start rounded-md border border-signal-red bg-signal-red/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-signal-red transition-opacity hover:opacity-90"
+                >
+                  ↻ Retry
+                </button>
+              </div>
+            )}
+
+            {state.analysisCompletedAway && state.analysisResult !== null && (
+              <div className="rounded-md border border-signal-green/50 bg-signal-green/10 px-3 py-2 font-mono text-xs font-semibold text-signal-green">
+                ✓ Analysis completed while you were away
+              </div>
+            )}
+
 
             {state.billingError && (
               <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
