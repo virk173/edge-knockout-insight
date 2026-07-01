@@ -2067,6 +2067,7 @@ export async function collectMatchData(
       total: TOTAL_STEPS,
       label: "Fetching Pinnacle odds (TheStatsAPI)...",
     });
+    if (!tryLoadCache("9B")) {
     currentDebugCall = "9B";
     // Spacing between TheStatsAPI calls is handled centrally in saGet
     // (STATSAPI_DELAY_MS); no extra burst cool-down needed here.
