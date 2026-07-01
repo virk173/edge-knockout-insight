@@ -34,7 +34,14 @@ export interface ClaudeMessageResponse {
 }
 
 export type ClaudeCallResult =
-  | { ok: true; data: ClaudeMessageResponse }
+  | {
+      ok: true;
+      data: ClaudeMessageResponse;
+      // Set when attempts on the primary model timed out / failed and the
+      // fallback model produced the result. The client surfaces an amber banner.
+      used_fallback_model?: boolean;
+      fallback_reason?: string;
+    }
   | {
       ok: false;
       error: string;
@@ -43,7 +50,28 @@ export type ClaudeCallResult =
     };
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+const FALLBACK_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MAX_TOKENS = 8000;
+
+// Per-attempt timeout. 60s is generous for ~18.6k input tokens (typical
+// response is 15-30s) and gives a CLEAN failure well before any worker-isolate
+// restart risk — a shorter total run means the in-memory job store is far less
+// likely to be swept out from under a still-running request (the real cause of
+// the old "Job expired" reports on 3-minute calls).
+const TIMEOUT_MS = 60_000;
+const WAIT_BETWEEN_MS = 10_000;
+const TIMEOUT_MESSAGE =
+  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 60s each). Please retry.";
+
+// Retry plan: primary model twice, then the fallback model once.
+// Attempt 1: claude-sonnet-4-6  (60s)  -> wait 10s
+// Attempt 2: claude-sonnet-4-6  (60s)  -> wait 10s
+// Attempt 3: claude-sonnet-4-5  (60s)  [fallback]
+// Total maximum ~210s before a clean "failed".
+interface Attempt {
+  model: string;
+  isFallback: boolean;
+}
 
 export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResult> {
   const apiKey = process.env.ANTHROPIC_KEY;
@@ -54,45 +82,31 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     };
   }
 
-  const model =
+  const primaryModel =
     typeof input.model === "string" && input.model.trim() ? input.model : DEFAULT_MODEL;
   const maxTokens =
     typeof input.maxTokens === "number" && input.maxTokens > 0
       ? input.maxTokens
       : DEFAULT_MAX_TOKENS;
 
-  // Anthropic sits behind Cloudflare; during peak load / degraded service the
-  // response can exceed the normal 15-30s window. Cap each request at 3 minutes
-  // and retry ONCE (after 10s) for transient timeouts / 5xx before surfacing a
-  // clear error.
-  const TIMEOUT_MS = 180_000;
-  const TIMEOUT_MESSAGE =
-    "Analysis timed out after 3 minutes. Anthropic API may be experiencing slow response times. Check status.anthropic.com and retry.";
+  const buildBody = (model: string): string =>
+    JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      // Prompt caching (REST format): system is an array of content blocks and
+      // cache_control is attached to the block, not the top level. TTL "1h"
+      // keeps the large static system prompt warm across same-day matches.
+      system: [
+        {
+          type: "text",
+          text: input.systemPrompt,
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+      ],
+      messages: [{ role: "user", content: input.userMessage }],
+    });
 
-  const requestBody = JSON.stringify({
-    model,
-    max_tokens: maxTokens,
-    // Prompt caching (REST format): system is an array of content blocks and
-    // cache_control is attached to the block, not the top level. The large,
-    // static system prompt is cached so subsequent calls read it instead of
-    // re-processing all its tokens.
-    //
-    // TTL is set to "1h" (extended cache) instead of the default 5 minutes.
-    // Writing a 1h cache costs slightly more, but it keeps the system prompt
-    // warm across same-day matches that kick off 1-3 hours apart — worth it
-    // whenever 2+ matches are analysed within an hour in the same session.
-    // Requires the "extended-cache-ttl-2025-04-11" beta header below.
-    system: [
-      {
-        type: "text",
-        text: input.systemPrompt,
-        cache_control: { type: "ephemeral", ttl: "1h" },
-      },
-    ],
-    messages: [{ role: "user", content: input.userMessage }],
-  });
-
-  const callAnthropic = async (): Promise<Response> => {
+  const callAnthropic = async (model: string): Promise<Response> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
@@ -104,7 +118,7 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11",
         },
-        body: requestBody,
+        body: buildBody(model),
         signal: controller.signal,
       });
     } finally {
@@ -113,36 +127,82 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
   };
 
   const isTransient = (status: number) =>
-    status === 524 || status === 529 || status === 503 || status === 502;
+    status === 524 || status === 529 || status === 503 || status === 502 || status === 429;
 
-  let response: Response;
-  try {
-    response = await callAnthropic();
-    if (isTransient(response.status)) {
-      console.warn(`callClaude: transient ${response.status} — retrying in 10s`);
-      await new Promise((r) => setTimeout(r, 10_000));
-      response = await callAnthropic();
-    }
-  } catch (err) {
-    const isAbort = err instanceof Error && err.name === "AbortError";
-    if (isAbort) {
-      console.error("callClaude: Anthropic request timed out after 180s", err);
-      return { ok: false, error_type: "TIMEOUT", error: TIMEOUT_MESSAGE };
-    }
+  const attempts: Attempt[] = [
+    { model: primaryModel, isFallback: false },
+    { model: primaryModel, isFallback: false },
+    { model: FALLBACK_MODEL, isFallback: true },
+  ];
+
+  let lastError = "The analysis service did not return a response.";
+  let lastErrorType: "TIMEOUT" | undefined;
+  let lastStatus: number | undefined;
+  let primaryTimeouts = 0;
+  let primaryFailures = 0;
+
+  for (let i = 0; i < attempts.length; i++) {
+    const { model, isFallback } = attempts[i];
+
+    let response: Response | null = null;
     try {
-      await new Promise((r) => setTimeout(r, 10_000));
-      response = await callAnthropic();
-    } catch (retryErr) {
-      console.error("callClaude: network error calling Anthropic", retryErr);
-      return { ok: false, error: "Failed to reach the Anthropic API." };
+      response = await callAnthropic(model);
+    } catch (err) {
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (isAbort) {
+        console.error(
+          `callClaude: attempt ${i + 1}/${attempts.length} (${model}) timed out after ${TIMEOUT_MS}ms`,
+        );
+        lastError = TIMEOUT_MESSAGE;
+        lastErrorType = "TIMEOUT";
+        if (!isFallback) primaryTimeouts += 1;
+      } else {
+        console.error(
+          `callClaude: attempt ${i + 1}/${attempts.length} (${model}) network error`,
+          err,
+        );
+        lastError = "Failed to reach the Anthropic API.";
+        if (!isFallback) primaryFailures += 1;
+      }
+      if (i < attempts.length - 1) {
+        await new Promise((r) => setTimeout(r, WAIT_BETWEEN_MS));
+        continue;
+      }
+      break;
     }
-  }
 
-  const payload = await response.json().catch(() => null);
+    const payload = await response.json().catch(() => null);
 
-  if (!response.ok) {
-    console.error("callClaude: Anthropic API error", response.status, payload);
+    if (response.ok) {
+      const result: ClaudeCallResult = {
+        ok: true,
+        data: (payload ?? {}) as ClaudeMessageResponse,
+      };
+      if (isFallback) {
+        result.used_fallback_model = true;
+        const reasons: string[] = [];
+        if (primaryTimeouts > 0)
+          reasons.push(`${primaryModel} timed out ${primaryTimeouts}x`);
+        if (primaryFailures > 0)
+          reasons.push(`${primaryModel} errored ${primaryFailures}x`);
+        result.fallback_reason =
+          reasons.length > 0 ? reasons.join(" and ") : `${primaryModel} did not respond`;
+        console.warn(
+          `callClaude: succeeded on fallback ${FALLBACK_MODEL} — ${result.fallback_reason}`,
+        );
+      }
+      return result;
+    }
+
+    // Non-OK response — decide whether it is worth retrying.
+    console.error(
+      `callClaude: attempt ${i + 1}/${attempts.length} (${model}) API error`,
+      response.status,
+      payload,
+    );
     const apiError = (payload as { error?: { type?: string; message?: string } } | null)?.error;
+
+    // Billing / auth failures will NOT be fixed by retrying — fail fast.
     if (
       response.status === 400 &&
       apiError?.type === "invalid_request_error" &&
@@ -157,20 +217,27 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
         status: 400,
       };
     }
-    if (response.status === 429) {
-      return { ok: false, error: "Rate limit exceeded. Please try again shortly.", status: 429 };
-    }
-    if (isTransient(response.status)) {
-      return {
-        ok: false,
-        error_type: "TIMEOUT",
-        error: TIMEOUT_MESSAGE,
-        status: response.status,
-      };
-    }
     if (response.status === 401) {
       return { ok: false, error: "Invalid Anthropic API key.", status: 401 };
     }
+
+    // Transient (5xx / 429): remember and retry the next attempt.
+    if (isTransient(response.status)) {
+      lastError =
+        response.status === 429
+          ? "Rate limit exceeded. Please try again shortly."
+          : TIMEOUT_MESSAGE;
+      lastErrorType = response.status === 429 ? undefined : "TIMEOUT";
+      lastStatus = response.status;
+      if (!isFallback) primaryFailures += 1;
+      if (i < attempts.length - 1) {
+        await new Promise((r) => setTimeout(r, WAIT_BETWEEN_MS));
+        continue;
+      }
+      break;
+    }
+
+    // Any other non-OK status is not retryable.
     return {
       ok: false,
       error: "The analysis service returned an error.",
@@ -178,5 +245,6 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     };
   }
 
-  return { ok: true, data: (payload ?? {}) as ClaudeMessageResponse };
+  // All attempts exhausted — ALWAYS a clean terminal result, never a silent hang.
+  return { ok: false, error: lastError, error_type: lastErrorType, status: lastStatus };
 }
