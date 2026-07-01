@@ -1019,8 +1019,13 @@ Start your response with { and end with }.`;
                 // optimal lineup window.
                 const canAct = !debugMode && !blocked;
                 const runningThis = isActive && progress !== null;
+                const panelSummary =
+                  isActive && collection
+                    ? buildCallPanelSummary(collection.callResults)
+                    : null;
+                // Analyse is available once all MANDATORY calls have data.
                 const callsReady =
-                  isActive && collection !== null && !collectError;
+                  isActive && !!panelSummary && panelSummary.mandatoryReady;
                 return (
                   <li
                     key={m.id}
