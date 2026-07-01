@@ -2882,7 +2882,8 @@ export interface CallPanelSummary {
   successCount: number;
   cachedCount: number;
   mandatoryReady: boolean;
-  notReadyMandatory: string[]; // display ids of mandatory calls without data
+  notReadyMandatory: string[]; // display ids of mandatory calls that never ran or hard-failed
+  emptyMandatory: string[]; // display ids of mandatory calls that ran but returned no data
   failedOptional: string[]; // display ids of optional calls that FAILED
 }
 
@@ -2904,12 +2905,20 @@ export function buildCallPanelSummary(
     };
   });
 
-  const has = (s: DisplayStatus) => s === "SUCCESS" || s === "CACHED";
+  // A mandatory call is "ready" once it has actually run — SUCCESS, CACHED, or
+  // EMPTY (ran but no data, e.g. odds not posted yet for tomorrow's match).
+  // Only a call that never ran (PENDING) or hard-failed (FAILED/BLOCKED/MISMATCH)
+  // blocks analysis. Claude tolerates NOT_AVAILABLE for empty inputs.
+  const ready = (s: DisplayStatus) =>
+    s === "SUCCESS" || s === "CACHED" || s === "EMPTY";
   const successCount = rows.filter((r) => r.status === "SUCCESS").length;
   const cachedCount = rows.filter((r) => r.status === "CACHED").length;
 
   const notReadyMandatory = rows
-    .filter((r) => r.spec.mandatory && !has(r.status))
+    .filter((r) => r.spec.mandatory && !ready(r.status))
+    .map((r) => r.spec.id);
+  const emptyMandatory = rows
+    .filter((r) => r.spec.mandatory && r.status === "EMPTY")
     .map((r) => r.spec.id);
   const failedOptional = rows
     .filter((r) => !r.spec.mandatory && r.status === "FAILED")
@@ -2922,6 +2931,7 @@ export function buildCallPanelSummary(
     cachedCount,
     mandatoryReady: notReadyMandatory.length === 0,
     notReadyMandatory,
+    emptyMandatory,
     failedOptional,
   };
 }
