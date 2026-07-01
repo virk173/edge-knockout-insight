@@ -393,16 +393,22 @@ Layer 2 — Joint probability:
     Weak positive x1.02
       strict referee + over 3.5 cards
     None x1.00
-  P_joint = P_independent x corr_factor
-  P_final = P_joint x (1 - hold_rate)
-  effective_sgp = stake_sgp
-    x (1 - hold_rate) x 1.05
+  p_joint = P_independent x corr_factor
+  hold_rate is DIAGNOSTIC ONLY. Do NOT
+    apply (1 - hold_rate) to p_joint,
+    and do NOT apply it to the price.
+    The hold is already embedded in the
+    offered stake_sgp price.
 Do NOT compute parlay EV. Output:
-  parlay_ev_inputs: { p_final,
-    effective_sgp_price }
+  parlay_ev_inputs: { p_joint, stake_sgp }
+    where stake_sgp is the actual offered
+    SGP decimal price (as shown on Stake).
 The app computes
-  parlay_EV = (p_final x price) - 1.
+  parlay_ev = (p_joint x stake_sgp) - 1.
   Minimum parlay EV: 0.05
+Put hold_rate ONLY in sgp_validation as
+  a diagnostic (how much the SGP builder
+  skims) — never in the EV inputs.
 For Tier 3 jackpot likewise output:
   jackpot_ev_inputs: { p_final,
     combined_odds }
