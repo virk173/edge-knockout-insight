@@ -988,6 +988,7 @@ function FixturesView({
           <ul className="flex w-full flex-col gap-3">
             {sorted.map((m) => {
               const minsToKickoff = minutesUntil(m.kickoffUtc, now);
+              const completed = isMatchCompleted(m.statusShort, minsToKickoff);
               const blocked = isMatchBlocked(m.statusShort, minsToKickoff);
               const band = timingBand(minsToKickoff, blocked);
               const meta = STATUS_META[m.status];
