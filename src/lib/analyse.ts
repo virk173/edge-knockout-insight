@@ -1856,6 +1856,68 @@ export async function collectMatchData(
 
   // ---- STEP 1: data calls ----
 
+  // C1 FIXTURE VERIFICATION (runs FIRST). Confirms the resolved API-Football
+  // fixture id actually belongs to the teams we intend to analyse. Every
+  // API-Football id-dependent call (C3/C4/C5/C7/C8/C9A/C10) is BLOCKED if this
+  // fails, so we never silently analyse the wrong match.
+  let fixtureVerified = true;
+  let fixtureMismatchReason: string | null = null;
+  {
+    stepKeys.push("C1");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Verifying fixture id (C1)...",
+    });
+    if (tryLoadCache("C1")) {
+      // A cached FAILED is never persisted, so a cache hit means SUCCESS or an
+      // inconclusive EMPTY — neither should block.
+      fixtureVerified = callResults["C1"]?.status !== "FAILED";
+    } else {
+      currentDebugCall = "C1";
+      try {
+        const v = await verifyFixtureById(match);
+        const inconclusive = v.reason.startsWith("INCONCLUSIVE");
+        if (v.verified) {
+          fixtureVerified = true;
+          record("C1", "Fixture verification", "SUCCESS", v);
+        } else if (inconclusive) {
+          // Fail-safe: an unreadable verification response must NOT block the
+          // whole run. Proceed with a caveat.
+          fixtureVerified = true;
+          record("C1", "Fixture verification", "EMPTY", v, v.reason);
+        } else {
+          fixtureVerified = false;
+          fixtureMismatchReason = v.reason;
+          record("C1", "Fixture verification", "FAILED", v, v.reason);
+          console.error(`[analyse] C1 FIXTURE MISMATCH — ${v.reason}`);
+        }
+      } catch (e) {
+        // Verification call itself errored (network / rate limit). Inconclusive
+        // → do not block; the dependent calls proceed with a caveat row.
+        fixtureVerified = true;
+        record(
+          "C1",
+          "Fixture verification",
+          "EMPTY",
+          undefined,
+          `Verification inconclusive — ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        currentDebugCall = null;
+      }
+    }
+  }
+
+  // Block opts for any API-Football call that depends on the C1 fixture id.
+  const blockOpts = fixtureVerified
+    ? {}
+    : {
+        block: true,
+        blockReason: `C1 fixture mismatch, cannot proceed. ${fixtureMismatchReason ?? ""}`.trim(),
+      };
+
+
   // S0: resolve the TheStatsAPI match (id + per-team ids). Everything sourced
   // from TheStatsAPI (team stats, lineups, player stats, Pinnacle) depends on
   // this. Recorded as its own debug row so the report shows S0 explicitly.
