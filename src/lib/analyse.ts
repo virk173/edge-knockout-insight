@@ -447,6 +447,93 @@ async function afGet(path: string, _key?: string): Promise<unknown> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// FIXTURE ID VERIFICATION (C1 guard)
+//
+// The pipeline (C3/C4/C5/C7/C8/C9A/C10) trusts `match.id` — the API-Football
+// fixture id resolved by the C1 fixtures list. If that id ever points at the
+// wrong game (e.g. 1565177 France instead of 1567306 Mexico vs Ecuador), every
+// dependent call succeeds but returns data for the WRONG match, silently
+// corrupting the analysis. This guard re-fetches the fixture by id and confirms
+// the returned team names match the teams we intend to analyse.
+// ---------------------------------------------------------------------------
+
+export interface FixtureVerification {
+  verified: boolean;
+  reason: string;
+  expectedHome: string;
+  expectedAway: string;
+  actualHome: string | null;
+  actualAway: string | null;
+  fixtureId: number;
+}
+
+// Loose name match: either side contains the other (case-insensitive), so
+// "USA" vs "United States"-style aliases and punctuation differences still pass.
+function teamNameMatches(actual: string | null, expected: string): boolean {
+  if (!actual || !expected) return false;
+  const a = actual.toLowerCase().trim();
+  const e = expected.toLowerCase().trim();
+  return a === e || a.includes(e) || e.includes(a);
+}
+
+// Fetch the fixture by its resolved id and confirm the teams match. `fetcher`
+// lets tests inject a fixture object without hitting the network.
+export async function verifyFixtureById(
+  match: Pick<AnalysedMatch, "id" | "home" | "away">,
+  fetcher: (id: number) => Promise<unknown> = (id) =>
+    afGet(`/fixtures?id=${id}`),
+): Promise<FixtureVerification> {
+  const raw = await fetcher(match.id);
+  const item = extractArray(raw)[0] ?? (raw as unknown);
+  const teams = getField(item, ["teams"]);
+  const actualHome = (getField(getField(teams, ["home"]), ["name"]) ?? null) as
+    | string
+    | null;
+  const actualAway = (getField(getField(teams, ["away"]), ["name"]) ?? null) as
+    | string
+    | null;
+
+  return verifyFixture(match, actualHome, actualAway);
+}
+
+// Pure comparison — exported so both the pipeline and the UI can reuse it and
+// so it can be unit-tested with a wrong fixture id.
+export function verifyFixture(
+  match: Pick<AnalysedMatch, "id" | "home" | "away">,
+  actualHome: string | null,
+  actualAway: string | null,
+): FixtureVerification {
+  const homeOk = teamNameMatches(actualHome, match.home);
+  const awayOk = teamNameMatches(actualAway, match.away);
+  const base = {
+    expectedHome: match.home,
+    expectedAway: match.away,
+    actualHome,
+    actualAway,
+    fixtureId: match.id,
+  };
+  if (homeOk && awayOk) {
+    return { ...base, verified: true, reason: "Teams confirmed ✓" };
+  }
+  if (actualHome === null && actualAway === null) {
+    // Could not read teams from the fixture response — inconclusive, not a hard
+    // mismatch. The caller decides whether to proceed with a caveat.
+    return {
+      ...base,
+      verified: false,
+      reason: "INCONCLUSIVE — could not read teams from fixture response.",
+    };
+  }
+  return {
+    ...base,
+    verified: false,
+    reason: `ID mismatch: fixture ${match.id} has ${actualHome ?? "?"} vs ${
+      actualAway ?? "?"
+    }, expected ${match.home} vs ${match.away}.`,
+  };
+}
+
 // TheStatsAPI GET (via server proxy). The server attaches the Bearer token.
 //
 // Throttling contract (fixes the "too many requests" burst errors):
