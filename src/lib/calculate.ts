@@ -66,6 +66,32 @@ export function computeEv(
   return round(p * o - 1);
 }
 
+/**
+ * Single-bet EV from a raw-variable object (EvInputs shape).
+ * Thin, object-input wrapper over computeEv so call sites and tests can use
+ * the same { model_probability, decimal_odds } convention as the rest of the
+ * codebase. Returns a concrete number: an invalid/empty input floors to -1
+ * (total stake loss), never NaN or undefined.
+ */
+export function calculateEV(inputs: {
+  model_probability?: number;
+  decimal_odds?: number;
+}): number {
+  return computeEv(inputs.model_probability, inputs.decimal_odds) ?? -1;
+}
+
+/**
+ * Same-game-parlay / parlay EV from raw variables (ParlayEvInputs shape):
+ *   ev = p_final × effective_sgp_price − 1
+ * Identical math to a single bet; kept as a named export for call-site clarity.
+ */
+export function calculateSGPEV(inputs: {
+  p_final?: number;
+  effective_sgp_price?: number;
+}): number {
+  return computeEv(inputs.p_final, inputs.effective_sgp_price) ?? -1;
+}
+
 // ─────────────────────────────────────────────────────────────
 // 1b — Stake-anchoring bias correction.
 //   EV is computed against Stake's line. When a Pinnacle (sharp)
