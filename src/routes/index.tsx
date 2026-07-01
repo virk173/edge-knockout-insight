@@ -655,11 +655,10 @@ Start your response with { and end with }.`;
           : prev,
       );
       setApiCalls(getApiCallCount());
-      const merged = { ...(collection?.callResults ?? {}), ...updated };
       const ok = Object.values(updated).some((r) => r.status === "SUCCESS");
       if (ok) toast.success(`Retried ${retryKey} — updated`);
       else toast.warning(`Retried ${retryKey} — still no data`);
-      void merged;
+
     } catch (e) {
       toast.error(`Retry failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
