@@ -1829,11 +1829,21 @@ export async function collectMatchData(
     key: string,
     label: string,
     fn: () => Promise<unknown>,
-    opts: { skip?: boolean; skipReason?: string } = {},
+    opts: {
+      skip?: boolean;
+      skipReason?: string;
+      block?: boolean;
+      blockReason?: string;
+    } = {},
   ) => {
     stepKeys.push(key);
     const step = stepKeys.length;
     onProgress({ step, total: TOTAL_STEPS, label });
+    // A blocked call (C1 fixture mismatch) must NEVER fire its HTTP request.
+    if (opts.block) {
+      record(key, label, "BLOCKED", undefined, opts.blockReason);
+      return;
+    }
     if (opts.skip) {
       record(key, label, "SKIPPED", undefined, opts.skipReason);
       return;
