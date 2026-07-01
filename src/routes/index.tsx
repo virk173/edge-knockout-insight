@@ -1577,6 +1577,14 @@ function MatchView({
                       state.analysisResult as AnalysisResult,
                       state.analysisRaw ?? "",
                       state.lastRunAt ? new Date(state.lastRunAt) : new Date(),
+                      {
+                        home: match.home,
+                        away: match.away,
+                        venueName: match.venueName,
+                        venueCity: match.venueCity,
+                        referee: match.referee,
+                        fixtureId: match.id,
+                      },
                     );
                     navigator.clipboard
                       .writeText(report)
