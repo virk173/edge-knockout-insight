@@ -82,14 +82,29 @@ export function calculateEV(inputs: {
 
 /**
  * Same-game-parlay / parlay EV from raw variables (ParlayEvInputs shape):
- *   ev = p_final × effective_sgp_price − 1
- * Identical math to a single bet; kept as a named export for call-site clarity.
+ *   parlay_ev = p_joint × stake_sgp − 1
+ *
+ * CRITICAL — the hold_rate (the bookmaker's SGP margin) is ALREADY embedded in
+ * the offered `stake_sgp` price. It must NOT be subtracted again from either the
+ * probability or the price. Applying (1 − hold_rate) twice (the old
+ * p_final / effective_sgp_price formula) mechanically drove every parlay to
+ * ≈ −0.39 regardless of the match. hold_rate is retained as a DIAGNOSTIC field
+ * only (surfaced so the user sees how much the SGP builder skims) and never
+ * enters this calculation.
+ *
+ * Legacy `p_final` / `effective_sgp_price` inputs are accepted as a fallback so
+ * older cached results still render, but new analyses supply p_joint + stake_sgp.
  */
 export function calculateSGPEV(inputs: {
+  p_joint?: number;
+  stake_sgp?: number;
+  // legacy (deprecated) — pre-fix double-vig inputs, kept for backward-compat.
   p_final?: number;
   effective_sgp_price?: number;
 }): number {
-  return computeEv(inputs.p_final, inputs.effective_sgp_price) ?? -1;
+  const prob = inputs.p_joint ?? inputs.p_final;
+  const price = inputs.stake_sgp ?? inputs.effective_sgp_price;
+  return computeEv(prob, price) ?? -1;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -677,13 +692,15 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     t1.active = adjustment.adjusted_ev >= 0.05;
   }
 
-  // 2 — Parlay EV
+  // 2 — Parlay EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate term;
+  // the hold is already priced into stake_sgp). Falls back to the legacy
+  // p_final / effective_sgp_price pair only for old cached results.
   const t2 = result.tier_2_parlay;
   if (t2?.parlay_ev_inputs) {
-    const ev = computeEv(
-      t2.parlay_ev_inputs.p_final,
-      t2.parlay_ev_inputs.effective_sgp_price,
-    );
+    const pj = t2.parlay_ev_inputs.p_joint ?? t2.parlay_ev_inputs.p_final;
+    const sp =
+      t2.parlay_ev_inputs.stake_sgp ?? t2.parlay_ev_inputs.effective_sgp_price;
+    const ev = computeEv(pj, sp);
     if (ev !== undefined) t2.parlay_ev = ev;
   }
 

@@ -16,6 +16,11 @@ export interface EvInputs {
 }
 
 export interface ParlayEvInputs {
+  // Correct inputs: parlay_ev = p_joint × stake_sgp − 1.
+  p_joint?: number;
+  stake_sgp?: number;
+  hold_rate?: number; // diagnostic only — the SGP margin, NOT used in the EV math
+  // Legacy (deprecated) double-vig inputs, retained so old cached results render.
   p_final?: number;
   effective_sgp_price?: number;
 }
