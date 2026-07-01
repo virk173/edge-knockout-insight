@@ -1120,15 +1120,16 @@ function MatchView({
             </button>
 
             {state.analysing && (
-              <div className="flex items-center gap-3 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
-                <p className="font-mono text-sm text-accent-amber">
-                  {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
-                </p>
-                <span className="ml-auto font-mono text-xs text-slate">
-                  Elapsed: {analysisElapsedSec}s / 3:00 max
+              <div className="rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+                  <p className="font-mono text-sm text-accent-amber">
+                    {CLAUDE_LOADING_MESSAGES[analysisMsgIndex]}
+                  </p>
+                </div>
+                <p className="mt-2 font-mono text-xs text-slate">
                   Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
-                </span>
+                </p>
               </div>
             )}
 
