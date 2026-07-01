@@ -1526,6 +1526,15 @@ function MatchView({
               </div>
             )}
 
+            {state.usedFallbackModel && state.analysisResult !== null && (
+              <div className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 font-mono text-xs font-semibold text-accent-amber">
+                ⚠ Completed on fallback model (claude-sonnet-4-5)
+                {state.fallbackReason ? ` — ${state.fallbackReason}` : ""}
+              </div>
+            )}
+
+
+
 
             {state.billingError && (
               <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
