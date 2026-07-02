@@ -562,7 +562,7 @@ function Index() {
         matchId: match.id,
         match: `${match.home} vs ${match.away}`,
         result: normalized,
-        rawClaudeJson: cleaned,
+        rawClaudeJson: rawJson,
         sgpChain: extractSgpChain(normalized),
         tokenUsage,
         responseTimeMs,
