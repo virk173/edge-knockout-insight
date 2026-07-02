@@ -854,6 +854,12 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // Auto-generate verified Stake stake_labels for each SGP leg.
+  if (Array.isArray(b3?.legs)) {
+    for (const leg of b3.legs) applyStakeLabel(leg);
+  }
+
+
   // ── bet_4 — jackpot EV
   const b4 = result.bet_4;
   if (b4?.jackpot_ev_inputs) {
