@@ -75,7 +75,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
 
   const rows: TopBetRow[] = [];
 
-  if (b1?.active) {
+  if (b1.active) {
     rows.push({
       key: "bet1",
       label: "BET 1",
