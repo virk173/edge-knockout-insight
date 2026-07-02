@@ -267,7 +267,7 @@ function Index() {
 
   useEffect(() => {
     setApiCalls(getApiCallCount());
-    setLogEntries(getLogEntries());
+    setLogEntries(settleClvAll());
     // One-time cleanup: the old background-job pattern wrote edge_job_* keys.
     // That pattern no longer exists (analysis is a direct synchronous call), so
     // purge any stale entries left over from a previous version.
