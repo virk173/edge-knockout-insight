@@ -8,7 +8,6 @@ import type {
   AnalysisResult,
   Absence,
   ConfidenceAdjustment,
-  TierLeg,
 } from "@/lib/analysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
