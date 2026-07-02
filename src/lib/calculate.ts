@@ -720,6 +720,30 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
 
   const result = clone(rawOutput) as AnalysisResult;
 
+  // Parse home/away team names from the "Home vs Away" match string so
+  // stake_labels can be generated from the verified Stake glossary.
+  const matchStr = typeof result.match === "string" ? result.match : "";
+  const vsSplit = matchStr.split(/\s+vs\.?\s+/i);
+  const homeTeam = (vsSplit[0] ?? "Home").trim() || "Home";
+  const awayTeam = (vsSplit[1] ?? "Away").trim() || "Away";
+
+  // Generate a verified Stake stake_label from a bet/leg's market + selection.
+  const applyStakeLabel = (item: {
+    market?: string;
+    selection?: string;
+    stake_label?: string;
+  }) => {
+    if (!item?.market) return;
+    const marketType = resolveMarketType(item.market);
+    if (!marketType) return;
+    item.stake_label = generateStakeLabel(
+      marketType,
+      item.selection ?? "",
+      homeTeam,
+      awayTeam,
+    );
+  };
+
   // ── Straight-bet enrichment (bet_1 + bet_2) ──────────────────
   // Both are single-market straight bets: compute EV, apply the Pinnacle-gap
   // bias correction, then Kelly-size the stake from the ADJUSTED EV.
