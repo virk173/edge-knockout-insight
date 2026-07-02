@@ -72,6 +72,43 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MAX_TOKENS = 8000;
 
+// Native Structured Outputs (Anthropic tool use). We force this single tool so
+// the model's response is a real JSON object on a `tool_use` block instead of a
+// free-form text blob that needs fence-stripping / brace-slicing. The schema is
+// intentionally SHALLOW (loose object/array/string leaves, additionalProperties
+// everywhere): it removes markdown noise and guarantees the top-level shape
+// without over-constraining the model — normalizeAnalysisResult() stays the
+// authoritative safety net for missing/optional keys downstream.
+const ANALYSIS_TOOL_NAME = "submit_analysis";
+
+const loose = { type: "object", additionalProperties: true } as const;
+
+const ANALYSIS_TOOL_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    match: { type: "string" },
+    kickoff_UTC: { type: "string" },
+    kickoff_local: { type: "string" },
+    round: { type: "string" },
+    classification: { type: "string" },
+    data_quality: { type: "string" },
+    ensemble_check: loose,
+    confidence_scores: loose,
+    tactical_analysis: loose,
+    player_intelligence: loose,
+    bet_1: loose,
+    bet_2: loose,
+    bet_3: loose,
+    bet_4: loose,
+    markets_evaluated: { type: "array", items: { type: "string" } },
+    markets_rejected: { type: "array", items: loose },
+    key_risk_flag: { type: "string" },
+    analyst_note: { type: "string" },
+    log_entry: loose,
+  },
+} as const;
+
 // Per-attempt timeout. Generating up to 8k OUTPUT tokens is the bottleneck
 // (~60-90s), independent of Anthropic load, so 60s was too tight and every
 // attempt aborted mid-generation. 90s lets a normal response finish while still
