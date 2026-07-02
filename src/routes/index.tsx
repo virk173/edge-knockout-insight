@@ -1816,7 +1816,9 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain text={plainEnsembleAlignment(ec?.alignment ?? recomputed?.alignment)} />
         </div>
+
 
         {/* dimension_weights_validation */}
         <div>
