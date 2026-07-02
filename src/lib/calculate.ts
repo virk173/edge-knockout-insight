@@ -870,6 +870,12 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     if (ev !== undefined) b4.jackpot_ev = ev;
   }
 
+  // Auto-generate verified Stake stake_labels for each jackpot leg.
+  if (Array.isArray(b4?.legs)) {
+    for (const leg of b4.legs) applyStakeLabel(leg);
+  }
+
+
   // 3 & 5 — Gap scores + stacked multipliers per absence
   const absences = result.player_intelligence?.absences;
   if (Array.isArray(absences)) {
