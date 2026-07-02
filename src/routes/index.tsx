@@ -1217,8 +1217,29 @@ function MatchView({
   onResetBudget: () => void;
   patchState: (partial: Partial<MatchState>) => void;
 }) {
+  const [capturing, setCapturing] = useState(false);
   const minsToKickoff = minutesUntil(match.kickoffUtc, now);
   const blocked = isMatchBlocked(match.statusShort, minsToKickoff);
+
+  async function handleCaptureClosing() {
+    setCapturing(true);
+    try {
+      const cap = await captureClosingOdds(match);
+      if (!cap) {
+        toast.error("No closing prices available to capture.");
+        return;
+      }
+      const nMarkets = Object.keys(cap.prices).length;
+      toast.success(
+        `Closing line captured — ${cap.source}, ${nMarkets} market${nMarkets === 1 ? "" : "s"}, T-${cap.minutesBeforeKickoff}m`,
+      );
+    } catch (e) {
+      console.error("[clv] capture failed", e);
+      toast.error("Closing-line capture failed.");
+    } finally {
+      setCapturing(false);
+    }
+  }
   const band = timingBand(minsToKickoff, blocked);
 
   const panelSummary = state.collection
