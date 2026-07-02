@@ -99,8 +99,8 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b3?.active) {
-    const legs = b3.legs ?? [];
+  if (b3.active) {
+    const legs = b3.legs;
     const sel = legs
       .map((l: TierLeg) => l.selection || l.market)
       .filter(Boolean)
