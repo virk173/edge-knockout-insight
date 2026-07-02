@@ -9,6 +9,7 @@ import type {
   Absence,
   ConfidenceAdjustment,
 } from "@/lib/analysisResult";
+import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
