@@ -60,6 +60,8 @@ import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
   appendEnrichedResult,
+  appendActionBet,
+  updateRecommendation,
   getLogEntries,
   setRecommendationOutcome,
   clearLog,
