@@ -1670,8 +1670,8 @@ EXAMPLE OUTPUT:
       "potential_return_realistic": "$0"
     }
   },
-  "total_staked": "$40.00",
-  "unallocated_stake": "$10.00 — Tier 3 no CLASS C. Do not bet.",
+  "total_staked": "$28.00",
+  "unallocated_stake": "$22.00 — Bet 4 inactive (no CLASS C). Do not bet.",
   "markets_evaluated": [
     "1X2 France Win","1X2 Draw","1X2 Senegal",
     "Asian Handicap France -1",
