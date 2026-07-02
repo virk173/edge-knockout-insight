@@ -245,6 +245,8 @@ export interface StraightBet {
   // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
   paper_bet?: boolean;
   paper_reason?: string;
+  // Shadow Pick — best available candidate when nothing qualifies (calculate.ts).
+  shadow_pick?: boolean;
 }
 
 export interface SgpBet {
@@ -268,6 +270,8 @@ export interface SgpBet {
   // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
   paper_bet?: boolean;
   paper_reason?: string;
+  // Shadow Pick — best available candidate when nothing qualifies (calculate.ts).
+  shadow_pick?: boolean;
 }
 
 export interface JackpotBet {
@@ -286,6 +290,8 @@ export interface JackpotBet {
   // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
   paper_bet?: boolean;
   paper_reason?: string;
+  // Shadow Pick — best available candidate when nothing qualifies (calculate.ts).
+  shadow_pick?: boolean;
 }
 
 
@@ -293,6 +299,9 @@ export interface MarketRejected {
   market?: string;
   ev?: number;
   reason?: string;
+  // Raw EV inputs (model_probability + decimal_odds). When present the app can
+  // recompute EV honestly; otherwise Claude's stated `ev` is shown "(unverified)".
+  ev_inputs?: EvInputs;
 }
 
 // ─────────────────────────────────────────────────────────────

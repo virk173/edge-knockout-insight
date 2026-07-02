@@ -129,3 +129,18 @@ export function undoLastSettlement(): LedgerEntry | null {
   writeLedger(ledger.slice(0, -1));
   return last;
 }
+
+/**
+ * Reverse and remove a SPECIFIC ledger entry by id (used when an action bet's
+ * outcome is changed after settlement). Reverses its profit against the current
+ * bankroll and drops it from the ledger. No-op when the id is not found.
+ */
+export function removeLedgerEntry(id: string): LedgerEntry | null {
+  const ledger = getLedger();
+  const idx = ledger.findIndex((e) => e.id === id);
+  if (idx === -1) return null;
+  const entry = ledger[idx];
+  setBankroll(getBankroll() - entry.profit);
+  writeLedger([...ledger.slice(0, idx), ...ledger.slice(idx + 1)]);
+  return entry;
+}
