@@ -10,6 +10,7 @@ import {
   validateDimensionWeights,
   calculateResults,
   applyDeadRubberDiscount,
+  computeConfidence,
 } from "@/lib/calculate";
 import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
