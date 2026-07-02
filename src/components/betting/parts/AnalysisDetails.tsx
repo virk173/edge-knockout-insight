@@ -177,7 +177,7 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                   </span>
                   {plain && (
                     <span className="basis-full font-sans text-[11px] italic text-slate/80">
-                      {plainConfidenceAdjustment(adj.type)}
+                      {plainConfidenceAdjustment(adj.type ?? "")}
                     </span>
                   )}
                 </div>
