@@ -652,6 +652,10 @@ export function generateRunReport(
   claudeRaw: string,
   lastRunAt: Date,
   meta: RunReportMeta = {},
+  saved?: {
+    callSummary?: PersistedCallSummaryRow[];
+    keyExtracts?: PersistedKeyExtracts;
+  },
 ): string {
   const cr = callStatuses?.callResults ?? {};
   const r = normalizeAnalysisResult(analysisResult);
