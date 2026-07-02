@@ -218,6 +218,7 @@ function Index() {
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
   const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
+  const [bankroll, setBankrollState] = useState(() => getBankroll());
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
@@ -788,6 +789,28 @@ Start your response with { and end with }.`;
         </nav>
 
         <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => {
+              const input = window.prompt(
+                "Set your current bankroll ($):",
+                String(bankroll),
+              );
+              if (input === null) return;
+              const n = Number.parseFloat(input.replace(/[^0-9.]/g, ""));
+              if (!Number.isFinite(n) || n <= 0) {
+                toast.error("Enter a positive number.");
+                return;
+              }
+              setBankroll(n);
+              setBankrollState(n);
+              toast.success(`Bankroll set to $${n}`);
+            }}
+            className="rounded-md border border-accent-amber/50 px-2.5 py-1 font-mono text-xs font-semibold text-accent-amber"
+            title="Click to edit your bankroll (all stakes size from this)"
+          >
+            💰 ${bankroll}
+          </button>
           <span
             className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
             title="API-Football calls used today (resets at midnight UTC)"
