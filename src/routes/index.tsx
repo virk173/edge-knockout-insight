@@ -1544,6 +1544,9 @@ function MatchView({
                 <button
                   type="button"
                   onClick={() => {
+                    // FIX 2 — after reload state.collection is null; fall back to
+                    // the persisted call summary + key extracts from the cache.
+                    const persisted = readResultCache(match.id);
                     const report = generateRunReport(
                       `${match.home} vs ${match.away}`,
                       match.round ?? "N/A",
@@ -1559,6 +1562,10 @@ function MatchView({
                         venueCity: match.venueCity,
                         referee: match.referee,
                         fixtureId: match.id,
+                      },
+                      {
+                        callSummary: persisted?.callSummary,
+                        keyExtracts: persisted?.keyExtracts,
                       },
                     );
                     navigator.clipboard
