@@ -22,6 +22,30 @@ export interface SgpChain {
   parlay_ev: number | null;
 }
 
+/** One row of the reload-safe call-status summary (from buildCallPanelSummary). */
+export interface PersistedCallSummaryRow {
+  id: string;
+  label: string;
+  status: string;
+  cached: boolean;
+}
+
+/** Trimmed Stake-market extract (mirrors extractStakeMarkets output). */
+export interface StakeMarketsExtract {
+  bookmaker: string | null;
+  markets: Record<string, Array<{ value: string; odd: string }>>;
+}
+
+/** Reload-safe key values pulled from the live collection at save time. */
+export interface PersistedKeyExtracts {
+  odds9A: StakeMarketsExtract | null;
+  bookmaker9B: string | null;
+  isPinnacle9B: boolean;
+  lineupState: string;
+  refereeName: string | null;
+  refereeYellows: number | string | null;
+}
+
 export interface PersistedResult {
   matchId: number;
   match: string;
@@ -31,6 +55,10 @@ export interface PersistedResult {
   tokenUsage: { input: number; output: number } | null;
   responseTimeMs: number | null;
   savedAt: number; // epoch ms
+  // FIX 2 — reload-safe run-report inputs. The live collection dies on reload,
+  // so we persist a compact call summary + key extracts to rebuild the report.
+  callSummary?: PersistedCallSummaryRow[];
+  keyExtracts?: PersistedKeyExtracts;
 }
 
 function todayStr(): string {
