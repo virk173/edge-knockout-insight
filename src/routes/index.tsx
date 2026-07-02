@@ -577,10 +577,10 @@ function Index() {
         toast.success("Saved to backtesting log");
       }
     } catch {
-      const head = cleaned.slice(0, 500);
-      const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
+      const head = rawJson.slice(0, 500);
+      const tail = rawJson.length > 500 ? rawJson.slice(-500) : "";
       patchState(match.id, {
-        analysisRaw: cleaned,
+        analysisRaw: rawJson,
         tokenUsage,
         analysing: false,
         analysisError: `Analysis could not be parsed.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
