@@ -154,7 +154,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
           <span className="font-semibold text-accent-amber">
             {result.unallocated_stake ?? "$50"} unallocated
           </span>
-          {b1?.skip_reason ? ` — ${b1.skip_reason}` : ""}
+          {b1.skip_reason ? ` — ${b1.skip_reason}` : ""}
         </p>
       ) : (
         <>
