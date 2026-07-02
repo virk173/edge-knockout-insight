@@ -719,61 +719,92 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
 
   const result = clone(rawOutput) as AnalysisResult;
 
-  // 1 — Tier 1 anchor EV
-  const t1 = result.tier_1_anchor;
-  if (t1?.ev_inputs) {
-    const ev = computeEv(
-      t1.ev_inputs.model_probability,
-      t1.ev_inputs.decimal_odds,
-    );
-    if (ev !== undefined) {
-      t1.ev = ev;
-      if (t1.model_probability === undefined)
-        t1.model_probability = num(t1.ev_inputs.model_probability);
-      if (t1.odds === undefined) t1.odds = num(t1.ev_inputs.decimal_odds);
+  // ── Straight-bet enrichment (bet_1 + bet_2) ──────────────────
+  // Both are single-market straight bets: compute EV, apply the Pinnacle-gap
+  // bias correction, then Kelly-size the stake from the ADJUSTED EV.
+  const enrichStraightBet = (
+    bet: typeof result.bet_1,
+    defaults: { bankroll: number; fraction: number; floor: number; ceiling: number },
+  ) => {
+    if (!bet) return;
+
+    // EV from raw variables.
+    if (bet.ev_inputs) {
+      const ev = computeEv(bet.ev_inputs.model_probability, bet.ev_inputs.decimal_odds);
+      if (ev !== undefined) {
+        bet.ev = ev;
+        if (bet.model_probability === undefined)
+          bet.model_probability = num(bet.ev_inputs.model_probability);
+        if (bet.odds === undefined) bet.odds = num(bet.ev_inputs.decimal_odds);
+      }
     }
-  }
 
-  // 1b — Stake-anchoring bias correction for the Tier 1 anchor.
-  if (t1?.ev !== undefined && t1.odds !== undefined) {
-    const pinnacleOdds = num(t1.pinnacle_odds) ?? null;
-    const adjustment = adjustEVForPinnacleGap({
-      raw_ev: t1.ev,
-      stake_odds: t1.odds,
-      pinnacle_odds: pinnacleOdds,
-    });
+    // Stake-anchoring bias correction.
+    if (bet.ev !== undefined && bet.odds !== undefined) {
+      const pinnacleOdds = num(bet.pinnacle_odds) ?? null;
+      const adjustment = adjustEVForPinnacleGap({
+        raw_ev: bet.ev,
+        stake_odds: bet.odds,
+        pinnacle_odds: pinnacleOdds,
+      });
+      bet.raw_ev = bet.ev;
+      bet.ev = adjustment.adjusted_ev;
+      bet.ev_confidence = adjustment.ev_confidence;
+      bet.pinnacle_check_note = adjustment.note;
+      bet.ev_rating =
+        adjustment.adjusted_ev >= 0.08
+          ? "STRONG"
+          : adjustment.adjusted_ev >= 0.05
+            ? "MARGINAL"
+            : "SKIP";
+      bet.active = adjustment.adjusted_ev >= 0.05;
+    }
 
-    t1.raw_ev = t1.ev;
-    t1.ev = adjustment.adjusted_ev;
-    t1.ev_confidence = adjustment.ev_confidence;
-    t1.pinnacle_check_note = adjustment.note;
+    // Kelly-size the stake from the (adjusted) EV.
+    if (bet.ev !== undefined && bet.odds !== undefined) {
+      const ki = bet.kelly_inputs ?? {};
+      const kelly = calculateKellyStake({
+        ev: bet.ev,
+        decimal_odds: num(ki.decimal_odds) ?? bet.odds,
+        bankroll: num(ki.bankroll) ?? defaults.bankroll,
+        fraction: num(ki.fraction) ?? defaults.fraction,
+        floor: num(ki.floor) ?? defaults.floor,
+        ceiling: num(ki.ceiling) ?? defaults.ceiling,
+      });
+      bet.kelly_result = kelly;
+      // The Kelly recommended_stake becomes the displayed stake.
+      bet.stake = `$${kelly.recommended_stake}`;
+    }
+  };
 
-    // Re-apply EV rating thresholds to the ADJUSTED ev, not raw.
-    t1.ev_rating =
-      adjustment.adjusted_ev >= 0.08
-        ? "STRONG"
-        : adjustment.adjusted_ev >= 0.05
-          ? "MARGINAL"
-          : "SKIP";
-    t1.active = adjustment.adjusted_ev >= 0.05;
-  }
+  enrichStraightBet(result.bet_1, {
+    bankroll: 50,
+    fraction: 0.25,
+    floor: 10,
+    ceiling: 25,
+  });
+  enrichStraightBet(result.bet_2, {
+    bankroll: 50,
+    fraction: 0.25,
+    floor: 8,
+    ceiling: 15,
+  });
 
-  // 2 — Parlay EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate term;
-  // the hold is already priced into stake_sgp). Falls back to the legacy
+  // ── bet_3 — 3-leg SGP EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate
+  // term; the hold is already priced into stake_sgp). Falls back to the legacy
   // p_final / effective_sgp_price pair only for old cached results.
-  const t2 = result.tier_2_parlay;
-  if (t2?.parlay_ev_inputs) {
-    const pj = t2.parlay_ev_inputs.p_joint ?? t2.parlay_ev_inputs.p_final;
+  const b3 = result.bet_3;
+  if (b3?.parlay_ev_inputs) {
+    const pj = b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final;
     const sp =
-      t2.parlay_ev_inputs.stake_sgp ?? t2.parlay_ev_inputs.effective_sgp_price;
+      b3.parlay_ev_inputs.stake_sgp ?? b3.parlay_ev_inputs.effective_sgp_price;
     const ev = computeEv(pj, sp);
-    if (ev !== undefined) t2.parlay_ev = ev;
+    if (ev !== undefined) b3.parlay_ev = ev;
   }
 
-  // 2b — Stake-anchoring bias correction for any Tier 2 leg that has a
-  // corresponding Pinnacle market available.
-  if (Array.isArray(t2?.legs)) {
-    for (const leg of t2.legs) {
+  // Stake-anchoring bias correction for any SGP leg with a Pinnacle reference.
+  if (Array.isArray(b3?.legs)) {
+    for (const leg of b3.legs) {
       const legOdds = num(leg.odds);
       const legProb = num(leg.model_probability);
       if (legOdds === undefined || legProb === undefined) continue;
@@ -792,14 +823,14 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
-  // 2 — Jackpot EV
-  const t3 = result.tier_3_jackpot;
-  if (t3?.jackpot_ev_inputs) {
+  // ── bet_4 — jackpot EV
+  const b4 = result.bet_4;
+  if (b4?.jackpot_ev_inputs) {
     const ev = computeEv(
-      t3.jackpot_ev_inputs.p_final,
-      t3.jackpot_ev_inputs.combined_odds,
+      b4.jackpot_ev_inputs.p_final,
+      b4.jackpot_ev_inputs.combined_odds,
     );
-    if (ev !== undefined) t3.jackpot_ev = ev;
+    if (ev !== undefined) b4.jackpot_ev = ev;
   }
 
   // 3 & 5 — Gap scores + stacked multipliers per absence
