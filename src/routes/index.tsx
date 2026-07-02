@@ -356,10 +356,69 @@ function Index() {
   }
 
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
-    const updated = setRecommendationOutcome(entryId, recIndex, next);
+    // Capture the rec BEFORE mutating so we can settle action bets against the
+    // bankroll. Action bets are real money: WON/LOST create a ledger entry;
+    // cycling away reverses the prior settlement idempotently.
+    const priorEntry = logEntries.find((e) => e.id === entryId);
+    const rec = priorEntry?.recommendations[recIndex];
+
+    let updated = setRecommendationOutcome(entryId, recIndex, next);
+
+    if (rec?.action_bet === true) {
+      if (rec.settled_ledger_id) {
+        removeLedgerEntry(rec.settled_ledger_id);
+      }
+      const stake = Number(String(rec.stake ?? "").replace(/[^0-9.]/g, ""));
+      const odds = typeof rec.odds === "number" ? rec.odds : 0;
+      if ((next === "WON" || next === "LOST") && stake > 0 && odds > 0) {
+        const led = settleBet({
+          match: priorEntry?.match ?? "—",
+          bet_label: `💵 ${[rec.market, rec.selection]
+            .filter(Boolean)
+            .join(" — ")}`,
+          stake,
+          odds,
+          outcome: next,
+        });
+        updated = updateRecommendation(entryId, recIndex, {
+          settled_ledger_id: led.id,
+        });
+      } else {
+        updated = updateRecommendation(entryId, recIndex, {
+          settled_ledger_id: undefined,
+        });
+      }
+      setBankrollState(getBankroll());
+    }
+
     setLogEntries(updated);
     refitCalibration(updated);
   }
+
+  function handlePlaceActionBet(draft: ActionBetDraft) {
+    const match = activeMatchId != null ? matches?.find((m) => m.id === activeMatchId) : undefined;
+    const result = activeState.analysisResult as AnalysisResult | undefined;
+    const updated = appendActionBet({
+      matchId: typeof activeMatchId === "number" ? activeMatchId : undefined,
+      match: result?.match ?? match?.label,
+      date: result?.kickoff_UTC ?? match?.kickoffUtc,
+      round: result?.round,
+      tier: draft.tier,
+      market: draft.market,
+      selection: draft.selection,
+      odds: draft.odds,
+      stake: draft.stake,
+      model_probability: draft.model_probability,
+      ev: draft.ev,
+    });
+    setLogEntries(updated);
+    toast.success(
+      `💵 Action bet logged: $${draft.stake}${
+        typeof draft.odds === "number" ? ` @ ${draft.odds}` : ""
+      }`,
+    );
+  }
+
 
   function handleSetManualClosingOdds(
     entryId: string,
