@@ -16,6 +16,17 @@ export interface ClaudeCallInput {
   maxTokens?: number;
 }
 
+// A JSON value the server-fn serializer accepts (a bare `unknown` on the
+// tool_use `input` breaks TanStack's serializability check).
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+
 // Concrete, fully-serializable shape for the fields the client reads off the
 // Anthropic response. (A bare `unknown`/`any` breaks TanStack's server-fn
 // serializability check when this flows through the polling endpoint.)
