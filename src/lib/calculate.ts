@@ -27,6 +27,7 @@ import type {
   TravelBurden,
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
+import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
 /*
  * KNOWN GAPS — see also analyse.ts
