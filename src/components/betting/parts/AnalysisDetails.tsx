@@ -14,6 +14,7 @@ import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
 // ─────────────────────────────────────────────────────────────
 export function AnalysisDetails({ result }: { result: AnalysisResult }) {
   const [open, setOpen] = useState(false);
+  const [plain, setPlain] = useState(false);
   const absences = result.player_intelligence.absences;
   const tactical = result.tactical_analysis;
   const dims = normalizeDimensions(result.confidence_scores.dimension_breakdown);
