@@ -1237,7 +1237,10 @@ const WANTED_STAKE_MARKETS: Array<{
   },
   {
     label: "Over/Under 2.5 Goals",
-    match: (n) => /goals over\/under|over\/under|total goals/.test(n) && !n.includes("corner"),
+    match: (n) =>
+      /goals over\/under|over\/under|total goals/.test(n) &&
+      !n.includes("corner") &&
+      !/card|booking/.test(n),
     valueFilter: (v) => v.includes("2.5"),
   },
   {
@@ -1245,9 +1248,21 @@ const WANTED_STAKE_MARKETS: Array<{
     match: (n) => /both teams|btts/.test(n),
   },
   {
-    label: "Corners Over/Under 9.5",
+    // Corners: extract the 8.5 / 9.5 / 10.5 lines when present (9.5 is the
+    // primary line the report displays; 8.5/10.5 come free from the same bet).
+    label: "Corners Over/Under",
     match: (n) => n.includes("corner"),
-    valueFilter: (v) => v.includes("9.5"),
+    valueFilter: (v) => v.includes("8.5") || v.includes("9.5") || v.includes("10.5"),
+  },
+  {
+    // Total cards / bookings. API-Football / Stake expose this under several
+    // names ("Cards Over/Under", "Total Cards", "Bookings Over/Under",
+    // "Total Bookings"), so we match broadly on card|booking. No live raw C9A
+    // sample was available to pin the exact string, hence the wide matcher.
+    // Lines 2.5 / 3.5 / 4.5 kept (3.5 is the primary line the report shows).
+    label: "Cards Over/Under",
+    match: (n) => /card|booking/.test(n),
+    valueFilter: (v) => v.includes("2.5") || v.includes("3.5") || v.includes("4.5"),
   },
   {
     label: "Asian Handicap",

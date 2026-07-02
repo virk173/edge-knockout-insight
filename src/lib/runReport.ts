@@ -383,11 +383,19 @@ function buildCallData(
     )} No: ${stakePrice(sm, "Both Teams To Score", (v) => v.includes("no"))}`,
   );
   p(
-    `    Corners 9.5 over: ${stakePrice(sm, "Corners Over/Under 9.5", (v) =>
-      v.includes("over"),
+    `    Corners 9.5 over: ${stakePrice(
+      sm,
+      "Corners Over/Under",
+      (v) => v.includes("over") && v.includes("9.5"),
     )}`,
   );
-  p("    Cards 3.5 over: N/A");
+  p(
+    `    Cards 3.5 over: ${stakePrice(
+      sm,
+      "Cards Over/Under",
+      (v) => v.includes("over") && v.includes("3.5"),
+    )}`,
+  );
   p(`    Overround: ${stakeOverround(sm)}`);
 
   // ── C9B — Pinnacle / retail odds + line movement ──────────
