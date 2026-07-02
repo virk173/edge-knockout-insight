@@ -815,6 +815,11 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     ceiling: 15,
   });
 
+  // Auto-generate verified Stake stake_labels for the straight bets.
+  applyStakeLabel(result.bet_1 ?? {});
+  applyStakeLabel(result.bet_2 ?? {});
+
+
   // ── bet_3 — 3-leg SGP EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate
   // term; the hold is already priced into stake_sgp). Falls back to the legacy
   // p_final / effective_sgp_price pair only for old cached results.
