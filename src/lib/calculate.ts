@@ -27,6 +27,7 @@ import type {
   TravelBurden,
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
+import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
 /*
  * KNOWN GAPS — see also analyse.ts
@@ -719,6 +720,30 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
 
   const result = clone(rawOutput) as AnalysisResult;
 
+  // Parse home/away team names from the "Home vs Away" match string so
+  // stake_labels can be generated from the verified Stake glossary.
+  const matchStr = typeof result.match === "string" ? result.match : "";
+  const vsSplit = matchStr.split(/\s+vs\.?\s+/i);
+  const homeTeam = (vsSplit[0] ?? "Home").trim() || "Home";
+  const awayTeam = (vsSplit[1] ?? "Away").trim() || "Away";
+
+  // Generate a verified Stake stake_label from a bet/leg's market + selection.
+  const applyStakeLabel = (item: {
+    market?: string;
+    selection?: string;
+    stake_label?: string;
+  }) => {
+    if (!item?.market) return;
+    const marketType = resolveMarketType(item.market);
+    if (!marketType) return;
+    item.stake_label = generateStakeLabel(
+      marketType,
+      item.selection ?? "",
+      homeTeam,
+      awayTeam,
+    );
+  };
+
   // ── Straight-bet enrichment (bet_1 + bet_2) ──────────────────
   // Both are single-market straight bets: compute EV, apply the Pinnacle-gap
   // bias correction, then Kelly-size the stake from the ADJUSTED EV.
@@ -790,6 +815,12 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     ceiling: 15,
   });
 
+  // Auto-generate verified Stake stake_labels for the straight bets.
+  if (result.bet_1) applyStakeLabel(result.bet_1);
+  if (result.bet_2) applyStakeLabel(result.bet_2);
+
+
+
   // ── bet_3 — 3-leg SGP EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate
   // term; the hold is already priced into stake_sgp). Falls back to the legacy
   // p_final / effective_sgp_price pair only for old cached results.
@@ -823,6 +854,12 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     }
   }
 
+  // Auto-generate verified Stake stake_labels for each SGP leg.
+  if (Array.isArray(b3?.legs)) {
+    for (const leg of b3.legs) applyStakeLabel(leg);
+  }
+
+
   // ── bet_4 — jackpot EV
   const b4 = result.bet_4;
   if (b4?.jackpot_ev_inputs) {
@@ -832,6 +869,12 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
     );
     if (ev !== undefined) b4.jackpot_ev = ev;
   }
+
+  // Auto-generate verified Stake stake_labels for each jackpot leg.
+  if (Array.isArray(b4?.legs)) {
+    for (const leg of b4.legs) applyStakeLabel(leg);
+  }
+
 
   // 3 & 5 — Gap scores + stacked multipliers per absence
   const absences = result.player_intelligence?.absences;

@@ -11,6 +11,7 @@ import {
   calculateResults,
   applyDeadRubberDiscount,
 } from "@/lib/calculate";
+import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GROUP 1 — calculateEV
@@ -815,5 +816,66 @@ describe("applyDeadRubberDiscount", () => {
     const result = applyDeadRubberDiscount([]);
     expect(result.adjusted_goals_avg).toBe(0);
     expect(result.dead_rubber_count).toBe(0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 10 — bettingGlossary
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("bettingGlossary", () => {
+  it("resolves Asian Handicap from Claude market name", () => {
+    expect(resolveMarketType("Asian Handicap")).toBe("ASIAN_HANDICAP");
+    expect(resolveMarketType("asian handicap")).toBe("ASIAN_HANDICAP");
+    // resolveMarketType lowercases input, so all-caps resolves too (case-insensitive by design).
+    expect(resolveMarketType("ASIAN HANDICAP")).toBe("ASIAN_HANDICAP");
+  });
+
+  it("generates correct stake label for Asian Handicap", () => {
+    const label = generateStakeLabel(
+      "ASIAN_HANDICAP",
+      "Spain -1",
+      "Spain",
+      "Austria",
+    );
+    expect(label).toContain("Asian Handicap");
+    expect(label).toContain("Spain vs Austria");
+    expect(label).toContain("Spain -1");
+    expect(label).toContain("90 minutes");
+    expect(label).toContain("Eliminates the draw");
+  });
+
+  it("generates correct label for Asian Total with warning", () => {
+    const label = generateStakeLabel(
+      "ASIAN_TOTAL",
+      "Over 2.25 Goals",
+      "Spain",
+      "Austria",
+    );
+    expect(label).toContain("Asian Total");
+    expect(label).toContain("NOT the same as Exact Goals");
+  });
+
+  it("generates correct label for Same Game Multi", () => {
+    const label = generateStakeLabel(
+      "SAME_GAME_MULTI",
+      "3-leg multi",
+      "Spain",
+      "Austria",
+    );
+    expect(label).toContain("Bet Builder tab");
+    expect(label).toContain("Minimum 3 legs");
+  });
+
+  it("resolves BTTS variants", () => {
+    expect(resolveMarketType("btts")).toBe("BTTS");
+    expect(resolveMarketType("both teams to score")).toBe("BTTS");
+    expect(resolveMarketType("both teams score")).toBe("BTTS");
+  });
+
+  it("resolves knockout markets", () => {
+    expect(resolveMarketType("team to qualify")).toBe("TEAM_TO_QUALIFY");
+    expect(resolveMarketType("to advance")).toBe("TEAM_TO_QUALIFY");
+    expect(resolveMarketType("et yes")).toBe("MATCH_EXTRA_TIME");
+    expect(resolveMarketType("pens yes")).toBe("MATCH_PENALTIES");
   });
 });
