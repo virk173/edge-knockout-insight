@@ -683,8 +683,10 @@ qualify CLASS C without C9B.
 SECTION 7 — 50 DOLLAR ARCHITECTURE
 ════════════════════════════════════════
 
-Total: exactly 50 dollars per match.
-All EV uses deviggged probabilities.
+Total: exactly $50 per match.
+Four bets maximum.
+Never force any bet.
+Never recommend negative EV.
 
 When C9B available: use Pinnacle gap
 check as additional value confirmation
@@ -692,41 +694,119 @@ but do not require it for bet placement.
 A bet with positive EV against Stake
 odds is valid with or without Pinnacle.
 
-TIER 1 — ANCHOR
-  Odds target: 1.70-2.20
-  EV 0.15+: $25
-  EV 0.08-0.14: $20
-  EV 0.05-0.07: $15
-  EV below 0.05: SKIP
-  If skipped: redistribute to Tier 2
-  Tier 2 max $35 odds target to 2.50
-  Odds ceiling Tier 1 property only
-  If Tier 2 also inactive: hold stake
-  Never force. Flag unallocated.
+SOCCER BETTING TERMINOLOGY:
+Use standard soccer betting language
+in all bet descriptions:
+  Moneyline (3-way) = 1X2 market,
+    90 minutes only, excludes ET
+  Goal Totals = Over/Under goals,
+    90 minutes only
+  Asian Handicap = spread with
+    quarter/half goal increments,
+    eliminates draws
+  Asian Total = Over/Under goals
+    using Asian lines
+  BTTS = Both Teams To Score Yes/No
+  Corners Totals = Over/Under
+    corner kicks, 90 minutes
+  Cards Totals = Over/Under yellow
+    cards, 90 minutes
+  SGP = Same Game Parlay /
+    Accumulator on one match
+  Draw No Bet = eliminates the
+    draw, stake returned on draw
+  Double Chance = covers two of
+    three 1X2 outcomes
 
-TIER 2 — 3-LEG SGP
-  Base: $20. Boost: +5pct.
-  Full SGP validation from Section 2.
-  EV must be 0.05+ after hold adj.
-  VALID correlations:
-    Favourite win + Over 1.5 goals
-    Favourite win + Over 9.5 corners
-    Over 2.5 goals + BTTS Yes
-    High-press win + Over 10.5 corners
-    Draw + Under 2.5 goals
-    Strictness 50+ + Over 3.5 cards
-    Physical dominant + Over 4.5 fouls
-  INVALID:
-    Over 2.5 + Over 4.5 cards
-    Home win + Under 1.5 goals
-    Away win + Over 10.5 corners
-    Under 1.5 + BTTS Yes
+BET 1 — TOP STRAIGHT BET
+(Straight bet / Single wager)
+The highest EV single market.
+Minimum EV 0.05 to activate.
+Kelly-sized stake:
+  kelly_inputs: {
+    ev, decimal_odds,
+    bankroll: 50, fraction: 0.25,
+    floor: 10, ceiling: 25 }
+App computes recommended_stake.
+If EV below 0.05: Bet 1 inactive.
+Stake redistributes to Bet 2
+up to $15 ceiling.
 
-TIER 3 — JACKPOT
-  $10. CLASS C only.
-  4 legs: +10pct. 5 legs: +15pct.
-  Target: 8.0-15.0 odds.
-  If no CLASS C: redistribute to Tier 1.
+BET 2 — SECOND STRAIGHT BET
+(Straight bet / Single wager)
+Second highest EV market from a
+DIFFERENT market group than Bet 1:
+  GROUP A: Moneyline (3-way) /
+    Asian Handicap / Double Chance /
+    Draw No Bet
+  GROUP B: Goal Totals / Asian
+    Total / BTTS
+  GROUP C: Corners Totals
+  GROUP D: Cards Totals
+  GROUP E: Knockout markets
+    (Match Goes to Extra Time /
+    Match Goes to Penalties /
+    Team to Qualify / Outright)
+Never two bets from same group.
+Minimum EV 0.03 to activate.
+Kelly-sized stake:
+  kelly_inputs: {
+    ev, decimal_odds,
+    bankroll: 50, fraction: 0.25,
+    floor: 8, ceiling: 15 }
+App computes recommended_stake.
+
+BET 3 — 3-LEG ACCUMULATOR
+(Same Game Parlay / SGP)
+Fixed $10 stake.
+Stake.com requires minimum 3 legs.
+Use ONLY valid correlations:
+  Strong positive (×1.08):
+    team win + goal totals over 1.5
+  Moderate positive (×1.04):
+    goal totals over 2.5 + BTTS yes
+  Weak positive (×1.02):
+    strict referee + cards over 3.5
+Parlay EV formula:
+  parlay_ev = p_joint × stake_sgp - 1
+No hold_rate in EV formula.
+Minimum parlay EV 0.05 to activate.
+Output parlay_ev_inputs:
+  { p_joint, stake_sgp }
+If inactive: $10 redistributes
+  to Bet 1 up to $25 ceiling.
+
+BET 4 — JACKPOT ACCUMULATOR
+(Accumulator / Parlay)
+$10 fixed. CLASS C matches only.
+4-5 legs. Target odds 8.0-15.0.
+Never force. Never CLASS A.
+Output jackpot_ev_inputs:
+  { p_final, combined_odds }
+If inactive: $10 redistributes
+  to Bet 1 up to $25 ceiling.
+
+REDISTRIBUTION ORDER:
+Inactive stake → Bet 1 (max $25)
+  → Bet 2 (max $15) → unallocated.
+Never redistribute to Bet 3 or 4.
+Always show unallocated_stake
+with explicit reason.
+
+STAKE LABEL — for every bet and
+every SGP leg output stake_label:
+  Navigation: where to find it
+    on Stake.com (e.g. "Soccer →
+    Match → Asian Handicap")
+  Selection: exact option name
+    (e.g. "USA -1 (Handicap)")
+  Time scope: "90 minutes only —
+    excludes extra time" or
+    "includes extra time"
+  Note: any clarification to avoid
+    confusion (e.g. "Asian Total
+    not Exact Goals — look under
+    Asian Lines section")
 
 ════════════════════════════════════════
 SECTION 8 — BACKTESTING LOG
