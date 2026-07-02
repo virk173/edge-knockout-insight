@@ -816,8 +816,9 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
   });
 
   // Auto-generate verified Stake stake_labels for the straight bets.
-  applyStakeLabel(result.bet_1 ?? {});
-  applyStakeLabel(result.bet_2 ?? {});
+  if (result.bet_1) applyStakeLabel(result.bet_1);
+  if (result.bet_2) applyStakeLabel(result.bet_2);
+
 
 
   // ── bet_3 — 3-leg SGP EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate
