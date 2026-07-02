@@ -570,12 +570,17 @@ function Index() {
       });
       toast.success("Analysis complete");
 
-      const logEntry = normalized.log_entry;
-      if (logEntry && typeof logEntry === "object") {
-        const updated = appendLogEntry(logEntry);
-        setLogEntries(updated);
-        toast.success("Saved to backtesting log");
-      }
+      // FIX 1: build the log entry from APP-computed values (never Claude's raw
+      // log_entry, which can claim positive EV the app has gated to inactive).
+      // Always append — a match with zero qualifying bets is still recorded.
+      const updated = appendEnrichedResult(normalized, { matchId: match.id });
+      setLogEntries(updated);
+      const loggedCount = updated[updated.length - 1]?.recommendations.length ?? 0;
+      toast.success(
+        loggedCount > 0
+          ? "Saved to backtesting log"
+          : "Logged (no qualifying bets)",
+      );
     } catch {
       const head = rawJson.slice(0, 500);
       const tail = rawJson.length > 500 ? rawJson.slice(-500) : "";
