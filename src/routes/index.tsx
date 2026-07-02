@@ -1707,6 +1707,12 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
   const mp = result.model_probabilities;
   const ec = result.ensemble_check;
   const dw = result.dimension_weights_validation;
+  // FIX 5 — plain-English "What does this mean?" toggle.
+  const [plain, setPlain] = useState(false);
+  const Plain = ({ text }: { text: string }) =>
+    plain ? (
+      <div className="mt-0.5 font-sans text-[11px] italic text-slate/80">{text}</div>
+    ) : null;
 
   const recomputed =
     ec &&
@@ -1721,7 +1727,17 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
       <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
         Validation Checks
       </summary>
-      <div className="space-y-4 border-t border-border px-3 py-3 font-mono text-xs text-slate">
+      <div className="flex justify-end border-t border-border px-3 pt-2">
+        <button
+          type="button"
+          onClick={() => setPlain((v) => !v)}
+          className="rounded border border-border px-2 py-0.5 text-[11px] text-slate hover:text-foreground"
+        >
+          ⓘ What does this mean? {plain ? "(on)" : "(off)"}
+        </button>
+      </div>
+      <div className="space-y-4 px-3 py-3 font-mono text-xs text-slate">
+
         {/* model_probabilities */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
