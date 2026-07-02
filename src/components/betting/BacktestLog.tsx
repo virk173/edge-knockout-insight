@@ -78,6 +78,7 @@ export function BacktestLog({
   const summary = computeSummary(entries);
   const totalRecs = countRecommendations(entries);
   const clv = computeClvSummary(entries);
+  const actionSummary = computeActionBetSummary(entries);
   const calTable = computeCalibrationTable(entries);
   const calibration = getCalibration();
 
