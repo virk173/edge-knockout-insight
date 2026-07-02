@@ -242,7 +242,32 @@ export function BacktestLog({
         >
           {clv.verdictText}
         </div>
+
+        {actionSummary.count > 0 && (
+          <div className="mt-4 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-3 text-sm">
+            <span className="font-semibold text-accent-amber">💵 Action bets:</span>{" "}
+            <span className="text-foreground">{actionSummary.count}</span>
+            {", P/L "}
+            <span
+              className={
+                actionSummary.pl >= 0 ? "text-signal-green" : "text-signal-red"
+              }
+            >
+              {actionSummary.pl >= 0 ? "+" : "−"}${Math.abs(actionSummary.pl).toFixed(2)}
+            </span>
+            {", avg CLV "}
+            <span className="text-foreground">
+              {actionSummary.avgClv === null
+                ? "—"
+                : `${actionSummary.avgClv >= 0 ? "+" : ""}${actionSummary.avgClv.toFixed(1)}%`}
+            </span>
+            <span className="ml-1 text-xs text-slate">
+              (excluded from the edge verdict above)
+            </span>
+          </div>
+        )}
       </div>
+
 
       {/* Calibration */}
       <div className="rounded-xl border border-border bg-card/40 p-6">
