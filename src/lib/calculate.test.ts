@@ -826,8 +826,8 @@ describe("bettingGlossary", () => {
   it("resolves Asian Handicap from Claude market name", () => {
     expect(resolveMarketType("Asian Handicap")).toBe("ASIAN_HANDICAP");
     expect(resolveMarketType("asian handicap")).toBe("ASIAN_HANDICAP");
-    expect(resolveMarketType("ASIAN HANDICAP")).toBeNull();
-    // uppercase not in map — correct
+    // resolveMarketType lowercases input, so all-caps resolves too (case-insensitive by design).
+    expect(resolveMarketType("ASIAN HANDICAP")).toBe("ASIAN_HANDICAP");
   });
 
   it("generates correct stake label for Asian Handicap", () => {
