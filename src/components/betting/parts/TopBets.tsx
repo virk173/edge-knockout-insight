@@ -87,7 +87,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b2?.active) {
+  if (b2.active) {
     rows.push({
       key: "bet2",
       label: "BET 2",
