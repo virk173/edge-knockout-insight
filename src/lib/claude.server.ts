@@ -16,6 +16,17 @@ export interface ClaudeCallInput {
   maxTokens?: number;
 }
 
+// A JSON value the server-fn serializer accepts (a bare `unknown` on the
+// tool_use `input` breaks TanStack's serializability check).
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+
 // Concrete, fully-serializable shape for the fields the client reads off the
 // Anthropic response. (A bare `unknown`/`any` breaks TanStack's server-fn
 // serializability check when this flows through the polling endpoint.)
@@ -24,7 +35,15 @@ export interface ClaudeMessageResponse {
   model?: string;
   role?: string;
   stop_reason?: string;
-  content?: Array<{ type?: string; text?: string }>;
+  content?: Array<{
+    type?: string;
+    text?: string;
+    // Present on `tool_use` blocks: the structured, already-parsed JSON object
+    // the model produced for the forced submit_analysis tool call.
+    id?: string;
+    name?: string;
+    input?: JsonValue;
+  }>;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -52,6 +71,43 @@ export type ClaudeCallResult =
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MAX_TOKENS = 8000;
+
+// Native Structured Outputs (Anthropic tool use). We force this single tool so
+// the model's response is a real JSON object on a `tool_use` block instead of a
+// free-form text blob that needs fence-stripping / brace-slicing. The schema is
+// intentionally SHALLOW (loose object/array/string leaves, additionalProperties
+// everywhere): it removes markdown noise and guarantees the top-level shape
+// without over-constraining the model — normalizeAnalysisResult() stays the
+// authoritative safety net for missing/optional keys downstream.
+const ANALYSIS_TOOL_NAME = "submit_analysis";
+
+const loose = { type: "object", additionalProperties: true } as const;
+
+const ANALYSIS_TOOL_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    match: { type: "string" },
+    kickoff_UTC: { type: "string" },
+    kickoff_local: { type: "string" },
+    round: { type: "string" },
+    classification: { type: "string" },
+    data_quality: { type: "string" },
+    ensemble_check: loose,
+    confidence_scores: loose,
+    tactical_analysis: loose,
+    player_intelligence: loose,
+    bet_1: loose,
+    bet_2: loose,
+    bet_3: loose,
+    bet_4: loose,
+    markets_evaluated: { type: "array", items: { type: "string" } },
+    markets_rejected: { type: "array", items: loose },
+    key_risk_flag: { type: "string" },
+    analyst_note: { type: "string" },
+    log_entry: loose,
+  },
+} as const;
 
 // Per-attempt timeout. Generating up to 8k OUTPUT tokens is the bottleneck
 // (~60-90s), independent of Anthropic load, so 60s was too tight and every
@@ -104,6 +160,19 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
           cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ],
+      // Force the model to answer by calling submit_analysis, so the response
+      // arrives as structured JSON on a tool_use block. cache_control keeps the
+      // (static) tool definition warm alongside the system prompt.
+      tools: [
+        {
+          name: ANALYSIS_TOOL_NAME,
+          description:
+            "Submit the completed match analysis as a single structured JSON object. Populate every field you would otherwise have returned as raw JSON text — do not omit sections that you have data for.",
+          input_schema: ANALYSIS_TOOL_INPUT_SCHEMA,
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+      ],
+      tool_choice: { type: "tool", name: ANALYSIS_TOOL_NAME },
       messages: [{ role: "user", content: input.userMessage }],
     });
 
@@ -175,9 +244,28 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     const payload = await response.json().catch(() => null);
 
     if (response.ok) {
+      const data = (payload ?? {}) as ClaudeMessageResponse;
+
+      // A forced tool_use truncated by max_tokens leaves the JSON incomplete and
+      // unusable. Treat it exactly like a transient failure: retry / fall back
+      // rather than handing a half-built payload to the parser.
+      if (data.stop_reason === "max_tokens") {
+        console.error(
+          `callClaude: attempt ${i + 1}/${attempts.length} (${model}) hit max_tokens — tool payload truncated`,
+        );
+        lastError =
+          "Analysis exceeded the output token budget before completing. Please retry.";
+        if (!isFallback) primaryFailures += 1;
+        if (i < attempts.length - 1) {
+          await new Promise((r) => setTimeout(r, WAIT_BETWEEN_MS));
+          continue;
+        }
+        break;
+      }
+
       const result: ClaudeCallResult = {
         ok: true,
-        data: (payload ?? {}) as ClaudeMessageResponse,
+        data,
       };
       if (isFallback) {
         result.used_fallback_model = true;

@@ -503,14 +503,28 @@ function Index() {
       return;
     }
 
-    const text: string = res.data?.content?.[0]?.text ?? "";
+    const content = res.data?.content ?? [];
+    // Prefer the structured tool_use payload from the forced submit_analysis
+    // tool call — it is already a parsed JSON object, no fence-stripping needed.
+    const toolInput = content.find(
+      (b) => b?.type === "tool_use" && b?.input && typeof b.input === "object",
+    )?.input;
+    const text: string =
+      content.find((b) => b?.type === "text")?.text ?? content[0]?.text ?? "";
     const usage = res.data?.usage;
     const tokenUsage = usage
       ? { input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 }
       : null;
     const cleaned = text.replace(/```json|```/g, "").trim();
+    // rawJson is what we persist/display: the structured payload when present,
+    // otherwise the cleaned text blob.
+    const rawJson =
+      toolInput && typeof toolInput === "object"
+        ? JSON.stringify(toolInput, null, 2)
+        : cleaned;
 
     const tryParse = (): unknown => {
+      if (toolInput && typeof toolInput === "object") return toolInput;
       try {
         return JSON.parse(cleaned);
       } catch {
@@ -535,7 +549,7 @@ function Index() {
       const normalized = normalizeAnalysisResult(enriched);
       const savedAt = Date.now();
       patchState(match.id, {
-        analysisRaw: cleaned,
+        analysisRaw: rawJson,
         analysisResult: normalized,
         tokenUsage,
         analysing: false,
@@ -548,7 +562,7 @@ function Index() {
         matchId: match.id,
         match: `${match.home} vs ${match.away}`,
         result: normalized,
-        rawClaudeJson: cleaned,
+        rawClaudeJson: rawJson,
         sgpChain: extractSgpChain(normalized),
         tokenUsage,
         responseTimeMs,
@@ -563,10 +577,10 @@ function Index() {
         toast.success("Saved to backtesting log");
       }
     } catch {
-      const head = cleaned.slice(0, 500);
-      const tail = cleaned.length > 500 ? cleaned.slice(-500) : "";
+      const head = rawJson.slice(0, 500);
+      const tail = rawJson.length > 500 ? rawJson.slice(-500) : "";
       patchState(match.id, {
-        analysisRaw: cleaned,
+        analysisRaw: rawJson,
         tokenUsage,
         analysing: false,
         analysisError: `Analysis could not be parsed.\nCommon causes: max_tokens too low, API key invalid, network timeout.\n\n--- FIRST 500 CHARS ---\n${head}\n\n--- LAST 500 CHARS ---\n${tail}`,
