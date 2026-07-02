@@ -257,14 +257,14 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
   );
 }
 
-function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
-  if (!bet?.active) {
-    const met = bet?.class_c_signals?.length ?? 0;
+function JackpotBetRow({ bet }: { bet: JackpotBet }) {
+  if (!bet.active) {
+    const met = bet.class_c_signals?.length ?? 0;
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4">
         <span className="font-bold text-slate">❌ BET 4 — Jackpot</span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason ||
+          {bet.skip_reason ||
             (met > 0
               ? `${met} of 3 CLASS C signals — jackpot not triggered.`
               : "No CLASS C signals this match.")}
@@ -274,7 +274,7 @@ function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
   }
 
   const paper = bet.paper_bet === true;
-  const legs = bet.legs ?? [];
+  const legs = bet.legs;
   const ret = bet.returns?.potential_return_realistic;
   return (
     <div className={cn("flex flex-col gap-1 border-t border-border pt-4", paper && PAPER_WRAP)}>
