@@ -951,3 +951,95 @@ describe("bankroll exposure cap in calculateResults", () => {
   });
 });
 
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 12 — Part B fixes (FIX 1, FIX 3, FIX 6)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("FIX 1 — confidence no double-count", () => {
+  it("counts the ensemble/conflict delta once, keeps unrelated adjustments", () => {
+    const conf = computeConfidence(
+      {
+        dimension_weighted_raw: 72,
+        adjustments: [
+          { type: "3_signal_conflict", delta: -5 },
+          { type: "xG_proxy_used", delta: -3 },
+        ],
+      },
+      { signal_1_model: 1.95, signal_2_poisson: 2.3, signal_3_historical: 2.4 },
+    );
+    // 72 - 3 (xG survives) - 5 (single app conflict) = 64
+    expect(conf?.post_adjustment).toBe(64);
+  });
+});
+
+describe("FIX 3 — resolveMarketType progressive matching", () => {
+  it("resolves parenthetical + variant names", () => {
+    expect(resolveMarketType("Goal Totals (Over/Under)")).toBe("GOAL_TOTALS");
+    expect(resolveMarketType("Moneyline (3-way)")).toBe("MONEYLINE_3WAY");
+    expect(resolveMarketType("Total Goals Over/Under 2.5")).toBe("GOAL_TOTALS");
+    expect(resolveMarketType("Asian Handicap -1")).toBe("ASIAN_HANDICAP");
+    expect(resolveMarketType("unknown market")).toBeNull();
+  });
+});
+
+describe("FIX 6 — detectDeadRubber requires pre-match rows", () => {
+  const thirdField = [
+    { team_id: "x1", group_label: "B", points: 4, goal_difference: 1, goals_for: 3 },
+    { team_id: "x2", group_label: "C", points: 4, goal_difference: 0, goals_for: 2 },
+    { team_id: "x3", group_label: "D", points: 3, goal_difference: 0, goals_for: 2 },
+  ];
+
+  it("(c) opponent 6 pts pre-match, rivals max 3/4/4 → dead rubber TRUE", () => {
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "opp", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
+        { team_id: "r1", points: 3, position: 2, matches_played: 2, goal_difference: 0, goals_for: 2 },
+        { team_id: "r2", points: 1, position: 3, matches_played: 2, goal_difference: -2, goals_for: 1 },
+        { team_id: "r3", points: 1, position: 4, matches_played: 2, goal_difference: -2, goals_for: 1 },
+      ],
+      all_groups_third_place_table: thirdField,
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(true);
+  });
+
+  it("(d) opponent 3 pts pre-match with a live rival → FALSE (old bug)", () => {
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "lead", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
+        { team_id: "opp", points: 3, position: 2, matches_played: 2, goal_difference: 0, goals_for: 3 },
+        { team_id: "rival", points: 3, position: 3, matches_played: 2, goal_difference: 0, goals_for: 2 },
+        { team_id: "r3", points: 0, position: 4, matches_played: 2, goal_difference: -4, goals_for: 0 },
+      ],
+      all_groups_third_place_table: thirdField,
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(false);
+  });
+
+  it("(e) opponent 0 pts, cross-group cutoff 4 → best case 3 < 4 → TRUE", () => {
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "a", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
+        { team_id: "b", points: 4, position: 2, matches_played: 2, goal_difference: 2, goals_for: 4 },
+        { team_id: "opp", points: 0, position: 3, matches_played: 2, goal_difference: -6, goals_for: 0 },
+        { team_id: "d", points: 3, position: 4, matches_played: 2, goal_difference: 0, goals_for: 2 },
+      ],
+      all_groups_third_place_table: [
+        { team_id: "z1", group_label: "B", points: 4, goal_difference: 1, goals_for: 3 },
+        { team_id: "z2", group_label: "C", points: 4, goal_difference: 0, goals_for: 2 },
+      ],
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(true);
+  });
+});
