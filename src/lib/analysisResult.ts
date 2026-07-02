@@ -334,9 +334,10 @@ export interface AnalysisResult {
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
   player_intelligence?: PlayerIntelligence;
-  tier_1_anchor?: Tier1Anchor;
-  tier_2_parlay?: Tier2Parlay;
-  tier_3_jackpot?: Tier3Jackpot;
+  bet_1?: StraightBet;
+  bet_2?: StraightBet;
+  bet_3?: SgpBet;
+  bet_4?: JackpotBet;
   total_staked?: string;
   unallocated_stake?: string;
   markets_evaluated?: string[];
