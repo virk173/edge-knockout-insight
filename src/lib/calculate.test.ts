@@ -973,7 +973,7 @@ describe("FIX 1 — confidence no double-count", () => {
     // The single injected ensemble delta replaces any Claude-supplied one.
     expect(
       conf?.adjustments.filter((a) =>
-        /ensemble|signal|conflict|aligned|poisson/i.test(a.type),
+        /ensemble|signal|conflict|aligned|poisson/i.test(a.type ?? ""),
       ).length,
     ).toBe(1);
   });
