@@ -1313,6 +1313,7 @@ function MatchView({
   onResumeCalls,
   onClearCache,
   onResetBudget,
+  onPlaceActionBet,
   patchState,
 }: {
   match: AnalysedMatch;
@@ -1328,6 +1329,7 @@ function MatchView({
   onResumeCalls: () => void;
   onClearCache: () => void;
   onResetBudget: () => void;
+  onPlaceActionBet: (draft: ActionBetDraft) => void;
   patchState: (partial: Partial<MatchState>) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
