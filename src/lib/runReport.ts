@@ -15,6 +15,10 @@ import type {
   PersistedKeyExtracts,
 } from "@/lib/resultCache";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
+import {
+  CARDS_MARKET_SOURCE_AVAILABLE,
+  CARDS_UNAVAILABLE_LABEL,
+} from "@/lib/dataGaps";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
