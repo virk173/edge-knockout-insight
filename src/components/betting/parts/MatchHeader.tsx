@@ -130,7 +130,7 @@ export function MatchHeader({ result }: { result: AnalysisResult }) {
           </div>
           <ContextFlags result={result} />
         </div>
-        <ConfidenceMeter value={result.confidence_scores?.final_confidence} />
+        <ConfidenceMeter value={result.confidence_scores.final_confidence} />
       </div>
       <SignalStrip result={result} />
     </div>
