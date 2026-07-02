@@ -675,39 +675,60 @@ export function generateRunReport(
   );
   push(RULE);
 
-  // ── Pipeline ────────────────────────────────────────────
-  push("PIPELINE");
-  push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
-  push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
-  push(`Failed: ${statusList(cr, "FAILED")}`);
-  push(`Empty: ${statusList(cr, "EMPTY")}`);
-  push(
-    `Lineups: ${lineupText(
+  // ── Pipeline + Call data ────────────────────────────────
+  // FIX 2 — after reload the live collection is empty; rebuild both sections
+  // from the persisted saved summary so we never falsely show "0/8".
+  const hasLive = Object.keys(cr).length > 0;
+  const useSaved = !hasLive && (saved?.callSummary?.length ?? 0) > 0;
+
+  if (useSaved) {
+    for (const line of pipelineFromSaved(
+      saved!.callSummary!,
+      saved!.keyExtracts,
+      r.data_quality,
+    )) {
+      push(line);
+    }
+    for (const line of callDataFromSaved(saved!.keyExtracts, meta)) {
+      push(line);
+    }
+    push(RULE);
+    push();
+  } else {
+    push("PIPELINE");
+    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
+    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
+    push(`Failed: ${statusList(cr, "FAILED")}`);
+    push(`Empty: ${statusList(cr, "EMPTY")}`);
+    push(
+      `Lineups: ${lineupText(
+        callStatuses?.lineupState,
+        callStatuses?.lineupResolved ?? false,
+      )}`,
+    );
+    push(`Data quality: ${na(r.data_quality)}`);
+    push(
+      `Dead-rubber discounted: ${
+        typeof callStatuses?.deadRubberFlagged === "number"
+          ? callStatuses.deadRubberFlagged
+          : 0
+      } fixtures`,
+    );
+    push();
+
+    // ── Call data (actual extracted values) ─────────────────
+    for (const line of buildCallData(
+      cr,
       callStatuses?.lineupState,
       callStatuses?.lineupResolved ?? false,
-    )}`,
-  );
-  push(`Data quality: ${na(r.data_quality)}`);
-  push(
-    `Dead-rubber discounted: ${
-      typeof callStatuses?.deadRubberFlagged === "number"
-        ? callStatuses.deadRubberFlagged
-        : 0
-    } fixtures`,
-  );
-  push();
-
-  // ── Call data (actual extracted values) ─────────────────
-  for (const line of buildCallData(
-    cr,
-    callStatuses?.lineupState,
-    callStatuses?.lineupResolved ?? false,
-    meta,
-  )) {
-    push(line);
+      meta,
+    )) {
+      push(line);
+    }
+    push(RULE);
+    push();
   }
-  push(RULE);
-  push();
+
 
 
   const cs = r.confidence_scores;
