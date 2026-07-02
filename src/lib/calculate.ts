@@ -401,11 +401,27 @@ export function computeConfidence(
       signal_3_historical: s3,
     });
     ensembleImpact = ensemble.confidence_impact;
+    // Invariant: only MAJORITY yields 0. CONFLICT must be -5, TRIPLE ALIGNED +5.
+    // A 0 impact on a non-MAJORITY alignment means the mapping silently broke
+    // (the exact class of bug where a CONFLICT vanished as +0.000). Surface it
+    // loudly in dev instead of shipping a swallowed conflict.
+    if (
+      ensembleImpact === 0 &&
+      ensemble.alignment !== "MAJORITY" &&
+      typeof console !== "undefined" &&
+      import.meta.env?.DEV
+    ) {
+      console.warn(
+        `[computeConfidence] ensemble impact 0 for non-MAJORITY alignment "${ensemble.alignment}" — expected ${ensemble.alignment === "CONFLICT" ? -5 : 5}. Check calculateEnsembleAlignment mapping.`,
+      );
+    }
     // FIX 1: Claude's STEP 6 + few-shot make it emit its own ensemble/signal/
     // conflict/alignment/poisson adjustment (e.g. {"type":"3_signal_conflict",
     // "delta":-5}). The app then injects its OWN app-computed ensemble delta —
     // counting the same phenomenon twice. Drop ANY Claude adjustment that names
-    // this dimension, then inject the single app-computed value below.
+    // this dimension, then inject the single app-computed value below. The
+    // regex is intentionally broad (matches any suffix, e.g. the run where
+    // Claude emitted "3_signal_conflict_goals" and "poisson_conflict_signal").
     adjustments = adjustments.filter(
       (a) =>
         !/ensemble|signal|conflict|aligned|poisson/i.test(a?.type ?? ""),
