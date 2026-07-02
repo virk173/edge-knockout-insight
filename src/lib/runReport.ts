@@ -626,7 +626,9 @@ function callDataFromSaved(
 
   // C9A stake odds (same extract shape as live)
   const sm = keyExtracts?.odds9A?.markets;
-  out.push("C9A Stake odds:");
+  out.push(
+    `C9A Odds — source: ${na(keyExtracts?.odds9A?.bookmaker) === NA ? "first available book" : keyExtracts?.odds9A?.bookmaker} (labeled "Stake" historically; API-Football does not carry Stake):`,
+  );
   out.push(
     `    Home: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
       v.includes("home"),
