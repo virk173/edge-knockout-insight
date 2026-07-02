@@ -23,6 +23,7 @@ import {
   refetchLineups,
   retrySingleCall,
   buildCallPanelSummary,
+  captureClosingOdds,
   LINEUP_STATE_INFO,
   type CollectionResult,
   type ProgressUpdate,
@@ -1216,8 +1217,29 @@ function MatchView({
   onResetBudget: () => void;
   patchState: (partial: Partial<MatchState>) => void;
 }) {
+  const [capturing, setCapturing] = useState(false);
   const minsToKickoff = minutesUntil(match.kickoffUtc, now);
   const blocked = isMatchBlocked(match.statusShort, minsToKickoff);
+
+  async function handleCaptureClosing() {
+    setCapturing(true);
+    try {
+      const cap = await captureClosingOdds(match);
+      if (!cap) {
+        toast.error("No closing prices available to capture.");
+        return;
+      }
+      const nMarkets = Object.keys(cap.prices).length;
+      toast.success(
+        `Closing line captured — ${cap.source}, ${nMarkets} market${nMarkets === 1 ? "" : "s"}, T-${cap.minutesBeforeKickoff}m`,
+      );
+    } catch (e) {
+      console.error("[clv] capture failed", e);
+      toast.error("Closing-line capture failed.");
+    } finally {
+      setCapturing(false);
+    }
+  }
   const band = timingBand(minsToKickoff, blocked);
 
   const panelSummary = state.collection
@@ -1513,6 +1535,20 @@ function MatchView({
                 >
                   📋 Copy Run Report
                 </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={handleCaptureClosing}
+                    disabled={capturing}
+                    className="self-start rounded-md border border-signal-blue/50 px-4 py-2 font-mono text-xs font-semibold text-signal-blue transition-colors hover:bg-signal-blue/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {capturing ? "📸 Capturing…" : "📸 Capture Closing Line"}
+                  </button>
+                  <p className="text-[11px] text-slate">
+                    Snapshot fresh Pinnacle/Stake prices near kickoff for CLV
+                    tracking (best T-15m).
+                  </p>
+                </div>
               </>
             ) : (
               <div className="flex flex-col gap-2">
