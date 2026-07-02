@@ -14,6 +14,11 @@ import {
   computeClv,
 } from "@/lib/clv";
 import type { CalibrationSample } from "@/lib/calibration";
+import type {
+  AnalysisResult,
+  StraightBet,
+  TierLeg,
+} from "@/lib/analysisResult";
 
 export const LOG_STORAGE_KEY = "edge_wc2026_log";
 
