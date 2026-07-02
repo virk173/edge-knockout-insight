@@ -514,7 +514,7 @@ export function generateRunReport(
   meta: RunReportMeta = {},
 ): string {
   const cr = callStatuses?.callResults ?? {};
-  const r = analysisResult ?? {};
+  const r = normalizeAnalysisResult(analysisResult);
 
   const L: string[] = [];
   const push = (s = "") => L.push(s);
