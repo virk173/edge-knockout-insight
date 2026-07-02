@@ -1257,8 +1257,15 @@ const WANTED_STAKE_MARKETS: Array<{
   {
     // Total cards / bookings. API-Football / Stake expose this under several
     // names ("Cards Over/Under", "Total Cards", "Bookings Over/Under",
-    // "Total Bookings"), so we match broadly on card|booking. No live raw C9A
-    // sample was available to pin the exact string, hence the wide matcher.
+    // "Total Bookings"), so we match broadly on card|booking.
+    //
+    // INTENTIONALLY KEPT — DO NOT "FIX". Verified live on 2026-07-02 across 3
+    // WC2026 fixtures: API-Football's /odds feed carries ZERO cards markets
+    // across all 33 bookmakers, even though the bet-type ID exists in the
+    // catalog. This matcher is correct and harmless (it simply never matches
+    // today); it stays in place so cards extraction works automatically the
+    // day a bookmaker/feed populates the market. See src/lib/dataGaps.ts
+    // (CARDS_MARKET_SOURCE_AVAILABLE) for the display-side gate.
     // Lines 2.5 / 3.5 / 4.5 kept (3.5 is the primary line the report shows).
     label: "Cards Over/Under",
     match: (n) => /card|booking/.test(n),

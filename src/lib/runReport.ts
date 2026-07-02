@@ -15,6 +15,10 @@ import type {
   PersistedKeyExtracts,
 } from "@/lib/resultCache";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
+import {
+  CARDS_MARKET_SOURCE_AVAILABLE,
+  CARDS_UNAVAILABLE_LABEL,
+} from "@/lib/dataGaps";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
@@ -358,11 +362,16 @@ function buildCallData(
     p("C8  Predictions: EMPTY — skipped/failed");
   }
 
-  // ── C9A — Stake odds ──────────────────────────────────────
+  // ── C9A — live odds (labeled "Stake" historically) ────────
+  // NOTE: API-Football does not carry a bookmaker named "Stake"; C9A resolves
+  // to whichever bookmaker the feed returns first for this fixture, which can
+  // vary match to match. We surface the actual source so the label is honest.
   const stakeRoot = cr["9"]?.data as { stakeOdds?: unknown } | null | undefined;
   const stake = extractStakeMarkets(stakeRoot?.stakeOdds ?? null);
   const sm = stake?.markets;
-  p("C9A Stake odds:");
+  p(
+    `C9A Odds — source: ${na(stake?.bookmaker) === NA ? "first available book" : stake?.bookmaker} (labeled "Stake" historically; API-Football does not carry Stake):`,
+  );
   p(
     `    Home: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
       v.includes("home"),
@@ -390,11 +399,18 @@ function buildCallData(
     )}`,
   );
   p(
-    `    Cards 3.5 over: ${stakePrice(
-      sm,
-      "Cards Over/Under",
-      (v) => v.includes("over") && v.includes("3.5"),
-    )}`,
+    // PERMANENT data gap, not a transient N/A — see src/lib/dataGaps.ts.
+    // If a future odds source begins carrying cards, flip
+    // CARDS_MARKET_SOURCE_AVAILABLE to true and this reverts to a live price.
+    `    Cards 3.5 over: ${
+      CARDS_MARKET_SOURCE_AVAILABLE
+        ? stakePrice(
+            sm,
+            "Cards Over/Under",
+            (v) => v.includes("over") && v.includes("3.5"),
+          )
+        : CARDS_UNAVAILABLE_LABEL
+    }`,
   );
   p(`    Overround: ${stakeOverround(sm)}`);
 
@@ -610,7 +626,9 @@ function callDataFromSaved(
 
   // C9A stake odds (same extract shape as live)
   const sm = keyExtracts?.odds9A?.markets;
-  out.push("C9A Stake odds:");
+  out.push(
+    `C9A Odds — source: ${na(keyExtracts?.odds9A?.bookmaker) === NA ? "first available book" : keyExtracts?.odds9A?.bookmaker} (labeled "Stake" historically; API-Football does not carry Stake):`,
+  );
   out.push(
     `    Home: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
       v.includes("home"),

@@ -8,6 +8,7 @@ import {
 } from "@/lib/analysisResult";
 import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
 import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
+import { isCardsMarket, CARDS_UNAVAILABLE_SHORT } from "@/lib/dataGaps";
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
@@ -203,27 +204,47 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
               </span>
               {evaluated.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {evaluated.map((m, i) => (
-                    <Pill
-                      key={i}
-                      className="border-signal-green/40 bg-signal-green/15 text-signal-green"
-                    >
-                      {m}
-                    </Pill>
-                  ))}
+                  {evaluated.map((m, i) =>
+                    isCardsMarket(m) ? (
+                      <span
+                        key={i}
+                        title={CARDS_UNAVAILABLE_SHORT}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-slate"
+                      >
+                        {m} — {CARDS_UNAVAILABLE_SHORT}
+                      </span>
+                    ) : (
+                      <Pill
+                        key={i}
+                        className="border-signal-green/40 bg-signal-green/15 text-signal-green"
+                      >
+                        {m}
+                      </Pill>
+                    ),
+                  )}
                 </div>
               )}
               {rejected.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {rejected.map((m, i) => (
-                    <span
-                      key={i}
-                      title={`EV ${formatEv(m.ev)} — ${m.reason ?? ""}`}
-                      className="inline-flex cursor-help items-center gap-1.5 rounded-full border border-signal-red/40 bg-signal-red/15 px-3 py-1.5 text-xs font-semibold text-signal-red"
-                    >
-                      {m.market}
-                    </span>
-                  ))}
+                  {rejected.map((m, i) =>
+                    isCardsMarket(m.market) ? (
+                      <span
+                        key={i}
+                        title={CARDS_UNAVAILABLE_SHORT}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-slate"
+                      >
+                        {m.market} — {CARDS_UNAVAILABLE_SHORT}
+                      </span>
+                    ) : (
+                      <span
+                        key={i}
+                        title={`EV ${formatEv(m.ev)} — ${m.reason ?? ""}`}
+                        className="inline-flex cursor-help items-center gap-1.5 rounded-full border border-signal-red/40 bg-signal-red/15 px-3 py-1.5 text-xs font-semibold text-signal-red"
+                      >
+                        {m.market}
+                      </span>
+                    ),
+                  )}
                 </div>
               )}
             </div>
