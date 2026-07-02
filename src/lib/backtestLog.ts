@@ -327,6 +327,8 @@ export function appendEnrichedResult(
   writeLogEntries(updated);
   return updated;
 }
+
+export function setRecommendationOutcome(
   entryId: string,
   recIndex: number,
   outcome: Outcome,
