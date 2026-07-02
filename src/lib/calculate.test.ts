@@ -140,6 +140,85 @@ describe("calculateSGPEV", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 2b — calculateKellyStake
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("calculateKellyStake", () => {
+  it("floors at minimum when Kelly stake is below floor", () => {
+    // EV 0.08, odds 1.50
+    // full kelly = 0.08/0.50 = 16%
+    // fractional = 4% of $50 = $2
+    // below floor of $10 → $10
+    const result = calculateKellyStake({
+      ev: 0.08,
+      decimal_odds: 1.5,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(10);
+    expect(result.full_kelly_pct).toBeCloseTo(16, 0);
+  });
+
+  it("caps at ceiling when Kelly stake exceeds ceiling", () => {
+    // EV 0.50, odds 2.00
+    // full kelly = 0.50/1.00 = 50%
+    // fractional = 12.5% of $300 = $37.50
+    // above ceiling of $25 → $25
+    const result = calculateKellyStake({
+      ev: 0.5,
+      decimal_odds: 2.0,
+      bankroll: 300,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(25);
+  });
+
+  it("returns 0 for negative EV", () => {
+    const result = calculateKellyStake({
+      ev: -0.05,
+      decimal_odds: 1.5,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(0);
+    expect(result.reasoning).toContain("Negative");
+  });
+
+  it("returns 0 for zero EV", () => {
+    const result = calculateKellyStake({
+      ev: 0,
+      decimal_odds: 2.0,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(0);
+  });
+
+  it("correctly sizes EV 0.15 at odds 2.00", () => {
+    // full kelly = 0.15/1.00 = 15%
+    // fractional = 3.75% of $50 = $1.88
+    // floored at $10
+    const result = calculateKellyStake({
+      ev: 0.15,
+      decimal_odds: 2.0,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(10);
+    expect(result.full_kelly_pct).toBeCloseTo(15, 0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GROUP 3 — validateModelProbabilities
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 describe("validateModelProbabilities", () => {
