@@ -103,5 +103,5 @@ export function normalizeAnalysisResult(raw: unknown): AnalysisResult {
   return {
     ...(raw as Record<string, unknown>),
     ...(analysisResultSchema.parse({}) as Record<string, unknown>),
-  } as AnalysisResult;
+  } as unknown as AnalysisResult;
 }
