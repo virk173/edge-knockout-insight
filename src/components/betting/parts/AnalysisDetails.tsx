@@ -165,7 +165,7 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                   </span>
                 </div>
               ))}
-              {typeof result.confidence_scores?.final_confidence === "number" && (
+              {typeof result.confidence_scores.final_confidence === "number" && (
                 <div className="mt-1 flex items-center justify-between gap-2 border-t border-border pt-2 text-xs">
                   <span className="font-semibold text-foreground">
                     Final confidence
