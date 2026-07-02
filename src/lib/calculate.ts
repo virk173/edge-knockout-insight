@@ -123,6 +123,57 @@ export function calculateSGPEV(inputs: {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 2b — Kelly Criterion stake sizing
+//   full_kelly       = ev / (decimal_odds − 1)
+//   fractional_kelly = full_kelly × fraction
+//   recommended      = round(clamp(fractional_kelly × bankroll, floor, ceiling))
+//
+//   Negative or zero EV returns a zero-stake, no-bet recommendation.
+// ─────────────────────────────────────────────────────────────
+export const calculateKellyStake = (inputs: {
+  ev: number;
+  decimal_odds: number;
+  bankroll: number;
+  fraction: number;
+  floor: number;
+  ceiling: number;
+}): {
+  full_kelly_pct: number;
+  fractional_kelly_pct: number;
+  recommended_stake: number;
+  reasoning: string;
+} => {
+  if (inputs.ev <= 0) {
+    return {
+      full_kelly_pct: 0,
+      fractional_kelly_pct: 0,
+      recommended_stake: 0,
+      reasoning: "Negative or zero EV — no bet recommended",
+    };
+  }
+
+  const full_kelly = inputs.ev / (inputs.decimal_odds - 1);
+  const fractional_kelly = full_kelly * inputs.fraction;
+  const raw_stake = fractional_kelly * inputs.bankroll;
+  const recommended_stake = Math.round(
+    Math.max(inputs.floor, Math.min(inputs.ceiling, raw_stake)),
+  );
+
+  return {
+    full_kelly_pct: Math.round(full_kelly * 1000) / 10,
+    fractional_kelly_pct: Math.round(fractional_kelly * 1000) / 10,
+    recommended_stake,
+    reasoning:
+      `Full Kelly ${(full_kelly * 100).toFixed(1)}% → ` +
+      `${(inputs.fraction * 100).toFixed(0)}% fractional = ` +
+      `${(fractional_kelly * 100).toFixed(1)}% of $` +
+      `${inputs.bankroll} = ` +
+      `$${raw_stake.toFixed(2)} → ` +
+      `capped at $${recommended_stake}`,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
 // 1b — Stake-anchoring bias correction.
 //   EV is computed against Stake's line. When a Pinnacle (sharp)
 //   reference is available, the gap between the two lines tells us
