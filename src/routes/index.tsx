@@ -1766,7 +1766,9 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain text={plainModelProbabilities(!!mp)} />
         </div>
+
 
         {/* ensemble_check.alignment */}
         <div>
