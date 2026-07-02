@@ -369,8 +369,9 @@ export interface AnalysisResult {
   // emit lineup_dependency.level; lineup_confirmed is set by the pipeline/UI.
   lineup_dependency?: { level?: "HIGH" | "MEDIUM" | "LOW" | string };
   lineup_confirmed?: boolean;
-  markets_evaluated?: string[];
-  markets_rejected?: MarketRejected[];
+  // Guaranteed by normalizeAnalysisResult() — always arrays (may be empty).
+  markets_evaluated: string[];
+  markets_rejected: MarketRejected[];
   key_risk_flag?: string;
   // Validated / normalized fields (computed app-side, see calculate.ts).
   model_probabilities?: ModelProbabilities;
