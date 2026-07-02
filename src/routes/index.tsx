@@ -224,6 +224,13 @@ function Index() {
   const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
   const [bankroll, setBankrollState] = useState(() => getBankroll());
+  const [strictMode, setStrictMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("edge_strict_mode") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
