@@ -247,7 +247,7 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
       {paper && <PaperReason reason={bet.paper_reason} />}
       <NavLabel
         label={
-          bet.legs?.[0]?.stake_label
+          bet.legs[0]?.stake_label
             ? "Soccer → Same Game Parlay\nAdd all legs above"
             : undefined
         }
