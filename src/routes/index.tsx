@@ -865,6 +865,7 @@ Start your response with { and end with }.`;
             entries={logEntries}
             onCycleOutcome={handleCycleOutcome}
             onClear={handleClearLog}
+            onSetManualClosingOdds={handleSetManualClosingOdds}
           />
         </main>
       ) : view === "fixtures" ? (
