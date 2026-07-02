@@ -955,57 +955,94 @@ player_intelligence:
     source_calls array
   players_confirmed_fit array
   suspension_served_eligible array
-tier_1_anchor:
+bet_1:
   active boolean, skip_reason,
-  market, selection, stake string,
+  market (soccer terminology e.g.
+    "Asian Handicap", "Goal Totals",
+    "Moneyline (3-way)"),
+  selection (exact bet e.g. "USA -1",
+    "Over 2.5 Goals", "Draw No Bet"),
+  bet_type "Straight Bet",
+  stake string (Kelly-computed by app
+    from kelly_inputs),
+  kelly_inputs with:
+    ev, decimal_odds, bankroll,
+    fraction, floor, ceiling
   ev_inputs with:
     model_probability, decimal_odds
-  (app computes ev and ev_rating;
-   odds mirrors decimal_odds)
+  (app computes ev, ev_rating and
+   kelly_result; odds mirrors
+   decimal_odds)
+  ev_confidence HIGH or MEDIUM,
+  market_group A B C D or E,
   pinnacle_odds: the Pinnacle decimal
-    price for THIS anchor market if
-    available in C9B/pinnacle data,
-    else null (app uses it to detect
-    Stake-anchoring bias)
+    price for THIS market if available
+    in C9B/pinnacle data, else null,
+  stake_label string (Stake.com
+    navigation + exact selection +
+    time scope + note),
   source_calls array, reasoning string
-tier_2_parlay:
+bet_2:
+  (a SECOND straight bet, from a
+   DIFFERENT market_group than bet_1)
   active boolean, skip_reason,
-  stake string, stake_boost_pct,
-  sgp_validation with:
-    independent_price, stake_sgp_price,
-    sgp_ratio, hold_rate, status
-  probability_derivation with:
-    p_independent, correlation_factor,
-    correlation_basis, p_joint,
-    hold_rate (diagnostic only)
+  market (soccer terminology),
+  selection (exact bet),
+  bet_type "Straight Bet",
+  stake string (Kelly-computed by app
+    from kelly_inputs),
+  kelly_inputs with:
+    ev, decimal_odds, bankroll,
+    fraction, floor, ceiling
+  ev_inputs with:
+    model_probability, decimal_odds
+  (app computes ev, ev_rating and
+   kelly_result)
+  ev_confidence HIGH or MEDIUM,
+  market_group A B C D or E,
+  pinnacle_odds: decimal or null,
+  stake_label string (Stake.com
+    navigation + exact selection +
+    time scope + note),
+  source_calls array, reasoning string
+bet_3:
+  (the 3-leg Same Game Parlay)
+  active boolean, skip_reason,
+  bet_type "Same Game Parlay
+    (3-Leg Accumulator)",
+  stake "$10",
   legs array each with:
-    leg_number, market, selection,
+    leg_number, market (soccer
+      terminology), selection,
     odds, model_probability,
-    pinnacle_odds (Pinnacle decimal
-      price for this leg if available,
-      else null),
-    correlation_logic
-  combined_odds_independent,
+    correlation_logic,
+    stake_label string
+  p_independent, correlation_factor,
+  p_joint, stake_sgp,
   combined_odds_sgp,
-  combined_odds_effective,
-  returns with:
-    potential_return_raw,
-    potential_return_realistic,
-    basis_note
   parlay_ev_inputs with:
     p_joint, stake_sgp
-    (hold_rate is NOT included here)
-  (app computes parlay_ev and ev_rating)
+    (no hold_rate in EV formula)
+  (app computes parlay_ev)
+  returns with:
+    potential_return_raw,
+    potential_return_realistic
   reasoning
-tier_3_jackpot:
+bet_4:
+  (the jackpot accumulator)
   active boolean, skip_reason,
-  stake string, stake_boost_pct,
-  legs array, combined_odds,
-  returns with raw and realistic,
+  bet_type "Jackpot Accumulator
+    (4-5 Leg Parlay)",
+  stake "$10",
+  legs array each with stake_label,
+  combined_odds,
   jackpot_ev_inputs with:
     p_final, combined_odds
   (app computes jackpot_ev)
-  class_c_signals array
+  class_c_signals array,
+  returns with:
+    potential_return_raw,
+    potential_return_realistic
 total_staked: string
 unallocated_stake: string
 markets_evaluated: array
