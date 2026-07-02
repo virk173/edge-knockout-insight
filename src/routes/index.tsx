@@ -549,7 +549,7 @@ function Index() {
       const normalized = normalizeAnalysisResult(enriched);
       const savedAt = Date.now();
       patchState(match.id, {
-        analysisRaw: cleaned,
+        analysisRaw: rawJson,
         analysisResult: normalized,
         tokenUsage,
         analysing: false,
