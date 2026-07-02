@@ -188,22 +188,22 @@ function StraightBetRow({
   );
 }
 
-function SgpBetRow({ bet }: { bet?: SgpBet }) {
-  if (!bet?.active) {
+function SgpBetRow({ bet }: { bet: SgpBet }) {
+  if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4">
         <span className="font-bold text-slate">
           ❌ BET 3 — 3-Leg Accumulator
         </span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason || "Inactive — SGP not viable."}
+          {bet.skip_reason || "Inactive — SGP not viable."}
         </span>
       </div>
     );
   }
 
   const paper = bet.paper_bet === true;
-  const legs = bet.legs ?? [];
+  const legs = bet.legs;
   const odds = sgpCombinedOdds(bet);
   const ret = bet.returns?.potential_return_realistic;
   return (
