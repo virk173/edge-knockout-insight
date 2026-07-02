@@ -13,12 +13,12 @@ import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
 // ─────────────────────────────────────────────────────────────
 export function AnalysisDetails({ result }: { result: AnalysisResult }) {
   const [open, setOpen] = useState(false);
-  const absences = result.player_intelligence?.absences ?? [];
+  const absences = result.player_intelligence.absences;
   const tactical = result.tactical_analysis;
-  const dims = normalizeDimensions(result.confidence_scores?.dimension_breakdown);
-  const adjustments = result.confidence_scores?.adjustments ?? [];
-  const evaluated = result.markets_evaluated ?? [];
-  const rejected = result.markets_rejected ?? [];
+  const dims = normalizeDimensions(result.confidence_scores.dimension_breakdown);
+  const adjustments = result.confidence_scores.adjustments;
+  const evaluated = result.markets_evaluated;
+  const rejected = result.markets_rejected;
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
