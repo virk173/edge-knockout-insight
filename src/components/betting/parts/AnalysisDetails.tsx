@@ -8,6 +8,7 @@ import {
 } from "@/lib/analysisResult";
 import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
 import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
+import { isCardsMarket, CARDS_UNAVAILABLE_SHORT } from "@/lib/dataGaps";
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
