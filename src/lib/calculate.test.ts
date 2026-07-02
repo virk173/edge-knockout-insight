@@ -571,15 +571,25 @@ describe("adjustEVForPinnacleGap", () => {
     expect(result.adjusted_ev).toBeCloseTo(0.12 * 0.85, 4);
   });
 
-  it("returns HIGH confidence and increases EV when Stake is worse than Pinnacle", () => {
+  it("returns HIGH confidence and UNCHANGED EV when Stake is worse than Pinnacle (FIX 4)", () => {
     const result = adjustEVForPinnacleGap({
       raw_ev: 0.08,
       stake_odds: 1.95,
       pinnacle_odds: 2.05,
-      // gap = (1.95/2.05 - 1)*100 = -4.9% < -3% → increase 10%
+      // gap = (1.95/2.05 - 1)*100 = -4.9% < -3% → confidence up, EV unchanged
     });
     expect(result.ev_confidence).toBe("HIGH");
-    expect(result.adjusted_ev).toBeCloseTo(0.08 * 1.1, 4);
+    expect(result.adjusted_ev).toBeCloseTo(0.08, 4);
+  });
+
+  it("FIX 4: raw_ev 0.10, stake 1.70, pinnacle 1.80 → adjusted_ev 0.10 exactly, HIGH", () => {
+    const result = adjustEVForPinnacleGap({
+      raw_ev: 0.1,
+      stake_odds: 1.7,
+      pinnacle_odds: 1.8,
+    });
+    expect(result.adjusted_ev).toBeCloseTo(0.1, 4);
+    expect(result.ev_confidence).toBe("HIGH");
   });
 
   it("returns MEDIUM and unchanged EV when Pinnacle is null", () => {
