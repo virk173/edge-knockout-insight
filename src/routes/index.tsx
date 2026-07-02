@@ -1535,6 +1535,20 @@ function MatchView({
                 >
                   📋 Copy Run Report
                 </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={handleCaptureClosing}
+                    disabled={capturing}
+                    className="self-start rounded-md border border-signal-blue/50 px-4 py-2 font-mono text-xs font-semibold text-signal-blue transition-colors hover:bg-signal-blue/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {capturing ? "📸 Capturing…" : "📸 Capture Closing Line"}
+                  </button>
+                  <p className="text-[11px] text-slate">
+                    Snapshot fresh Pinnacle/Stake prices near kickoff for CLV
+                    tracking (best T-15m).
+                  </p>
+                </div>
               </>
             ) : (
               <div className="flex flex-col gap-2">
