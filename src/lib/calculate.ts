@@ -749,6 +749,29 @@ export const validateDimensionWeights = (inputs: {
   };
 };
 
+/**
+ * Scales the six dimension weights by 100/sum so they always total exactly 100,
+ * then adds any rounding remainder to D1. Used to repair Claude outputs that
+ * don't sum to 100 (e.g. combined H2H-gate + all-fit adjustments producing 95).
+ * The mismatch warning is produced separately by validateDimensionWeights against
+ * the ORIGINAL (pre-normalization) values, so the warning text is preserved.
+ */
+export const normalizeDimensionWeights = (
+  weights: DimensionWeights,
+): DimensionWeights => {
+  const keys: (keyof DimensionWeights)[] = ["D1", "D2", "D3", "D4", "D5", "D6"];
+  const sum = keys.reduce((a, k) => a + (Number(weights[k]) || 0), 0);
+  if (sum <= 0) return { ...weights };
+  const scaled: DimensionWeights = { ...weights };
+  keys.forEach((k) => {
+    scaled[k] = Math.round(((Number(weights[k]) || 0) * 100) / sum);
+  });
+  // Fix any rounding remainder by adjusting D1 so the total is exactly 100.
+  const scaledSum = keys.reduce((a, k) => a + scaled[k], 0);
+  scaled.D1 += 100 - scaledSum;
+  return scaled;
+};
+
 
 // ─────────────────────────────────────────────────────────────
 // Orchestrator
