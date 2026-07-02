@@ -984,12 +984,22 @@ Start your response with { and end with }.`;
           >
             STRICT {strictMode ? "ON" : "OFF"}
           </button>
-          <span
-            className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
-            title="API-Football calls used today (resets at midnight UTC)"
-          >
-            API: {apiCalls}/{DAILY_LIMIT}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
+              title="API-Football calls used today (resets at midnight UTC)"
+            >
+              API: {apiCalls}/{DAILY_LIMIT}
+            </span>
+            <button
+              type="button"
+              onClick={handleResetBudget}
+              className="rounded-md border border-accent-amber/60 px-2.5 py-1 font-mono text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10"
+              title="Reset today's API call counter to 0"
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </header>
 
