@@ -37,7 +37,12 @@ import {
   plainModelProbabilities,
   plainDimensionWeights,
 } from "@/lib/plainEnglish";
-import { getBankroll, setBankroll } from "@/lib/bankroll";
+import {
+  getBankroll,
+  setBankroll,
+  settleBet,
+  removeLedgerEntry,
+} from "@/lib/bankroll";
 import {
   generateRunReport,
   buildPersistedCallSummary,
