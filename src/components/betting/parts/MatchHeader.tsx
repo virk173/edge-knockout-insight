@@ -66,14 +66,14 @@ function ContextFlags({ result }: { result: AnalysisResult }) {
 // Signal strip pills
 // ─────────────────────────────────────────────────────────────
 function SignalStrip({ result }: { result: AnalysisResult }) {
-  const ens = ensemblePill(result.ensemble_check?.alignment);
+  const ens = ensemblePill(result.ensemble_check.alignment);
 
   // Best Stake EV across the four bets.
   const evs = [
-    result.bet_1?.ev,
-    result.bet_2?.ev,
-    result.bet_3?.parlay_ev,
-    result.bet_4?.jackpot_ev,
+    result.bet_1.ev,
+    result.bet_2.ev,
+    result.bet_3.parlay_ev,
+    result.bet_4.jackpot_ev,
   ].filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   const bestEv = evs.length ? Math.max(...evs) : undefined;
   const evClass =
@@ -130,7 +130,7 @@ export function MatchHeader({ result }: { result: AnalysisResult }) {
           </div>
           <ContextFlags result={result} />
         </div>
-        <ConfidenceMeter value={result.confidence_scores?.final_confidence} />
+        <ConfidenceMeter value={result.confidence_scores.final_confidence} />
       </div>
       <SignalStrip result={result} />
     </div>

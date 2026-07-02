@@ -9,6 +9,7 @@ import type {
   Absence,
   ConfidenceAdjustment,
 } from "@/lib/analysisResult";
+import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
@@ -513,7 +514,7 @@ export function generateRunReport(
   meta: RunReportMeta = {},
 ): string {
   const cr = callStatuses?.callResults ?? {};
-  const r = analysisResult ?? {};
+  const r = normalizeAnalysisResult(analysisResult);
 
   const L: string[] = [];
   const push = (s = "") => L.push(s);
@@ -565,7 +566,7 @@ export function generateRunReport(
   push();
 
 
-  const cs = r.confidence_scores ?? {};
+  const cs = r.confidence_scores;
   push("CONFIDENCE");
   push(
     `Raw: ${na(

@@ -130,16 +130,16 @@ function StraightBetRow({
   bet,
 }: {
   index: number;
-  bet?: StraightBet;
+  bet: StraightBet;
 }) {
-  if (!bet?.active) {
+  if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
         <span className="font-bold text-slate">
           ❌ BET {index} — Straight Bet
         </span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason || "Inactive — no qualifying value."}
+          {bet.skip_reason || "Inactive — no qualifying value."}
         </span>
       </div>
     );
@@ -188,22 +188,22 @@ function StraightBetRow({
   );
 }
 
-function SgpBetRow({ bet }: { bet?: SgpBet }) {
-  if (!bet?.active) {
+function SgpBetRow({ bet }: { bet: SgpBet }) {
+  if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4">
         <span className="font-bold text-slate">
           ❌ BET 3 — 3-Leg Accumulator
         </span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason || "Inactive — SGP not viable."}
+          {bet.skip_reason || "Inactive — SGP not viable."}
         </span>
       </div>
     );
   }
 
   const paper = bet.paper_bet === true;
-  const legs = bet.legs ?? [];
+  const legs = bet.legs;
   const odds = sgpCombinedOdds(bet);
   const ret = bet.returns?.potential_return_realistic;
   return (
@@ -247,7 +247,7 @@ function SgpBetRow({ bet }: { bet?: SgpBet }) {
       {paper && <PaperReason reason={bet.paper_reason} />}
       <NavLabel
         label={
-          bet.legs?.[0]?.stake_label
+          bet.legs[0]?.stake_label
             ? "Soccer → Same Game Parlay\nAdd all legs above"
             : undefined
         }
@@ -257,14 +257,14 @@ function SgpBetRow({ bet }: { bet?: SgpBet }) {
   );
 }
 
-function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
-  if (!bet?.active) {
-    const met = bet?.class_c_signals?.length ?? 0;
+function JackpotBetRow({ bet }: { bet: JackpotBet }) {
+  if (!bet.active) {
+    const met = bet.class_c_signals?.length ?? 0;
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4">
         <span className="font-bold text-slate">❌ BET 4 — Jackpot</span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason ||
+          {bet.skip_reason ||
             (met > 0
               ? `${met} of 3 CLASS C signals — jackpot not triggered.`
               : "No CLASS C signals this match.")}
@@ -274,7 +274,7 @@ function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
   }
 
   const paper = bet.paper_bet === true;
-  const legs = bet.legs ?? [];
+  const legs = bet.legs;
   const ret = bet.returns?.potential_return_realistic;
   return (
     <div className={cn("flex flex-col gap-1 border-t border-border pt-4", paper && PAPER_WRAP)}>

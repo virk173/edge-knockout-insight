@@ -13,12 +13,12 @@ import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
 // ─────────────────────────────────────────────────────────────
 export function AnalysisDetails({ result }: { result: AnalysisResult }) {
   const [open, setOpen] = useState(false);
-  const absences = result.player_intelligence?.absences ?? [];
+  const absences = result.player_intelligence.absences;
   const tactical = result.tactical_analysis;
-  const dims = normalizeDimensions(result.confidence_scores?.dimension_breakdown);
-  const adjustments = result.confidence_scores?.adjustments ?? [];
-  const evaluated = result.markets_evaluated ?? [];
-  const rejected = result.markets_rejected ?? [];
+  const dims = normalizeDimensions(result.confidence_scores.dimension_breakdown);
+  const adjustments = result.confidence_scores.adjustments;
+  const evaluated = result.markets_evaluated;
+  const rejected = result.markets_rejected;
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
@@ -140,7 +140,7 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                   </span>
                 </div>
               ))}
-              {typeof result.confidence_scores?.dimension_weighted_raw === "number" && (
+              {typeof result.confidence_scores.dimension_weighted_raw === "number" && (
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-slate">Weighted raw</span>
                   <span className="font-semibold text-foreground">
@@ -165,7 +165,7 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                   </span>
                 </div>
               ))}
-              {typeof result.confidence_scores?.final_confidence === "number" && (
+              {typeof result.confidence_scores.final_confidence === "number" && (
                 <div className="mt-1 flex items-center justify-between gap-2 border-t border-border pt-2 text-xs">
                   <span className="font-semibold text-foreground">
                     Final confidence

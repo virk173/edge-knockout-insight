@@ -34,6 +34,7 @@ import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
 import { getBankroll, setBankroll } from "@/lib/bankroll";
 import { generateRunReport } from "@/lib/runReport";
+import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 import {
   readResultCache,
   writeResultCache,
@@ -308,7 +309,7 @@ function Index() {
         if (!cached) continue;
         next[m.id] = {
           ...(existing ?? EMPTY_MATCH_STATE),
-          analysisResult: cached.result,
+          analysisResult: normalizeAnalysisResult(cached.result),
           analysisRaw: cached.rawClaudeJson,
           tokenUsage: cached.tokenUsage,
           analysisSavedAt: cached.savedAt,
@@ -529,10 +530,13 @@ function Index() {
         strictMode: strictMode,
         lambda: getCalibration().lambda,
       });
+      // Guarantee a consistent structure before the result reaches the UI or
+      // the cache. Every display component can then read containers directly.
+      const normalized = normalizeAnalysisResult(enriched);
       const savedAt = Date.now();
       patchState(match.id, {
         analysisRaw: cleaned,
-        analysisResult: enriched,
+        analysisResult: normalized,
         tokenUsage,
         analysing: false,
         analysisSavedAt: savedAt,
@@ -543,16 +547,16 @@ function Index() {
       writeResultCache({
         matchId: match.id,
         match: `${match.home} vs ${match.away}`,
-        result: enriched as AnalysisResult,
+        result: normalized,
         rawClaudeJson: cleaned,
-        sgpChain: extractSgpChain(enriched as AnalysisResult),
+        sgpChain: extractSgpChain(normalized),
         tokenUsage,
         responseTimeMs,
         savedAt,
       });
       toast.success("Analysis complete");
 
-      const logEntry = enriched?.log_entry;
+      const logEntry = normalized.log_entry;
       if (logEntry && typeof logEntry === "object") {
         const updated = appendLogEntry(logEntry);
         setLogEntries(updated);

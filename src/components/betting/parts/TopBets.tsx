@@ -75,7 +75,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
 
   const rows: TopBetRow[] = [];
 
-  if (b1?.active) {
+  if (b1.active) {
     rows.push({
       key: "bet1",
       label: "BET 1",
@@ -87,7 +87,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b2?.active) {
+  if (b2.active) {
     rows.push({
       key: "bet2",
       label: "BET 2",
@@ -99,8 +99,8 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b3?.active) {
-    const legs = b3.legs ?? [];
+  if (b3.active) {
+    const legs = b3.legs;
     const sel = legs
       .map((l: TierLeg) => l.selection || l.market)
       .filter(Boolean)
@@ -115,8 +115,8 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b4?.active) {
-    const legs = b4.legs ?? [];
+  if (b4.active) {
+    const legs = b4.legs;
     rows.push({
       key: "bet4",
       label: `BET 4 — ${legs.length}-leg jackpot`,
@@ -154,7 +154,7 @@ export function TopBets({ result }: { result: AnalysisResult }) {
           <span className="font-semibold text-accent-amber">
             {result.unallocated_stake ?? "$50"} unallocated
           </span>
-          {b1?.skip_reason ? ` — ${b1.skip_reason}` : ""}
+          {b1.skip_reason ? ` — ${b1.skip_reason}` : ""}
         </p>
       ) : (
         <>

@@ -130,7 +130,8 @@ export interface ConfidenceScores {
   // Raw variables from Claude (preferred source of truth).
   confidence_inputs?: ConfidenceInputs;
   dimension_weighted_raw?: number;
-  adjustments?: ConfidenceAdjustment[];
+  // Guaranteed by normalizeAnalysisResult() — always an array (may be empty).
+  adjustments: ConfidenceAdjustment[];
   post_adjustment?: number;
   bayesian_applied?: boolean;
   bayesian_formula?: string;
@@ -171,7 +172,8 @@ export interface Absence {
 }
 
 export interface PlayerIntelligence {
-  absences?: Absence[];
+  // Guaranteed by normalizeAnalysisResult() — always an array (may be empty).
+  absences: Absence[];
   players_confirmed_fit?: string[];
   suspension_served_eligible?: string[];
 }
@@ -250,7 +252,7 @@ export interface SgpBet {
   skip_reason?: string | null;
   bet_type?: string; // "Same Game Parlay (3-Leg Accumulator)"
   stake?: string;
-  legs?: TierLeg[];
+  legs: TierLeg[]; // guaranteed by normalizeAnalysisResult() (may be empty)
   p_independent?: number;
   correlation_factor?: number;
   p_joint?: number;
@@ -273,7 +275,7 @@ export interface JackpotBet {
   skip_reason?: string | null;
   bet_type?: string; // "Jackpot Accumulator (4-5 Leg Parlay)"
   stake?: string;
-  legs?: TierLeg[];
+  legs: TierLeg[]; // guaranteed by normalizeAnalysisResult() (may be empty)
   combined_odds?: number;
   returns?: TierReturns;
   // Raw variables from Claude (preferred source of truth for EV).
@@ -345,14 +347,16 @@ export interface AnalysisResult {
   // Raw variables from Claude (preferred source of truth for overround).
   overround_inputs?: OverroundInputs;
   overround_stake?: number;
-  ensemble_check?: EnsembleCheck;
-  confidence_scores?: ConfidenceScores;
+  // Guaranteed containers — normalizeAnalysisResult() always populates these,
+  // so display components can read them without optional chaining.
+  ensemble_check: EnsembleCheck;
+  confidence_scores: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
-  player_intelligence?: PlayerIntelligence;
-  bet_1?: StraightBet;
-  bet_2?: StraightBet;
-  bet_3?: SgpBet;
-  bet_4?: JackpotBet;
+  player_intelligence: PlayerIntelligence;
+  bet_1: StraightBet;
+  bet_2: StraightBet;
+  bet_3: SgpBet;
+  bet_4: JackpotBet;
   total_staked?: string;
   unallocated_stake?: string;
   match_exposure_pct?: string;
@@ -365,8 +369,9 @@ export interface AnalysisResult {
   // emit lineup_dependency.level; lineup_confirmed is set by the pipeline/UI.
   lineup_dependency?: { level?: "HIGH" | "MEDIUM" | "LOW" | string };
   lineup_confirmed?: boolean;
-  markets_evaluated?: string[];
-  markets_rejected?: MarketRejected[];
+  // Guaranteed by normalizeAnalysisResult() — always arrays (may be empty).
+  markets_evaluated: string[];
+  markets_rejected: MarketRejected[];
   key_risk_flag?: string;
   // Validated / normalized fields (computed app-side, see calculate.ts).
   model_probabilities?: ModelProbabilities;
