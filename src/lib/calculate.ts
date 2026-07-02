@@ -5,8 +5,8 @@
  * only for every quantitative field, never the computed result. This module
  * takes Claude's raw JSON output and computes every derived figure:
  *
- *   1. Single-bet EV          (tier_1_anchor.ev)
- *   2. Parlay / jackpot EV     (tier_2_parlay.parlay_ev, tier_3_jackpot.jackpot_ev)
+ *   1. Single-bet EV          (bet_1.ev, bet_2.ev)
+ *   2. Parlay / jackpot EV     (bet_3.parlay_ev, bet_4.jackpot_ev)
  *   3. Gap scores              (player_intelligence.absences[].gap_score)
  *   4. Confidence score        (confidence_scores.final_confidence)
  *   5. Stacked multipliers     (player_intelligence.absences[].stacked_multiplier)
