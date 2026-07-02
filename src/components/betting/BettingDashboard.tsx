@@ -130,16 +130,16 @@ function StraightBetRow({
   bet,
 }: {
   index: number;
-  bet?: StraightBet;
+  bet: StraightBet;
 }) {
-  if (!bet?.active) {
+  if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
         <span className="font-bold text-slate">
           ❌ BET {index} — Straight Bet
         </span>
         <span className="text-[13px] text-slate">
-          {bet?.skip_reason || "Inactive — no qualifying value."}
+          {bet.skip_reason || "Inactive — no qualifying value."}
         </span>
       </div>
     );
