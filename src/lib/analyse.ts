@@ -2729,7 +2729,53 @@ export async function collectMatchData(
     blockOpts,
   );
 
-  // 9: odds (Stake via API-Football only)
+  // FIX 3a — INJURIES fallback. When CALL 5 (API-Football /injuries) is EMPTY or
+  // FAILED, pull TheStatsAPI /football/teams/{id}/injuries-suspensions for each
+  // side and merge into the CALL 5 shape the compactor reads. Only active=true
+  // records are kept, so they count as absences for the CALL 6B trigger.
+  {
+    const c5 = callResults["5"]?.status;
+    if (c5 === "EMPTY" || c5 === "FAILED") {
+      const ref = await ensureStatsApiMatch();
+      if (ref?.homeTeamId || ref?.awayTeamId) {
+        currentDebugCall = "5";
+        const merged: Array<Record<string, unknown>> = [];
+        let anyFetched = false;
+        const teams: Array<[string | null, string | null]> = [
+          [ref?.homeTeamId ?? null, ref?.homeTeamName ?? match.home],
+          [ref?.awayTeamId ?? null, ref?.awayTeamName ?? match.away],
+        ];
+        for (const [teamId, teamName] of teams) {
+          if (!teamId) continue;
+          try {
+            const payload = await saGet(
+              `/football/teams/${teamId}/injuries-suspensions`,
+            );
+            anyFetched = true;
+            merged.push(...mapStatsApiInjuries(payload, teamName));
+          } catch (e) {
+            console.warn(
+              `[analyse] CALL 5 injuries fallback failed for ${teamId}`,
+              e,
+            );
+          }
+        }
+        if (anyFetched) {
+          record(
+            "5",
+            "Injuries (TheStatsAPI injuries-suspensions fallback)",
+            merged.length ? "SUCCESS" : "EMPTY",
+            merged.length ? merged : undefined,
+            merged.length
+              ? undefined
+              : "No active injuries/suspensions via TheStatsAPI fallback.",
+          );
+        }
+        currentDebugCall = null;
+      }
+    }
+  }
+
   // FIX 5 — runs immediately after CALL 5 (injuries) and BEFORE the CALL 6
   // lineup retry loop, so odds are captured fresh rather than going stale while
   // CALL 6 blocks up to 5×60s inside the pre-kickoff window. Order preserved:
