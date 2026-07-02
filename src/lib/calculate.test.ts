@@ -967,8 +967,15 @@ describe("FIX 1 — confidence no double-count", () => {
       },
       { signal_1_model: 1.95, signal_2_poisson: 2.3, signal_3_historical: 2.4 },
     );
-    // 72 - 3 (xG survives) - 5 (single app conflict) = 64
-    expect(conf?.post_adjustment).toBe(64);
+    // signals 1.95/2.3/2.4 → MAJORITY (impact 0). App DROPS Claude's -5 conflict
+    // (no double-count) and injects its own 0: 72 - 3 (xG survives) + 0 = 69.
+    expect(conf?.post_adjustment).toBe(69);
+    // The single injected ensemble delta replaces any Claude-supplied one.
+    expect(
+      conf?.adjustments.filter((a) =>
+        /ensemble|signal|conflict|aligned|poisson/i.test(a.type),
+      ).length,
+    ).toBe(1);
   });
 });
 
