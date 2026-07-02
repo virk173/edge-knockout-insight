@@ -343,9 +343,11 @@ export function BacktestLog({
                         <div
                           key={i}
                           className={`rounded-lg border p-4 ${
-                            rec.paper
-                              ? "border-signal-blue/40 bg-signal-blue/5"
-                              : "border-border bg-background/60"
+                            rec.action_bet
+                              ? "border-accent-amber/40 bg-accent-amber/5"
+                              : rec.paper
+                                ? "border-signal-blue/40 bg-signal-blue/5"
+                                : "border-border bg-background/60"
                           }`}
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -356,7 +358,17 @@ export function BacktestLog({
                                     T{rec.tier}
                                   </span>
                                 )}
-                                {rec.paper && (
+                                {rec.action_bet && (
+                                  <span className="mr-2 rounded border border-accent-amber/40 bg-accent-amber/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-accent-amber">
+                                    💵 Action
+                                  </span>
+                                )}
+                                {rec.shadow && (
+                                  <span className="mr-2 rounded border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#a78bfa]">
+                                    👻 Shadow
+                                  </span>
+                                )}
+                                {rec.paper && !rec.action_bet && (
                                   <span className="mr-2 rounded border border-signal-blue/40 bg-signal-blue/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-signal-blue">
                                     📝 Paper
                                   </span>
