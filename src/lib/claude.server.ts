@@ -160,6 +160,19 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
           cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ],
+      // Force the model to answer by calling submit_analysis, so the response
+      // arrives as structured JSON on a tool_use block. cache_control keeps the
+      // (static) tool definition warm alongside the system prompt.
+      tools: [
+        {
+          name: ANALYSIS_TOOL_NAME,
+          description:
+            "Submit the completed match analysis as a single structured JSON object. Populate every field you would otherwise have returned as raw JSON text — do not omit sections that you have data for.",
+          input_schema: ANALYSIS_TOOL_INPUT_SCHEMA,
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+      ],
+      tool_choice: { type: "tool", name: ANALYSIS_TOOL_NAME },
       messages: [{ role: "user", content: input.userMessage }],
     });
 
