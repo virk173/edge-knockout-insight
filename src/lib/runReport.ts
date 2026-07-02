@@ -8,7 +8,6 @@ import type {
   AnalysisResult,
   Absence,
   ConfidenceAdjustment,
-  TierLeg,
 } from "@/lib/analysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
@@ -98,9 +97,6 @@ function fmtAbsence(a: Absence): string {
   ].join("\n");
 }
 
-function fmtLeg(leg: TierLeg, i: number): string {
-  return `  Leg ${leg?.leg_number ?? i + 1}: ${na(leg?.selection)} @ ${num(leg?.odds)}`;
-}
 
 // ─────────────────────────────────────────────────────────────
 // CALL DATA helpers — pull the ACTUAL extracted values out of each
@@ -632,55 +628,94 @@ export function generateRunReport(
   );
   push();
 
-  // ── Tier 1 ──────────────────────────────────────────────
-  const t1 = r.tier_1_anchor ?? {};
-  push("TIER 1");
-  if (t1.active) {
-    push(`  ${na(t1.market)} — ${na(t1.selection)}`);
-    push(`  Odds:${num(t1.odds)} Stake:${na(t1.stake)}`);
-    push(`  EV:${signed(t1.ev)} (${na(t1.ev_rating)})`);
-    push(`  Model prob:${na(t1.model_probability)}`);
-  } else {
-    push(`  INACTIVE — ${na(t1.skip_reason)}`);
-    push(`  EV was: ${signed(t1.ev)}`);
-  }
-  push();
+  // ── Bet 1 — straight bet ────────────────────────────────
+  const pctOf = (v: unknown, bankroll: unknown): string => {
+    const kb = typeof bankroll === "number" && Number.isFinite(bankroll) ? bankroll : 50;
+    return `${na(v)}% of $${kb}`;
+  };
+  const evPct = (v: unknown): string => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return NA;
+    return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+  };
+  const fmtStraight = (bet: (typeof r)["bet_1"], label: string) => {
+    push(label);
+    if (bet?.active) {
+      push(`  ${na(bet.market)}: ${na(bet.selection)}`);
+      push(`  Stake:${na(bet.stake)} | Odds:${num(bet.odds)}`);
+      push(
+        `  EV:${evPct(bet.ev)} | Kelly:${pctOf(
+          bet.kelly_result?.fractional_kelly_pct,
+          bet.kelly_inputs?.bankroll,
+        )}`,
+      );
+      if (bet.stake_label) push(`  📍 ${bet.stake_label}`);
+    } else {
+      push(`  INACTIVE — ${na(bet?.skip_reason)}`);
+      push(`  EV was: ${signed(bet?.ev)}`);
+    }
+    push();
+  };
+  fmtStraight(r.bet_1, "BET 1 — STRAIGHT BET");
+  fmtStraight(r.bet_2, "BET 2 — STRAIGHT BET");
 
-  // ── Tier 2 SGP ──────────────────────────────────────────
-  const t2 = r.tier_2_parlay ?? {};
-  const pe = t2.parlay_ev_inputs ?? {};
-  push("TIER 2 SGP");
-  if (t2.active) {
-    const legs = t2.legs ?? [];
-    if (legs.length) legs.forEach((leg, i) => push(fmtLeg(leg, i)));
-    else push("  Legs: N/A");
-    push(`  p_joint:${na(pe.p_joint)} stake_sgp:${na(pe.stake_sgp)}`);
-    push(`  Parlay EV:${signed(t2.parlay_ev)}`);
+  // ── Bet 3 — 3-leg SGP ───────────────────────────────────
+  const b3 = r.bet_3 ?? {};
+  const pe = b3.parlay_ev_inputs ?? {};
+  push("BET 3 — 3-LEG ACCUMULATOR (SGP)");
+  if (b3.active) {
+    const legs = b3.legs ?? [];
+    if (legs.length) {
+      legs.forEach((leg, i) => {
+        push(
+          `  Leg ${leg?.leg_number ?? i + 1}: ${na(leg?.market)} — ${na(
+            leg?.selection,
+          )} @ ${num(leg?.odds)}`,
+        );
+        if (leg?.stake_label) push(`    📍 ${leg.stake_label}`);
+      });
+    } else {
+      push("  Legs: N/A");
+    }
+    push(`  Combined SGP odds:${num(b3.combined_odds_sgp)}`);
     push(
-      `  Stake:${na(t2.stake)} Return:${na(
-        t2.returns?.potential_return_realistic,
+      `  Stake:${na(b3.stake)} | Return:~${na(
+        b3.returns?.potential_return_realistic,
       )}`,
     );
+    push(`  p_joint:${na(pe.p_joint)} | Parlay EV:${evPct(b3.parlay_ev)}`);
   } else {
-    push(`  INACTIVE — ${na(t2.skip_reason)}`);
-    push(`  Parlay EV was: ${signed(t2.parlay_ev)}`);
+    push(`  INACTIVE — ${na(b3.skip_reason)}`);
+    push(`  Parlay EV was: ${signed(b3.parlay_ev)}`);
   }
   push();
 
-  // ── Tier 3 ──────────────────────────────────────────────
-  const t3 = r.tier_3_jackpot ?? {};
-  const signals =
-    Array.isArray(t3.class_c_signals) && t3.class_c_signals.length
-      ? t3.class_c_signals.join(", ")
+  // ── Bet 4 — jackpot ─────────────────────────────────────
+  const b4 = r.bet_4 ?? {};
+  const jSignals =
+    Array.isArray(b4.class_c_signals) && b4.class_c_signals.length
+      ? b4.class_c_signals.join(", ")
       : "none";
-  push("TIER 3");
-  if (t3.active) {
-    push(`  CLASS C signals: ${signals}`);
-    push(`  Odds:${num(t3.combined_odds)} Stake:${na(t3.stake)}`);
-    push(`  EV:${signed(t3.jackpot_ev)}`);
+  push("BET 4 — JACKPOT ACCUMULATOR");
+  if (b4.active) {
+    const legs = b4.legs ?? [];
+    if (legs.length) {
+      legs.forEach((leg, i) => {
+        push(
+          `  Leg ${leg?.leg_number ?? i + 1}: ${na(leg?.market)} — ${na(
+            leg?.selection,
+          )} @ ${num(leg?.odds)}`,
+        );
+        if (leg?.stake_label) push(`    📍 ${leg.stake_label}`);
+      });
+    } else {
+      push("  Legs: N/A");
+    }
+    push(`  CLASS C signals: ${jSignals}`);
+    push(`  Odds:${num(b4.combined_odds)} Stake:${na(b4.stake)}`);
+    push(`  EV:${evPct(b4.jackpot_ev)}`);
   } else {
-    push(`  INACTIVE — ${na(t3.skip_reason)}`);
-    push(`  Signals found: ${signals}`);
+    push(`  Not available — ${na(b4.skip_reason)}`);
+    push(`  Signals found: ${jSignals}`);
   }
   push();
 

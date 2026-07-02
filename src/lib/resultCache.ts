@@ -60,7 +60,7 @@ function toNum(v: unknown): number | null {
  * probability_derivation fields (p_independent, correlation_factor, hold_rate).
  */
 export function extractSgpChain(result: AnalysisResult | null | undefined): SgpChain {
-  const t2 = (result?.tier_2_parlay ?? {}) as Record<string, unknown>;
+  const t2 = (result?.bet_3 ?? {}) as Record<string, unknown>;
   const inputs = (t2.parlay_ev_inputs ?? {}) as Record<string, unknown>;
   const deriv = (t2.probability_derivation ?? {}) as Record<string, unknown>;
   const sgpVal = (t2.sgp_validation ?? {}) as Record<string, unknown>;

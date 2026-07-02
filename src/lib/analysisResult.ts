@@ -15,6 +15,22 @@ export interface EvInputs {
   decimal_odds?: number;
 }
 
+export interface KellyInputs {
+  ev?: number;
+  decimal_odds?: number;
+  bankroll?: number;
+  fraction?: number;
+  floor?: number;
+  ceiling?: number;
+}
+
+export interface KellyResult {
+  full_kelly_pct: number;
+  fractional_kelly_pct: number;
+  recommended_stake: number;
+  reasoning: string;
+}
+
 export interface ParlayEvInputs {
   // Correct inputs: parlay_ev = p_joint × stake_sgp − 1.
   p_joint?: number;
@@ -164,6 +180,7 @@ export interface TierLeg {
   odds?: number;
   model_probability?: number;
   correlation_logic?: string;
+  stake_label?: string;
   // Pinnacle-gap EV adjustment (computed app-side when a leg has both a
   // model_probability and a Pinnacle reference price).
   pinnacle_odds?: number | null;
@@ -171,28 +188,6 @@ export interface TierLeg {
   ev?: number;
   ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
   pinnacle_check_note?: string;
-}
-
-export interface Tier1Anchor {
-  active?: boolean;
-  skip_reason?: string | null;
-  market?: string;
-  selection?: string;
-  stake?: string;
-  odds?: number;
-  model_probability?: number;
-  // Raw variables from Claude (preferred source of truth for EV).
-  ev_inputs?: EvInputs;
-  books_true_implied?: number;
-  ev?: number;
-  ev_rating?: string;
-  // Pinnacle-gap EV adjustment (computed app-side, see calculate.ts).
-  pinnacle_odds?: number | null;
-  raw_ev?: number;
-  ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
-  pinnacle_check_note?: string;
-
-  reasoning?: string;
 }
 
 export interface TierReturns {
@@ -209,13 +204,50 @@ export interface SgpValidation {
   status?: string;
 }
 
-export interface Tier2Parlay {
+// ─────────────────────────────────────────────────────────────
+// 4-bet architecture (Section 7). bet_1 and bet_2 are Kelly-sized
+// straight bets; bet_3 is the 3-leg SGP; bet_4 is the jackpot.
+// ─────────────────────────────────────────────────────────────
+export interface StraightBet {
   active?: boolean;
   skip_reason?: string | null;
+  market?: string;
+  selection?: string;
+  bet_type?: string; // "Straight Bet"
+  stake?: string; // Kelly-computed by app from kelly_inputs
+  odds?: number;
+  model_probability?: number;
+  market_group?: string; // A | B | C | D | E
+  stake_label?: string;
+  source_calls?: string[];
+  // Raw variables from Claude (preferred source of truth for EV).
+  ev_inputs?: EvInputs;
+  books_true_implied?: number;
+  ev?: number;
+  ev_rating?: string;
+  // Kelly stake sizing (computed app-side, see calculate.ts).
+  kelly_inputs?: KellyInputs;
+  kelly_result?: KellyResult;
+  // Pinnacle-gap EV adjustment (computed app-side, see calculate.ts).
+  pinnacle_odds?: number | null;
+  raw_ev?: number;
+  ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
+  pinnacle_check_note?: string;
+  reasoning?: string;
+}
+
+export interface SgpBet {
+  active?: boolean;
+  skip_reason?: string | null;
+  bet_type?: string; // "Same Game Parlay (3-Leg Accumulator)"
   stake?: string;
-  stake_boost_pct?: number;
-  sgp_validation?: SgpValidation;
   legs?: TierLeg[];
+  p_independent?: number;
+  correlation_factor?: number;
+  p_joint?: number;
+  stake_sgp?: number;
+  combined_odds_sgp?: number;
+  sgp_validation?: SgpValidation;
   returns?: TierReturns;
   // Raw variables from Claude (preferred source of truth for EV).
   parlay_ev_inputs?: ParlayEvInputs;
@@ -224,19 +256,21 @@ export interface Tier2Parlay {
   reasoning?: string;
 }
 
-export interface Tier3Jackpot {
+export interface JackpotBet {
   active?: boolean;
   skip_reason?: string | null;
+  bet_type?: string; // "Jackpot Accumulator (4-5 Leg Parlay)"
   stake?: string;
-  stake_boost_pct?: number;
   legs?: TierLeg[];
   combined_odds?: number;
   returns?: TierReturns;
   // Raw variables from Claude (preferred source of truth for EV).
   jackpot_ev_inputs?: JackpotEvInputs;
   jackpot_ev?: number;
+  ev_rating?: string;
   class_c_signals?: string[];
 }
+
 
 export interface MarketRejected {
   market?: string;
@@ -300,9 +334,10 @@ export interface AnalysisResult {
   confidence_scores?: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
   player_intelligence?: PlayerIntelligence;
-  tier_1_anchor?: Tier1Anchor;
-  tier_2_parlay?: Tier2Parlay;
-  tier_3_jackpot?: Tier3Jackpot;
+  bet_1?: StraightBet;
+  bet_2?: StraightBet;
+  bet_3?: SgpBet;
+  bet_4?: JackpotBet;
   total_staked?: string;
   unallocated_stake?: string;
   markets_evaluated?: string[];

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   calculateEV,
   calculateSGPEV,
+  calculateKellyStake,
   validateModelProbabilities,
   calculateEnsembleAlignment,
   detectDeadRubber,
@@ -135,6 +136,85 @@ describe("calculateSGPEV", () => {
         effective_sgp_price: 4.0,
       }),
     ).toBeCloseTo(0.2, 4);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 2b — calculateKellyStake
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("calculateKellyStake", () => {
+  it("floors at minimum when Kelly stake is below floor", () => {
+    // EV 0.08, odds 1.50
+    // full kelly = 0.08/0.50 = 16%
+    // fractional = 4% of $50 = $2
+    // below floor of $10 → $10
+    const result = calculateKellyStake({
+      ev: 0.08,
+      decimal_odds: 1.5,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(10);
+    expect(result.full_kelly_pct).toBeCloseTo(16, 0);
+  });
+
+  it("caps at ceiling when Kelly stake exceeds ceiling", () => {
+    // EV 0.50, odds 2.00
+    // full kelly = 0.50/1.00 = 50%
+    // fractional = 12.5% of $300 = $37.50
+    // above ceiling of $25 → $25
+    const result = calculateKellyStake({
+      ev: 0.5,
+      decimal_odds: 2.0,
+      bankroll: 300,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(25);
+  });
+
+  it("returns 0 for negative EV", () => {
+    const result = calculateKellyStake({
+      ev: -0.05,
+      decimal_odds: 1.5,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(0);
+    expect(result.reasoning).toContain("Negative");
+  });
+
+  it("returns 0 for zero EV", () => {
+    const result = calculateKellyStake({
+      ev: 0,
+      decimal_odds: 2.0,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(0);
+  });
+
+  it("correctly sizes EV 0.15 at odds 2.00", () => {
+    // full kelly = 0.15/1.00 = 15%
+    // fractional = 3.75% of $50 = $1.88
+    // floored at $10
+    const result = calculateKellyStake({
+      ev: 0.15,
+      decimal_odds: 2.0,
+      bankroll: 50,
+      fraction: 0.25,
+      floor: 10,
+      ceiling: 25,
+    });
+    expect(result.recommended_stake).toBe(10);
+    expect(result.full_kelly_pct).toBeCloseTo(15, 0);
   });
 });
 
@@ -582,11 +662,11 @@ describe("validateDimensionWeights", () => {
 // GROUP 8 — EV gate in calculateResults
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 describe("EV gate in calculateResults", () => {
-  it("forces tier_1 inactive when computed EV is negative", () => {
+  it("forces bet_1 inactive when computed EV is negative", () => {
     // Simulates France vs Sweden
-    // Tier 1: Over 2.5 @ 1.38, model 56.5% → EV -0.220
+    // Bet 1: Over 2.5 @ 1.38, model 56.5% → EV -0.220
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: true,
         ev_inputs: {
           model_probability: 0.565,
@@ -594,14 +674,14 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "MARGINAL",
       },
-      tier_2_parlay: {
+      bet_3: {
         active: false,
         parlay_ev_inputs: {
           p_final: 0,
           effective_sgp_price: 0,
         },
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -610,22 +690,22 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_1_anchor?.active).toBe(false);
-    expect(result.tier_1_anchor?.ev_rating).toBe("NEGATIVE");
+    expect(result.bet_1?.active).toBe(false);
+    expect(result.bet_1?.ev_rating).toBe("NEGATIVE");
   });
 
-  it("forces tier_2 inactive when parlay EV is negative", () => {
+  it("forces bet_3 (SGP) inactive when parlay EV is negative", () => {
     // Norway vs Ivory Coast parlay:
     // p_final 0.133, effective 4.54 → EV = -0.396
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: false,
         ev_inputs: {
           model_probability: 0,
           decimal_odds: 0,
         },
       },
-      tier_2_parlay: {
+      bet_3: {
         active: true,
         parlay_ev_inputs: {
           p_final: 0.133,
@@ -633,7 +713,7 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "MARGINAL",
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -642,13 +722,13 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_2_parlay?.active).toBe(false);
-    expect(result.tier_2_parlay?.ev_rating).toBe("NEGATIVE");
+    expect(result.bet_3?.active).toBe(false);
+    expect(result.bet_3?.ev_rating).toBe("NEGATIVE");
   });
 
-  it("keeps tier active when EV is genuinely positive", () => {
+  it("keeps bet active when EV is genuinely positive", () => {
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: true,
         ev_inputs: {
           model_probability: 0.56,
@@ -657,14 +737,14 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "STRONG",
       },
-      tier_2_parlay: {
+      bet_3: {
         active: false,
         parlay_ev_inputs: {
           p_final: 0,
           effective_sgp_price: 0,
         },
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -673,8 +753,8 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_1_anchor?.active).toBe(true);
-    expect(result.tier_1_anchor?.ev_rating).not.toBe("NEGATIVE");
+    expect(result.bet_1?.active).toBe(true);
+    expect(result.bet_1?.ev_rating).not.toBe("NEGATIVE");
   });
 });
 

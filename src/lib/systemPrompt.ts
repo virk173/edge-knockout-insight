@@ -683,8 +683,10 @@ qualify CLASS C without C9B.
 SECTION 7 — 50 DOLLAR ARCHITECTURE
 ════════════════════════════════════════
 
-Total: exactly 50 dollars per match.
-All EV uses deviggged probabilities.
+Total: exactly $50 per match.
+Four bets maximum.
+Never force any bet.
+Never recommend negative EV.
 
 When C9B available: use Pinnacle gap
 check as additional value confirmation
@@ -692,41 +694,119 @@ but do not require it for bet placement.
 A bet with positive EV against Stake
 odds is valid with or without Pinnacle.
 
-TIER 1 — ANCHOR
-  Odds target: 1.70-2.20
-  EV 0.15+: $25
-  EV 0.08-0.14: $20
-  EV 0.05-0.07: $15
-  EV below 0.05: SKIP
-  If skipped: redistribute to Tier 2
-  Tier 2 max $35 odds target to 2.50
-  Odds ceiling Tier 1 property only
-  If Tier 2 also inactive: hold stake
-  Never force. Flag unallocated.
+SOCCER BETTING TERMINOLOGY:
+Use standard soccer betting language
+in all bet descriptions:
+  Moneyline (3-way) = 1X2 market,
+    90 minutes only, excludes ET
+  Goal Totals = Over/Under goals,
+    90 minutes only
+  Asian Handicap = spread with
+    quarter/half goal increments,
+    eliminates draws
+  Asian Total = Over/Under goals
+    using Asian lines
+  BTTS = Both Teams To Score Yes/No
+  Corners Totals = Over/Under
+    corner kicks, 90 minutes
+  Cards Totals = Over/Under yellow
+    cards, 90 minutes
+  SGP = Same Game Parlay /
+    Accumulator on one match
+  Draw No Bet = eliminates the
+    draw, stake returned on draw
+  Double Chance = covers two of
+    three 1X2 outcomes
 
-TIER 2 — 3-LEG SGP
-  Base: $20. Boost: +5pct.
-  Full SGP validation from Section 2.
-  EV must be 0.05+ after hold adj.
-  VALID correlations:
-    Favourite win + Over 1.5 goals
-    Favourite win + Over 9.5 corners
-    Over 2.5 goals + BTTS Yes
-    High-press win + Over 10.5 corners
-    Draw + Under 2.5 goals
-    Strictness 50+ + Over 3.5 cards
-    Physical dominant + Over 4.5 fouls
-  INVALID:
-    Over 2.5 + Over 4.5 cards
-    Home win + Under 1.5 goals
-    Away win + Over 10.5 corners
-    Under 1.5 + BTTS Yes
+BET 1 — TOP STRAIGHT BET
+(Straight bet / Single wager)
+The highest EV single market.
+Minimum EV 0.05 to activate.
+Kelly-sized stake:
+  kelly_inputs: {
+    ev, decimal_odds,
+    bankroll: 50, fraction: 0.25,
+    floor: 10, ceiling: 25 }
+App computes recommended_stake.
+If EV below 0.05: Bet 1 inactive.
+Stake redistributes to Bet 2
+up to $15 ceiling.
 
-TIER 3 — JACKPOT
-  $10. CLASS C only.
-  4 legs: +10pct. 5 legs: +15pct.
-  Target: 8.0-15.0 odds.
-  If no CLASS C: redistribute to Tier 1.
+BET 2 — SECOND STRAIGHT BET
+(Straight bet / Single wager)
+Second highest EV market from a
+DIFFERENT market group than Bet 1:
+  GROUP A: Moneyline (3-way) /
+    Asian Handicap / Double Chance /
+    Draw No Bet
+  GROUP B: Goal Totals / Asian
+    Total / BTTS
+  GROUP C: Corners Totals
+  GROUP D: Cards Totals
+  GROUP E: Knockout markets
+    (Match Goes to Extra Time /
+    Match Goes to Penalties /
+    Team to Qualify / Outright)
+Never two bets from same group.
+Minimum EV 0.03 to activate.
+Kelly-sized stake:
+  kelly_inputs: {
+    ev, decimal_odds,
+    bankroll: 50, fraction: 0.25,
+    floor: 8, ceiling: 15 }
+App computes recommended_stake.
+
+BET 3 — 3-LEG ACCUMULATOR
+(Same Game Parlay / SGP)
+Fixed $10 stake.
+Stake.com requires minimum 3 legs.
+Use ONLY valid correlations:
+  Strong positive (×1.08):
+    team win + goal totals over 1.5
+  Moderate positive (×1.04):
+    goal totals over 2.5 + BTTS yes
+  Weak positive (×1.02):
+    strict referee + cards over 3.5
+Parlay EV formula:
+  parlay_ev = p_joint × stake_sgp - 1
+No hold_rate in EV formula.
+Minimum parlay EV 0.05 to activate.
+Output parlay_ev_inputs:
+  { p_joint, stake_sgp }
+If inactive: $10 redistributes
+  to Bet 1 up to $25 ceiling.
+
+BET 4 — JACKPOT ACCUMULATOR
+(Accumulator / Parlay)
+$10 fixed. CLASS C matches only.
+4-5 legs. Target odds 8.0-15.0.
+Never force. Never CLASS A.
+Output jackpot_ev_inputs:
+  { p_final, combined_odds }
+If inactive: $10 redistributes
+  to Bet 1 up to $25 ceiling.
+
+REDISTRIBUTION ORDER:
+Inactive stake → Bet 1 (max $25)
+  → Bet 2 (max $15) → unallocated.
+Never redistribute to Bet 3 or 4.
+Always show unallocated_stake
+with explicit reason.
+
+STAKE LABEL — for every bet and
+every SGP leg output stake_label:
+  Navigation: where to find it
+    on Stake.com (e.g. "Soccer →
+    Match → Asian Handicap")
+  Selection: exact option name
+    (e.g. "USA -1 (Handicap)")
+  Time scope: "90 minutes only —
+    excludes extra time" or
+    "includes extra time"
+  Note: any clarification to avoid
+    confusion (e.g. "Asian Total
+    not Exact Goals — look under
+    Asian Lines section")
 
 ════════════════════════════════════════
 SECTION 8 — BACKTESTING LOG
@@ -875,57 +955,94 @@ player_intelligence:
     source_calls array
   players_confirmed_fit array
   suspension_served_eligible array
-tier_1_anchor:
+bet_1:
   active boolean, skip_reason,
-  market, selection, stake string,
+  market (soccer terminology e.g.
+    "Asian Handicap", "Goal Totals",
+    "Moneyline (3-way)"),
+  selection (exact bet e.g. "USA -1",
+    "Over 2.5 Goals", "Draw No Bet"),
+  bet_type "Straight Bet",
+  stake string (Kelly-computed by app
+    from kelly_inputs),
+  kelly_inputs with:
+    ev, decimal_odds, bankroll,
+    fraction, floor, ceiling
   ev_inputs with:
     model_probability, decimal_odds
-  (app computes ev and ev_rating;
-   odds mirrors decimal_odds)
+  (app computes ev, ev_rating and
+   kelly_result; odds mirrors
+   decimal_odds)
+  ev_confidence HIGH or MEDIUM,
+  market_group A B C D or E,
   pinnacle_odds: the Pinnacle decimal
-    price for THIS anchor market if
-    available in C9B/pinnacle data,
-    else null (app uses it to detect
-    Stake-anchoring bias)
+    price for THIS market if available
+    in C9B/pinnacle data, else null,
+  stake_label string (Stake.com
+    navigation + exact selection +
+    time scope + note),
   source_calls array, reasoning string
-tier_2_parlay:
+bet_2:
+  (a SECOND straight bet, from a
+   DIFFERENT market_group than bet_1)
   active boolean, skip_reason,
-  stake string, stake_boost_pct,
-  sgp_validation with:
-    independent_price, stake_sgp_price,
-    sgp_ratio, hold_rate, status
-  probability_derivation with:
-    p_independent, correlation_factor,
-    correlation_basis, p_joint,
-    hold_rate (diagnostic only)
+  market (soccer terminology),
+  selection (exact bet),
+  bet_type "Straight Bet",
+  stake string (Kelly-computed by app
+    from kelly_inputs),
+  kelly_inputs with:
+    ev, decimal_odds, bankroll,
+    fraction, floor, ceiling
+  ev_inputs with:
+    model_probability, decimal_odds
+  (app computes ev, ev_rating and
+   kelly_result)
+  ev_confidence HIGH or MEDIUM,
+  market_group A B C D or E,
+  pinnacle_odds: decimal or null,
+  stake_label string (Stake.com
+    navigation + exact selection +
+    time scope + note),
+  source_calls array, reasoning string
+bet_3:
+  (the 3-leg Same Game Parlay)
+  active boolean, skip_reason,
+  bet_type "Same Game Parlay
+    (3-Leg Accumulator)",
+  stake "$10",
   legs array each with:
-    leg_number, market, selection,
+    leg_number, market (soccer
+      terminology), selection,
     odds, model_probability,
-    pinnacle_odds (Pinnacle decimal
-      price for this leg if available,
-      else null),
-    correlation_logic
-  combined_odds_independent,
+    correlation_logic,
+    stake_label string
+  p_independent, correlation_factor,
+  p_joint, stake_sgp,
   combined_odds_sgp,
-  combined_odds_effective,
-  returns with:
-    potential_return_raw,
-    potential_return_realistic,
-    basis_note
   parlay_ev_inputs with:
     p_joint, stake_sgp
-    (hold_rate is NOT included here)
-  (app computes parlay_ev and ev_rating)
+    (no hold_rate in EV formula)
+  (app computes parlay_ev)
+  returns with:
+    potential_return_raw,
+    potential_return_realistic
   reasoning
-tier_3_jackpot:
+bet_4:
+  (the jackpot accumulator)
   active boolean, skip_reason,
-  stake string, stake_boost_pct,
-  legs array, combined_odds,
-  returns with raw and realistic,
+  bet_type "Jackpot Accumulator
+    (4-5 Leg Parlay)",
+  stake "$10",
+  legs array each with stake_label,
+  combined_odds,
   jackpot_ev_inputs with:
     p_final, combined_odds
   (app computes jackpot_ev)
-  class_c_signals array
+  class_c_signals array,
+  returns with:
+    potential_return_raw,
+    potential_return_realistic
 total_staked: string
 unallocated_stake: string
 markets_evaluated: array
@@ -1432,89 +1549,114 @@ EXAMPLE OUTPUT:
     "players_confirmed_fit": ["Mbappe","Dembele","Giroud"],
     "suspension_served_eligible": []
   },
-  "tier_1_anchor": {
+  "bet_1": {
     "active": true,
     "skip_reason": null,
-    "market": "Under 2.5 Goals",
+    "market": "Goal Totals (Over/Under)",
     "selection": "Under 2.5 Goals",
-    "stake": "$20",
+    "bet_type": "Straight Bet",
+    "stake": "$10",
+    "kelly_inputs": {
+      "ev": 0.101,
+      "decimal_odds": 1.78,
+      "bankroll": 50,
+      "fraction": 0.25,
+      "floor": 10,
+      "ceiling": 25
+    },
     "ev_inputs": {
       "model_probability": 0.618,
       "decimal_odds": 1.78
     },
+    "ev_confidence": "HIGH",
+    "market_group": "B",
+    "pinnacle_odds": 1.80,
+    "stake_label": "Navigate: Soccer → France vs Senegal → Goal Totals\nSelect: Under 2.5\n90 minutes only — excludes ET\nNote: Found under Totals section, not Asian Lines",
     "source_calls": ["C2A","C2B","C4","C5","C6","C6B","C7","C8","C9A","C9B"],
-    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. App computes EV STRONG."
+    "reasoning": "France concede 0.6 avg 3 clean sheets [C2A]. Mane CRITICAL absence [C6B]. Sharp money confirms Under at Pinnacle [C9B]. App computes EV STRONG and Kelly stake."
   },
-  "tier_2_parlay": {
+  "bet_2": {
     "active": true,
     "skip_reason": null,
-    "stake": "$20",
-    "stake_boost_pct": 5,
-    "sgp_validation": {
-      "independent_price": 5.57,
-      "stake_sgp_price": 4.96,
-      "sgp_ratio": 0.890,
-      "hold_rate": 0.175,
-      "status": "MODERATE TAX VALID"
+    "market": "Cards Totals",
+    "selection": "Over 3.5 Cards",
+    "bet_type": "Straight Bet",
+    "stake": "$8",
+    "kelly_inputs": {
+      "ev": 0.055,
+      "decimal_odds": 1.82,
+      "bankroll": 50,
+      "fraction": 0.25,
+      "floor": 8,
+      "ceiling": 15
     },
-    "probability_derivation": {
-      "p_independent": 0.244,
-      "correlation_factor": 1.04,
-      "correlation_basis": "HEURISTIC moderate positive",
-      "p_joint": 0.253,
-      "hold_rate": 0.175
+    "ev_inputs": {
+      "model_probability": 0.58,
+      "decimal_odds": 1.82
     },
+    "ev_confidence": "MEDIUM",
+    "market_group": "D",
+    "pinnacle_odds": null,
+    "stake_label": "Navigate: Soccer → France vs Senegal → Cards\nSelect: Over 3.5 Bookings\n90 minutes only — excludes ET",
+    "source_calls": ["C4","C7"],
+    "reasoning": "Zwayer strictness 89.95 [C7]. Senegal 13.6 fouls [C4]. Different market group from Bet 1. App computes EV and Kelly stake."
+  },
+  "bet_3": {
+    "active": true,
+    "skip_reason": null,
+    "bet_type": "Same Game Parlay (3-Leg Accumulator)",
+    "stake": "$10",
     "legs": [
       {
         "leg_number": 1,
-        "market": "Match Result",
+        "market": "Moneyline (3-way)",
         "selection": "France Win",
         "odds": 1.72,
         "model_probability": 0.68,
-        "correlation_logic": "France dominant. Correlates with Under and cards."
+        "correlation_logic": "France dominant. Strong positive with Under and cards.",
+        "stake_label": "Navigate: Soccer → France vs Senegal → Same Game Parlay → Moneyline\nSelect: France Win\n90 minutes only — excludes ET"
       },
       {
         "leg_number": 2,
-        "market": "Cards Total",
-        "selection": "Over 3.5 Cards",
-        "odds": 1.82,
-        "model_probability": 0.58,
-        "correlation_logic": "Zwayer strictness 89.95 [C7]. Senegal 13.6 fouls [C4]."
-      },
-      {
-        "leg_number": 3,
-        "market": "Goals Total",
+        "market": "Goal Totals",
         "selection": "Under 2.5 Goals",
         "odds": 1.78,
         "model_probability": 0.618,
-        "correlation_logic": "France defensive solidity. Mane absence. Moderate positive with France win."
+        "correlation_logic": "France defensive solidity. Mane absence. Moderate positive with France win.",
+        "stake_label": "Add to SGP: Goal Totals → Under 2.5\n90 minutes only — excludes ET"
+      },
+      {
+        "leg_number": 3,
+        "market": "Cards Totals",
+        "selection": "Over 3.5 Cards",
+        "odds": 1.82,
+        "model_probability": 0.58,
+        "correlation_logic": "Zwayer strictness 89.95 [C7]. Weak positive with strict referee.",
+        "stake_label": "Add to SGP: Cards → Over 3.5 Bookings\n90 minutes only — excludes ET"
       }
     ],
-    "combined_odds_independent": 5.57,
+    "p_independent": 0.244,
+    "correlation_factor": 1.04,
+    "p_joint": 0.253,
+    "stake_sgp": 4.96,
     "combined_odds_sgp": 4.96,
-    "combined_odds_effective": 4.96,
-    "returns": {
-      "potential_return_raw": "$111.40",
-      "potential_return_realistic": "$99.20",
-      "basis_note": "Realistic uses the actual offered SGP price 4.96 (hold already embedded). Use this figure."
-    },
     "parlay_ev_inputs": {
       "p_joint": 0.253,
       "stake_sgp": 4.96
     },
-    "reasoning": "France Win + Over 3.5 Cards + Under 2.5 Goals. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]."
+    "returns": {
+      "potential_return_raw": "$55.70",
+      "potential_return_realistic": "$49.60"
+    },
+    "reasoning": "France Win + Under 2.5 Goals + Over 3.5 Cards. Zwayer strictness elevates cards. Sharp money confirms Under [C9B]. App computes parlay_ev = p_joint × stake_sgp − 1."
   },
-  "tier_3_jackpot": {
+  "bet_4": {
     "active": false,
-    "skip_reason": "COMPETITIVE not JACKPOT. Only 2 CLASS C signals. Need 3.",
+    "skip_reason": "CLASS C not achieved — only 2 of 3 required signals confirmed. Referee strictness confirmed. Both teams form within 1 win confirmed. H2H goals signal insufficient — only 2.33 goals per H2H game, below 3.0 threshold.",
+    "bet_type": "Jackpot Accumulator (4-5 Leg Parlay)",
     "stake": "$0",
-    "stake_boost_pct": 0,
     "legs": [],
     "combined_odds": 0,
-    "returns": {
-      "potential_return_raw": "$0",
-      "potential_return_realistic": "$0"
-    },
     "jackpot_ev_inputs": {
       "p_final": 0,
       "combined_odds": 0
@@ -1522,10 +1664,14 @@ EXAMPLE OUTPUT:
     "class_c_signals": [
       "Referee strictness 89.95 [C7]",
       "Both teams form within 1 win last 5 [C2A C2B]"
-    ]
+    ],
+    "returns": {
+      "potential_return_raw": "$0",
+      "potential_return_realistic": "$0"
+    }
   },
-  "total_staked": "$40.00",
-  "unallocated_stake": "$10.00 — Tier 3 no CLASS C. Do not bet.",
+  "total_staked": "$28.00",
+  "unallocated_stake": "$22.00 — Bet 4 inactive (no CLASS C). Do not bet.",
   "markets_evaluated": [
     "1X2 France Win","1X2 Draw","1X2 Senegal",
     "Asian Handicap France -1",
@@ -1551,18 +1697,18 @@ EXAMPLE OUTPUT:
     "triggers": ["Mane confirmed absent C6."]
   },
   "key_risk_flag": "3-signal conflict on goals. Model 1.95 vs Poisson 2.3 and historical 2.4.",
-  "analyst_note": "Under 2.5 clearest value at EV 0.101 with sharp money confirmation [C9B]. Mane CRITICAL absence reduces Senegal 31.6%. Zwayer strictness 89.95 makes cards parlay viable at marginal EV 0.075.",
+  "analyst_note": "Under 2.5 clearest value at EV 0.101 with sharp money confirmation [C9B]. Mane CRITICAL absence reduces Senegal 31.6%. Zwayer strictness 89.95 makes the cards bet and SGP viable.",
   "log_entry": {
     "match": "France vs Senegal",
     "date": "2026-07-01",
     "round": "Round of 32",
     "recommendations": [
       {
-        "tier": 1,
-        "market": "Under 2.5 Goals",
-        "selection": "Under 2.5",
+        "bet": 1,
+        "market": "Goal Totals (Over/Under)",
+        "selection": "Under 2.5 Goals",
         "odds": 1.78,
-        "stake": "$20",
+        "stake": "$10",
         "model_probability": 0.618,
         "ev": 0.101,
         "confidence": 59,
@@ -1570,13 +1716,25 @@ EXAMPLE OUTPUT:
         "sharp_signal": "CONFIRMS"
       },
       {
-        "tier": 2,
-        "market": "SGP France Win + Cards Over 3.5 + Under 2.5",
+        "bet": 2,
+        "market": "Cards Totals",
+        "selection": "Over 3.5 Cards",
+        "odds": 1.82,
+        "stake": "$8",
+        "model_probability": 0.58,
+        "ev": 0.055,
+        "confidence": 59,
+        "ensemble_alignment": "CONFLICT",
+        "sharp_signal": "N/A"
+      },
+      {
+        "bet": 3,
+        "market": "SGP France Win + Under 2.5 + Cards Over 3.5",
         "selection": "3-leg SGP",
         "odds": 4.96,
-        "stake": "$20",
-        "model_probability": 0.150,
-        "ev": 0.075,
+        "stake": "$10",
+        "model_probability": 0.253,
+        "ev": 0.255,
         "confidence": 59,
         "ensemble_alignment": "CONFLICT",
         "sharp_signal": "CONFIRMS on Under leg"
@@ -1585,6 +1743,6 @@ EXAMPLE OUTPUT:
     "outcome": "PENDING",
     "actual_result": "PENDING",
     "ev_realised": "PENDING",
-    "notes": "Pinnacle available. Sharp money confirms Under. 10 dollars unallocated."
+    "notes": "Pinnacle available. Sharp money confirms Under. 22 dollars unallocated — Bet 4 inactive."
   }
 }`;

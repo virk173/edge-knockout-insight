@@ -2,14 +2,17 @@ import { useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
-  Lock,
   Info,
   AlertTriangle,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatMatchTime } from "@/lib/formatMatchTime";
 import {
   type AnalysisResult,
+  type StraightBet,
+  type SgpBet,
+  type JackpotBet,
   type TierLeg,
   formatEv,
   normalizeDimensions,
@@ -135,11 +138,12 @@ function ensemblePill(alignment?: string) {
 function SignalStrip({ result }: { result: AnalysisResult }) {
   const ens = ensemblePill(result.ensemble_check?.alignment);
 
-  // Best Stake EV across the evaluated tiers (anchor / parlay / jackpot).
+  // Best Stake EV across the four bets.
   const evs = [
-    result.tier_1_anchor?.ev,
-    result.tier_2_parlay?.parlay_ev,
-    result.tier_3_jackpot?.jackpot_ev,
+    result.bet_1?.ev,
+    result.bet_2?.ev,
+    result.bet_3?.parlay_ev,
+    result.bet_4?.jackpot_ev,
   ].filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   const bestEv = evs.length ? Math.max(...evs) : undefined;
   const evClass =
@@ -156,8 +160,6 @@ function SignalStrip({ result }: { result: AnalysisResult }) {
     </div>
   );
 }
-
-
 
 // ─────────────────────────────────────────────────────────────
 // Match header
@@ -288,349 +290,268 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function evConfidenceStyle(c?: "HIGH" | "MEDIUM" | "LOW"): string {
-  if (c === "HIGH")
-    return "border-signal-green/50 bg-signal-green/15 text-signal-green";
-  if (c === "MEDIUM")
-    return "border-accent-amber/50 bg-accent-amber/15 text-accent-amber";
-  if (c === "LOW")
-    return "border-signal-red/50 bg-signal-red/15 text-signal-red";
-  return "border-border bg-card text-slate";
+// ─────────────────────────────────────────────────────────────
+// Formatting helpers
+// ─────────────────────────────────────────────────────────────
+function fmtOdds(odds?: number | null): string {
+  return typeof odds === "number" && Number.isFinite(odds) ? odds.toFixed(2) : "—";
 }
 
-function EvConfidenceNote({
-  confidence,
-  note,
-  rawEv,
-  adjustedEv,
-}: {
-  confidence?: "HIGH" | "MEDIUM" | "LOW";
-  note?: string;
-  rawEv?: number;
-  adjustedEv?: number;
-}) {
-  const [open, setOpen] = useState(false);
-  const adjusted =
-    rawEv !== undefined && adjustedEv !== undefined && rawEv !== adjustedEv;
+function evPctText(ev?: number): string {
+  if (typeof ev !== "number" || !Number.isFinite(ev)) return "—";
+  return `${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}%`;
+}
+
+function evTextClass(ev?: number): string {
+  if (typeof ev !== "number" || !Number.isFinite(ev)) return "text-slate";
+  if (ev < 0) return "text-signal-red";
+  if (ev < 0.05) return "text-signal-red";
+  if (ev < 0.08) return "text-accent-amber";
+  return "text-signal-green";
+}
+
+function kellyText(bet: StraightBet): string | null {
+  const k = bet.kelly_result;
+  if (!k) return null;
+  const bankroll =
+    typeof bet.kelly_inputs?.bankroll === "number" ? bet.kelly_inputs.bankroll : 50;
+  return `Kelly: ${k.fractional_kelly_pct}% of $${bankroll}`;
+}
+
+function sgpCombinedOdds(b?: SgpBet): number | undefined {
+  if (typeof b?.combined_odds_sgp === "number" && Number.isFinite(b.combined_odds_sgp))
+    return b.combined_odds_sgp;
+  const sgp = b?.sgp_validation?.stake_sgp_price;
+  if (typeof sgp === "number" && Number.isFinite(sgp)) return sgp;
+  const legs = b?.legs ?? [];
+  const odds = legs
+    .map((l) => l.odds)
+    .filter((o): o is number => typeof o === "number" && Number.isFinite(o));
+  if (odds.length === 0) return undefined;
+  return odds.reduce((acc, o) => acc * o, 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Navigation label (Stake.com path)
+// ─────────────────────────────────────────────────────────────
+function NavLabel({ label }: { label?: string }) {
+  if (!label) return null;
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate">
-            EV Confidence
-          </span>
-          {confidence && (
-            <span
-              className={cn(
-                "rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
-                evConfidenceStyle(confidence),
-              )}
-            >
-              {confidence}
-            </span>
-          )}
-        </div>
-        {note && (
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            className="flex items-center gap-1 text-xs font-medium text-accent-amber"
-          >
-            <Info size={13} />
-            {open ? "Hide" : "Why?"}
-          </button>
-        )}
-      </div>
-      {adjusted && (
-        <p className="text-[12px] text-slate">
-          Raw EV{" "}
-          <span className="font-semibold text-slate">{formatEv(rawEv)}</span> →
-          adjusted{" "}
-          <span className="font-semibold text-accent-amber">
-            {formatEv(adjustedEv)}
-          </span>
-        </p>
-      )}
-      {note && open && (
-        <p className="text-[12px] leading-relaxed text-slate">{note}</p>
-      )}
+    <div className="mt-1 flex items-start gap-1.5 rounded-md border border-border bg-card/40 px-3 py-2 text-[12px] leading-relaxed text-slate">
+      <MapPin size={13} className="mt-0.5 shrink-0 text-accent-amber" />
+      <span className="whitespace-pre-line">{label}</span>
     </div>
   );
 }
 
-
-// Tier 1 — Anchor
 // ─────────────────────────────────────────────────────────────
-function Tier1Card({ result }: { result: AnalysisResult }) {
-  const t = result.tier_1_anchor;
-  if (!t?.active) {
+// Individual bet rows for the unified "Your Bets" card
+// ─────────────────────────────────────────────────────────────
+function StraightBetRow({
+  index,
+  bet,
+}: {
+  index: number;
+  bet?: StraightBet;
+}) {
+  if (!bet?.active) {
     return (
-      <div className={cn(CARD, "flex flex-col items-center gap-3 text-center")}>
-        <Lock className="text-slate" size={28} />
-        <p className="font-semibold text-slate">No Tier 1 value found</p>
-        {t?.skip_reason && (
-          <p className="text-[13px] text-slate">{t.skip_reason}</p>
-        )}
+      <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
+        <span className="font-bold text-slate">
+          ❌ BET {index} — Straight Bet
+        </span>
+        <span className="text-[13px] text-slate">
+          {bet?.skip_reason || "Inactive — no qualifying value."}
+        </span>
       </div>
     );
   }
+
+  const kelly = kellyText(bet);
+  return (
+    <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <span className="font-bold text-signal-green">
+        ✅ BET {index} — Straight Bet
+      </span>
+      <span className="text-base font-semibold text-foreground">
+        {bet.market ?? "—"}: <span className="text-accent-amber">{bet.selection ?? "—"}</span>
+      </span>
+      <span className="text-sm text-slate">
+        Odds: <span className="font-bold text-foreground">{fmtOdds(bet.odds)}</span>
+        {" | "}
+        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "—"}</span>
+      </span>
+      <span className="text-sm text-slate">
+        EV: <span className={cn("font-bold", evTextClass(bet.ev))}>{evPctText(bet.ev)}</span>
+        {kelly ? <> {" | "}{kelly}</> : null}
+        {bet.ev_confidence ? (
+          <span className="text-slate"> ({bet.ev_confidence} confidence)</span>
+        ) : null}
+      </span>
+      <NavLabel label={bet.stake_label} />
+      <ExpandableText text={bet.reasoning} />
+    </div>
+  );
+}
+
+function SgpBetRow({ bet }: { bet?: SgpBet }) {
+  if (!bet?.active) {
+    return (
+      <div className="flex flex-col gap-1 border-t border-border pt-4">
+        <span className="font-bold text-slate">
+          ❌ BET 3 — 3-Leg Accumulator
+        </span>
+        <span className="text-[13px] text-slate">
+          {bet?.skip_reason || "Inactive — SGP not viable."}
+        </span>
+      </div>
+    );
+  }
+
+  const legs = bet.legs ?? [];
+  const odds = sgpCombinedOdds(bet);
+  const ret = bet.returns?.potential_return_realistic;
+  return (
+    <div className="flex flex-col gap-1 border-t border-border pt-4">
+      <span className="font-bold text-signal-green">
+        ✅ BET 3 — 3-Leg Accumulator
+      </span>
+      <span className="text-base font-semibold text-foreground">
+        Same Game Parlay @{" "}
+        <span className="text-accent-amber">{fmtOdds(odds)}</span>
+      </span>
+      <ul className="flex flex-col gap-0.5 py-1">
+        {legs.map((leg, i) => (
+          <li key={i} className="text-sm text-slate">
+            • {leg.market ?? "—"}: {leg.selection ?? "—"}
+            {typeof leg.odds === "number" ? (
+              <span className="text-slate"> @ {fmtOdds(leg.odds)}</span>
+            ) : null}
+          </li>
+        ))}
+        {legs.length === 0 && (
+          <li className="text-sm text-slate">No legs provided.</li>
+        )}
+      </ul>
+      <span className="text-sm text-slate">
+        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        {ret ? (
+          <>
+            {" | "}
+            Return: <span className="font-bold text-signal-green">~{ret}</span>
+          </>
+        ) : null}
+        {" | "}
+        EV: <span className={cn("font-bold", evTextClass(bet.parlay_ev))}>{evPctText(bet.parlay_ev)}</span>
+      </span>
+      <NavLabel
+        label={
+          bet.legs?.[0]?.stake_label
+            ? "Soccer → Same Game Parlay\nAdd all legs above"
+            : undefined
+        }
+      />
+      <ExpandableText text={bet.reasoning} />
+    </div>
+  );
+}
+
+function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
+  if (!bet?.active) {
+    const met = bet?.class_c_signals?.length ?? 0;
+    return (
+      <div className="flex flex-col gap-1 border-t border-border pt-4">
+        <span className="font-bold text-slate">❌ BET 4 — Jackpot</span>
+        <span className="text-[13px] text-slate">
+          {bet?.skip_reason ||
+            (met > 0
+              ? `${met} of 3 CLASS C signals — jackpot not triggered.`
+              : "No CLASS C signals this match.")}
+        </span>
+      </div>
+    );
+  }
+
+  const legs = bet.legs ?? [];
+  const ret = bet.returns?.potential_return_realistic;
+  return (
+    <div className="flex flex-col gap-1 border-t border-border pt-4">
+      <span className="font-bold text-signal-green">✅ BET 4 — Jackpot</span>
+      <span className="text-base font-semibold text-foreground">
+        Accumulator @{" "}
+        <span className="text-accent-amber">{fmtOdds(bet.combined_odds)}</span>
+      </span>
+      <ul className="flex flex-col gap-0.5 py-1">
+        {legs.map((leg, i) => (
+          <li key={i} className="text-sm text-slate">
+            • {leg.market ?? "—"}: {leg.selection ?? "—"}
+            {typeof leg.odds === "number" ? (
+              <span className="text-slate"> @ {fmtOdds(leg.odds)}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <span className="text-sm text-slate">
+        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        {ret ? (
+          <>
+            {" | "}
+            Return: <span className="font-bold text-signal-green">~{ret}</span>
+          </>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Unified "Your Bets" card (replaces the three tier cards)
+// ─────────────────────────────────────────────────────────────
+function YourBets({ result }: { result: AnalysisResult }) {
+  const dq = (result.data_quality ?? "").toUpperCase();
+  const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
+  const subtitle =
+    [result.match, result.round].filter(Boolean).join(" — ") || "—";
+
+  const hasUnallocated =
+    !!result.unallocated_stake &&
+    !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim());
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
-      <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-signal-green" />
-        <SectionLabel>Tier 1 — Anchor Bet</SectionLabel>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-xl font-bold text-foreground">🎯 Your Bets</h2>
+        <p className="text-sm text-slate">{subtitle}</p>
+        {showDqWarning && (
+          <p className="text-xs font-semibold text-accent-amber">
+            ⚠️ Data quality: {dq.includes("THIN") ? "THIN" : "PARTIAL"}
+          </p>
+        )}
       </div>
 
-      <div className="flex flex-col items-center gap-1 py-2 text-center">
-        <span className="text-lg font-bold text-foreground">{t.market}</span>
-        <span className="text-[22px] font-bold text-accent-amber">
-          {t.selection}
+      <div className="flex flex-col gap-4">
+        <StraightBetRow index={1} bet={result.bet_1} />
+        <StraightBetRow index={2} bet={result.bet_2} />
+        <SgpBetRow bet={result.bet_3} />
+        <JackpotBetRow bet={result.bet_4} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-sm">
+        <span className="text-slate">
+          Total Staked:{" "}
+          <span className="font-bold text-foreground">
+            {result.total_staked ?? "—"}
+          </span>
         </span>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="flex flex-col">
-          <span className="text-xs text-slate">Odds</span>
-          <span className="text-xl font-bold text-foreground">{t.odds ?? "—"}</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-xs text-slate">Stake</span>
-          <span className="text-xl font-bold text-signal-green">{t.stake ?? "—"}</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-xs text-slate">EV</span>
-          <span className="text-xl font-bold text-accent-amber">{formatEv(t.ev)}</span>
-        </div>
-      </div>
-
-      {(t.ev_confidence || t.pinnacle_check_note) && (
-        <EvConfidenceNote
-          confidence={t.ev_confidence}
-          note={t.pinnacle_check_note}
-          rawEv={t.raw_ev}
-          adjustedEv={t.ev}
-        />
-      )}
-
-      <ExpandableText text={t.reasoning} />
-
-
-      <a
-        href="https://stake.com"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-auto w-full rounded-md bg-accent-amber px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-black transition-opacity hover:opacity-90"
-      >
-        Open Stake.com
-      </a>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Tier legs (shared by Tier 2 & 3)
-// ─────────────────────────────────────────────────────────────
-function LegRow({ leg }: { leg: TierLeg }) {
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-xs font-bold text-slate">
-        {leg.leg_number ?? "•"}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-semibold text-foreground">
-            {leg.market}
-            {leg.selection ? ` — ${leg.selection}` : ""}
-          </span>
-          <span className="shrink-0 font-bold text-accent-amber">{leg.odds}</span>
-        </div>
-        {leg.correlation_logic && (
-          <span className="text-xs italic text-slate">{leg.correlation_logic}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Tier 2 — Parlay
-// ─────────────────────────────────────────────────────────────
-function Tier2Card({ result }: { result: AnalysisResult }) {
-  const t = result.tier_2_parlay;
-  if (!t?.active) {
-    const rebuild = (t?.skip_reason ?? "").toUpperCase().includes("REBUILD");
-    return (
-      <div className={cn(CARD, "flex flex-col gap-3")}>
-        <SectionLabel>Tier 2 — Same Game Parlay</SectionLabel>
-        {rebuild && (
-          <Pill className="w-fit border-accent-amber/40 bg-accent-amber/15 text-accent-amber">
-            Rebuild needed
-          </Pill>
-        )}
-        <p className="text-[13px] text-slate">{t?.skip_reason ?? "Not active."}</p>
-      </div>
-    );
-  }
-
-  const ratio = t.sgp_validation?.sgp_ratio;
-  const hold = t.sgp_validation?.hold_rate;
-  const ratioClass =
-    typeof ratio === "number"
-      ? ratio > 0.9
-        ? "border-signal-green/40 bg-signal-green/15 text-signal-green"
-        : ratio >= 0.8
-          ? "border-accent-amber/40 bg-accent-amber/15 text-accent-amber"
-          : "border-signal-orange/40 bg-signal-orange/15 text-signal-orange"
-      : "border-border bg-card text-slate";
-
-  const evNegative = (t.parlay_ev ?? 0) < 0;
-
-  return (
-    <div
-      className={cn(
-        CARD,
-        "flex flex-col gap-4",
-        evNegative && "border-signal-red/60",
-      )}
-    >
-      {evNegative && (
-        <div className="flex items-center gap-2 rounded-md border border-signal-red/40 bg-signal-red/15 px-3 py-2 text-xs font-bold text-signal-red">
-          <AlertTriangle size={14} /> REBUILD REQUIRED
-        </div>
-      )}
-
-      <SectionLabel>Tier 2 — Same Game Parlay</SectionLabel>
-
-      <Pill className={ratioClass}>
-        Hold rate: {typeof hold === "number" ? (hold * 100).toFixed(1) : "—"}% (SGP
-        ratio: {ratio ?? "—"})
-      </Pill>
-
-      <div className="flex flex-col divide-y divide-border">
-        {(t.legs ?? []).map((leg, i) => (
-          <LegRow key={i} leg={leg} />
-        ))}
-        {(t.legs ?? []).length === 0 && (
-          <p className="py-2 text-xs text-slate">No legs provided.</p>
-        )}
-      </div>
-
-      <div className="h-px w-full bg-border" />
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between text-sm">
-          <span className="flex items-center gap-1 text-foreground">
-            Raw return
-            <span title="Based on SGP face odds before hold rate">
-              <Info size={12} className="text-slate" />
+        {hasUnallocated && (
+          <span className="text-slate">
+            Unallocated:{" "}
+            <span className="font-bold text-accent-amber">
+              {result.unallocated_stake}
             </span>
           </span>
-          <span className="font-semibold text-foreground">
-            {t.returns?.potential_return_raw ?? "—"}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-sm">
-          <span className="flex items-center gap-1 text-foreground">
-            Realistic return
-            <span title="Hold-adjusted. This is what to expect.">
-              <Info size={12} className="text-slate" />
-            </span>
-          </span>
-          <span className="font-bold text-signal-green">
-            {t.returns?.potential_return_realistic ?? "—"}
-          </span>
-        </div>
+        )}
       </div>
-
-      <Pill
-        className={
-          evNegative
-            ? "w-fit border-signal-red/40 bg-signal-red/15 text-signal-red"
-            : "w-fit border-signal-green/40 bg-signal-green/15 text-signal-green"
-        }
-      >
-        EV: {formatEv(t.parlay_ev)}
-      </Pill>
-
-      <ExpandableText text={t.reasoning} />
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Tier 3 — Jackpot
-// ─────────────────────────────────────────────────────────────
-function Tier3Card({ result }: { result: AnalysisResult }) {
-  const t = result.tier_3_jackpot;
-  const signals = t?.class_c_signals ?? [];
-
-  if (!t?.active) {
-    const met = signals.length;
-    return (
-      <div className={cn(CARD, "flex flex-col gap-4")}>
-        <div className="-m-6 mb-0 rounded-t-xl bg-gradient-to-r from-accent-amber/30 to-accent-amber/5 px-6 py-3">
-          <SectionLabel>Tier 3 — Jackpot</SectionLabel>
-        </div>
-        <p className="font-semibold text-slate">No jackpot today</p>
-        <p className="text-xs text-slate">{met} of 3 required signals met:</p>
-        <div className="flex flex-wrap gap-2">
-          {signals.map((s, i) => (
-            <Pill key={i} className="border-border bg-card text-slate">
-              {s}
-            </Pill>
-          ))}
-          {signals.length === 0 && (
-            <span className="text-xs text-slate">No CLASS C signals present.</span>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn(CARD, "flex flex-col gap-4 border-accent-amber")}>
-      <div className="-m-6 mb-0 rounded-t-xl bg-gradient-to-r from-accent-amber/40 to-accent-amber/10 px-6 py-3">
-        <SectionLabel>Tier 3 — Jackpot</SectionLabel>
-      </div>
-
-      <div className="flex flex-col divide-y divide-border">
-        {(t.legs ?? []).map((leg, i) => (
-          <LegRow key={i} leg={leg} />
-        ))}
-      </div>
-
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col">
-          <span className="text-xs text-slate">Combined odds</span>
-          <span className="text-2xl font-bold text-accent-amber">
-            {t.combined_odds ?? "—"}
-          </span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-xs text-slate">Realistic return</span>
-          <span className="text-[28px] font-bold text-signal-green">
-            {t.returns?.potential_return_realistic ?? "—"}
-          </span>
-        </div>
-      </div>
-
-      <Pill className="w-fit border-signal-green/40 bg-signal-green/15 text-signal-green">
-        EV: {formatEv(t.jackpot_ev)}
-      </Pill>
-
-      {signals.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-bold text-signal-green">⚡ CLASS C SIGNALS:</span>
-          <ul className="flex flex-col gap-1">
-            {signals.map((s, i) => (
-              <li key={i} className="text-[13px] text-signal-green">
-                ✓ {s}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
@@ -647,11 +568,6 @@ function AnalystNote({ note }: { note?: string }) {
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────
-// (Market intelligence / Pinnacle card removed — 100% API-Football pipeline)
-// ─────────────────────────────────────────────────────────────
-
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
@@ -913,7 +829,7 @@ function BottomBar({ result }: { result: AnalysisResult }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Top Bets — simple plain-language summary (above the detail cards)
+// Top Bets — simple plain-language summary (above the detail card)
 // ─────────────────────────────────────────────────────────────
 type EvLabel = { text: string; className: string };
 
@@ -936,21 +852,6 @@ function evRatingLabel(rating?: string, numericEv?: number): EvLabel {
     return { text: v, className: "text-signal-red" };
   if (v) return { text: v, className: "text-accent-amber" };
   return { text: "—", className: "text-slate" };
-}
-
-function fmtOdds(odds?: number | null): string {
-  return typeof odds === "number" && Number.isFinite(odds) ? odds.toFixed(2) : "—";
-}
-
-function parlayOdds(t?: { sgp_validation?: { stake_sgp_price?: number }; legs?: TierLeg[] }): number | undefined {
-  const sgp = t?.sgp_validation?.stake_sgp_price;
-  if (typeof sgp === "number" && Number.isFinite(sgp)) return sgp;
-  const legs = t?.legs ?? [];
-  const odds = legs
-    .map((l) => l.odds)
-    .filter((o): o is number => typeof o === "number" && Number.isFinite(o));
-  if (odds.length === 0) return undefined;
-  return odds.reduce((acc, o) => acc * o, 1);
 }
 
 interface TopBetRow {
@@ -992,49 +893,62 @@ function TopBetItem({ index, row }: { index: number; row: TopBetRow }) {
 }
 
 function TopBets({ result }: { result: AnalysisResult }) {
-  const t1 = result.tier_1_anchor;
-  const t2 = result.tier_2_parlay;
-  const t3 = result.tier_3_jackpot;
+  const b1 = result.bet_1;
+  const b2 = result.bet_2;
+  const b3 = result.bet_3;
+  const b4 = result.bet_4;
 
   const rows: TopBetRow[] = [];
 
-  if (t1?.active) {
+  if (b1?.active) {
     rows.push({
-      key: "anchor",
-      label: "ANCHOR",
-      selection: t1.selection ?? t1.market ?? "—",
-      odds: t1.odds,
-      stake: t1.stake,
-      ev: evRatingLabel(t1.ev_rating, t1.ev),
-      confidence: t1.ev_confidence,
+      key: "bet1",
+      label: "BET 1",
+      selection: b1.selection ?? b1.market ?? "—",
+      odds: b1.odds,
+      stake: b1.stake,
+      ev: evRatingLabel(b1.ev_rating, b1.ev),
+      confidence: b1.ev_confidence,
     });
   }
 
-  if (t2?.active) {
-    const legs = t2.legs ?? [];
+  if (b2?.active) {
+    rows.push({
+      key: "bet2",
+      label: "BET 2",
+      selection: b2.selection ?? b2.market ?? "—",
+      odds: b2.odds,
+      stake: b2.stake,
+      ev: evRatingLabel(b2.ev_rating, b2.ev),
+      confidence: b2.ev_confidence,
+    });
+  }
+
+  if (b3?.active) {
+    const legs = b3.legs ?? [];
     const sel = legs
-      .map((l) => l.selection || l.market)
+      .map((l: TierLeg) => l.selection || l.market)
       .filter(Boolean)
       .join(" + ");
     rows.push({
-      key: "parlay",
-      label: `${legs.length}-leg SGP`,
+      key: "bet3",
+      label: `BET 3 — ${legs.length}-leg SGP`,
       selection: sel || "Same Game Parlay",
-      odds: parlayOdds(t2),
-      stake: t2.stake,
-      ev: evRatingLabel(t2.ev_rating, t2.parlay_ev),
+      odds: sgpCombinedOdds(b3),
+      stake: b3.stake,
+      ev: evRatingLabel(b3.ev_rating, b3.parlay_ev),
     });
   }
 
-  if (t3?.active) {
-    const legs = t3.legs ?? [];
+  if (b4?.active) {
+    const legs = b4.legs ?? [];
     rows.push({
-      key: "jackpot",
-      label: `${legs.length}-leg parlay`,
+      key: "bet4",
+      label: `BET 4 — ${legs.length}-leg jackpot`,
       selection: "JACKPOT",
-      odds: t3.combined_odds,
-      stake: t3.stake,
-      ev: evRatingLabel(undefined, t3.jackpot_ev),
+      odds: b4.combined_odds,
+      stake: b4.stake,
+      ev: evRatingLabel(undefined, b4.jackpot_ev),
     });
   }
 
@@ -1065,7 +979,7 @@ function TopBets({ result }: { result: AnalysisResult }) {
           <span className="font-semibold text-accent-amber">
             {result.unallocated_stake ?? "$50"} unallocated
           </span>
-          {t1?.skip_reason ? ` — ${t1.skip_reason}` : ""}
+          {b1?.skip_reason ? ` — ${b1.skip_reason}` : ""}
         </p>
       ) : (
         <>
@@ -1107,16 +1021,9 @@ export function BettingDashboard({ result }: { result: AnalysisResult }) {
 
       <MatchHeader result={result} />
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Tier1Card result={result} />
-        <Tier2Card result={result} />
-      </div>
-
-      <Tier3Card result={result} />
+      <YourBets result={result} />
 
       <AnalystNote note={result.analyst_note} />
-
-
 
       <AnalysisDetails result={result} />
 
