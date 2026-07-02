@@ -662,11 +662,11 @@ describe("validateDimensionWeights", () => {
 // GROUP 8 — EV gate in calculateResults
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 describe("EV gate in calculateResults", () => {
-  it("forces tier_1 inactive when computed EV is negative", () => {
+  it("forces bet_1 inactive when computed EV is negative", () => {
     // Simulates France vs Sweden
-    // Tier 1: Over 2.5 @ 1.38, model 56.5% → EV -0.220
+    // Bet 1: Over 2.5 @ 1.38, model 56.5% → EV -0.220
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: true,
         ev_inputs: {
           model_probability: 0.565,
@@ -674,14 +674,14 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "MARGINAL",
       },
-      tier_2_parlay: {
+      bet_3: {
         active: false,
         parlay_ev_inputs: {
           p_final: 0,
           effective_sgp_price: 0,
         },
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -690,22 +690,22 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_1_anchor?.active).toBe(false);
-    expect(result.tier_1_anchor?.ev_rating).toBe("NEGATIVE");
+    expect(result.bet_1?.active).toBe(false);
+    expect(result.bet_1?.ev_rating).toBe("NEGATIVE");
   });
 
-  it("forces tier_2 inactive when parlay EV is negative", () => {
+  it("forces bet_3 (SGP) inactive when parlay EV is negative", () => {
     // Norway vs Ivory Coast parlay:
     // p_final 0.133, effective 4.54 → EV = -0.396
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: false,
         ev_inputs: {
           model_probability: 0,
           decimal_odds: 0,
         },
       },
-      tier_2_parlay: {
+      bet_3: {
         active: true,
         parlay_ev_inputs: {
           p_final: 0.133,
@@ -713,7 +713,7 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "MARGINAL",
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -722,13 +722,13 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_2_parlay?.active).toBe(false);
-    expect(result.tier_2_parlay?.ev_rating).toBe("NEGATIVE");
+    expect(result.bet_3?.active).toBe(false);
+    expect(result.bet_3?.ev_rating).toBe("NEGATIVE");
   });
 
-  it("keeps tier active when EV is genuinely positive", () => {
+  it("keeps bet active when EV is genuinely positive", () => {
     const mockOutput = {
-      tier_1_anchor: {
+      bet_1: {
         active: true,
         ev_inputs: {
           model_probability: 0.56,
@@ -737,14 +737,14 @@ describe("EV gate in calculateResults", () => {
         },
         ev_rating: "STRONG",
       },
-      tier_2_parlay: {
+      bet_3: {
         active: false,
         parlay_ev_inputs: {
           p_final: 0,
           effective_sgp_price: 0,
         },
       },
-      tier_3_jackpot: {
+      bet_4: {
         active: false,
         jackpot_ev_inputs: {
           p_final: 0,
@@ -753,8 +753,8 @@ describe("EV gate in calculateResults", () => {
       },
     };
     const result = calculateResults(mockOutput);
-    expect(result.tier_1_anchor?.active).toBe(true);
-    expect(result.tier_1_anchor?.ev_rating).not.toBe("NEGATIVE");
+    expect(result.bet_1?.active).toBe(true);
+    expect(result.bet_1?.ev_rating).not.toBe("NEGATIVE");
   });
 });
 
