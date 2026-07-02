@@ -1237,7 +1237,10 @@ const WANTED_STAKE_MARKETS: Array<{
   },
   {
     label: "Over/Under 2.5 Goals",
-    match: (n) => /goals over\/under|over\/under|total goals/.test(n) && !n.includes("corner"),
+    match: (n) =>
+      /goals over\/under|over\/under|total goals/.test(n) &&
+      !n.includes("corner") &&
+      !/card|booking/.test(n),
     valueFilter: (v) => v.includes("2.5"),
   },
   {
