@@ -115,8 +115,8 @@ export function TopBets({ result }: { result: AnalysisResult }) {
     });
   }
 
-  if (b4?.active) {
-    const legs = b4.legs ?? [];
+  if (b4.active) {
+    const legs = b4.legs;
     rows.push({
       key: "bet4",
       label: `BET 4 — ${legs.length}-leg jackpot`,
