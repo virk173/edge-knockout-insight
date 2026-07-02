@@ -27,7 +27,10 @@ export interface KellyInputs {
 export interface KellyResult {
   full_kelly_pct: number;
   fractional_kelly_pct: number;
+  raw_stake: number;
   recommended_stake: number;
+  capped: boolean;
+  skipped_too_small: boolean;
   reasoning: string;
 }
 
@@ -340,6 +343,9 @@ export interface AnalysisResult {
   bet_4?: JackpotBet;
   total_staked?: string;
   unallocated_stake?: string;
+  match_exposure_pct?: string;
+  match_exposure_cap_triggered?: boolean;
+  bankroll_at_analysis?: number;
   markets_evaluated?: string[];
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;

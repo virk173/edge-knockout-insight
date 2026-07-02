@@ -31,6 +31,7 @@ import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import { getBankroll, setBankroll } from "@/lib/bankroll";
 import { generateRunReport } from "@/lib/runReport";
 import {
   readResultCache,
@@ -217,6 +218,7 @@ function Index() {
   const [matches, setMatches] = useState<AnalysedMatch[] | null>(null);
   const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
+  const [bankroll, setBankrollState] = useState(() => getBankroll());
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
@@ -486,7 +488,7 @@ function Index() {
 
     try {
       const parsed = tryParse();
-      const enriched = calculateResults(parsed);
+      const enriched = calculateResults(parsed, { bankroll: getBankroll() });
       const savedAt = Date.now();
       patchState(match.id, {
         analysisRaw: cleaned,
@@ -605,6 +607,17 @@ Start your response with { and end with }.`;
       toast.error("Match already finished — no calls run.");
       return;
     }
+
+    // FIX 7 — stale-status guard. If kickoff has passed but the fixture is not
+    // flagged completed, the status may simply be stale. Confirm before burning
+    // quota; only proceed if the user says kickoff is genuinely delayed.
+    if (minsToKickoff < 0) {
+      const proceed = window.confirm(
+        "Kickoff has passed and fixture status may be stale. Only continue if kickoff is genuinely delayed. Run calls anyway?",
+      );
+      if (!proceed) return;
+    }
+
 
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
@@ -776,6 +789,28 @@ Start your response with { and end with }.`;
         </nav>
 
         <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => {
+              const input = window.prompt(
+                "Set your current bankroll ($):",
+                String(bankroll),
+              );
+              if (input === null) return;
+              const n = Number.parseFloat(input.replace(/[^0-9.]/g, ""));
+              if (!Number.isFinite(n) || n <= 0) {
+                toast.error("Enter a positive number.");
+                return;
+              }
+              setBankroll(n);
+              setBankrollState(n);
+              toast.success(`Bankroll set to $${n}`);
+            }}
+            className="rounded-md border border-accent-amber/50 px-2.5 py-1 font-mono text-xs font-semibold text-accent-amber"
+            title="Click to edit your bankroll (all stakes size from this)"
+          >
+            💰 ${bankroll}
+          </button>
           <span
             className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
             title="API-Football calls used today (resets at midnight UTC)"

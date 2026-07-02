@@ -28,6 +28,7 @@ import type {
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
 import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
+import { BANKROLL_DEFAULTS } from "@/lib/bankroll";
 
 /*
  * KNOWN GAPS — see also analyse.ts
@@ -124,53 +125,88 @@ export function calculateSGPEV(inputs: {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 2b — Kelly Criterion stake sizing
+// 2b — Bankroll-based fractional-Kelly stake sizing
 //   full_kelly       = ev / (decimal_odds − 1)
-//   fractional_kelly = full_kelly × fraction
-//   recommended      = round(clamp(fractional_kelly × bankroll, floor, ceiling))
+//   raw_stake        = full_kelly × fraction × bankroll
+//   cap              = bankroll × max_bet_pct
 //
-//   Negative or zero EV returns a zero-stake, no-bet recommendation.
+//   NO floors. Stakes scale purely with the live bankroll. A Kelly stake
+//   below min_actionable is SKIPPED (edge too small), never floored up.
+//   When the cap clamps the stake we round DOWN (Math.floor) so the displayed
+//   stake never exceeds the cap; otherwise round to nearest dollar (Math.round).
+//
+//   Negative or zero EV returns all zeros with skipped_too_small false.
 // ─────────────────────────────────────────────────────────────
 export const calculateKellyStake = (inputs: {
   ev: number;
   decimal_odds: number;
   bankroll: number;
   fraction: number;
-  floor: number;
-  ceiling: number;
+  max_bet_pct: number;
+  min_actionable: number;
 }): {
   full_kelly_pct: number;
   fractional_kelly_pct: number;
+  raw_stake: number;
   recommended_stake: number;
+  capped: boolean;
+  skipped_too_small: boolean;
   reasoning: string;
 } => {
   if (inputs.ev <= 0) {
     return {
       full_kelly_pct: 0,
       fractional_kelly_pct: 0,
+      raw_stake: 0,
       recommended_stake: 0,
-      reasoning: "Negative or zero EV — no bet recommended",
+      capped: false,
+      skipped_too_small: false,
+      reasoning: "Negative or zero EV",
     };
   }
 
   const full_kelly = inputs.ev / (inputs.decimal_odds - 1);
   const fractional_kelly = full_kelly * inputs.fraction;
-  const raw_stake = fractional_kelly * inputs.bankroll;
-  const recommended_stake = Math.round(
-    Math.max(inputs.floor, Math.min(inputs.ceiling, raw_stake)),
-  );
+  const raw_stake = Math.round(fractional_kelly * inputs.bankroll * 100) / 100;
+  const cap = inputs.bankroll * inputs.max_bet_pct;
+
+  const full_kelly_pct = Math.round(full_kelly * 1000) / 10;
+  const fractional_kelly_pct = Math.round(fractional_kelly * 1000) / 10;
+
+  if (raw_stake < inputs.min_actionable) {
+    return {
+      full_kelly_pct,
+      fractional_kelly_pct,
+      raw_stake,
+      recommended_stake: 0,
+      capped: false,
+      skipped_too_small: true,
+      reasoning:
+        `Kelly stake $${raw_stake.toFixed(2)} below $${inputs.min_actionable} minimum — ` +
+        `edge too small relative to bankroll to be worth placing. No bet.`,
+    };
+  }
+
+  const capped = raw_stake > cap;
+  const recommended_stake = capped ? Math.floor(cap) : Math.round(raw_stake);
+
+  let reasoning =
+    `Full Kelly ${full_kelly_pct.toFixed(1)}% → ` +
+    `${(inputs.fraction * 100).toFixed(0)}% fractional = ` +
+    `${fractional_kelly_pct.toFixed(1)}% of $${inputs.bankroll} = ` +
+    `$${raw_stake.toFixed(2)}`;
+  if (capped) {
+    reasoning += ` → capped at ${(inputs.max_bet_pct * 100).toFixed(1)}% = $${cap.toFixed(2)}`;
+  }
 
   return {
-    full_kelly_pct: Math.round(full_kelly * 1000) / 10,
-    fractional_kelly_pct: Math.round(fractional_kelly * 1000) / 10,
+    full_kelly_pct,
+    fractional_kelly_pct,
+    raw_stake,
     recommended_stake,
-    reasoning:
-      `Full Kelly ${(full_kelly * 100).toFixed(1)}% → ` +
-      `${(inputs.fraction * 100).toFixed(0)}% fractional = ` +
-      `${(fractional_kelly * 100).toFixed(1)}% of $` +
-      `${inputs.bankroll} = ` +
-      `$${raw_stake.toFixed(2)} → ` +
-      `capped at $${recommended_stake}`,
+    capped,
+    skipped_too_small: false,
+    reasoning,
   };
 };
 
@@ -214,10 +250,12 @@ export const adjustEVForPinnacleGap = (inputs: {
 
   if (gap_pct < -3) {
     // Stake is WORSE than Pinnacle, yet still EV positive — stronger signal.
+    // FIX 4: raise CONFIDENCE only, never EV. Kelly sizes stakes directly from
+    // adjusted_ev, so inflating EV here would inflate every downstream stake.
     return {
-      adjusted_ev: round(inputs.raw_ev * 1.1),
+      adjusted_ev: inputs.raw_ev,
       ev_confidence: "HIGH",
-      note: `Stake odds ${Math.abs(gap_pct).toFixed(1)}% worse than Pinnacle, yet still EV positive. Stronger confirmation of genuine edge — model disagrees with the sharper market in your favor.`,
+      note: `Stake odds ${Math.abs(gap_pct).toFixed(1)}% worse than Pinnacle, yet still EV positive. Confidence raised to HIGH — EV left unchanged (sizing stays honest). Model disagrees with the sharper market in your favor.`,
     };
   }
 
@@ -359,10 +397,14 @@ export function computeConfidence(
       signal_3_historical: s3,
     });
     ensembleImpact = ensemble.confidence_impact;
-    // Drop any Claude-supplied ensemble adjustment, then inject the
-    // single-source-of-truth value so it can never double-count or diverge.
+    // FIX 1: Claude's STEP 6 + few-shot make it emit its own ensemble/signal/
+    // conflict/alignment/poisson adjustment (e.g. {"type":"3_signal_conflict",
+    // "delta":-5}). The app then injects its OWN app-computed ensemble delta —
+    // counting the same phenomenon twice. Drop ANY Claude adjustment that names
+    // this dimension, then inject the single app-computed value below.
     adjustments = adjustments.filter(
-      (a) => !(a?.type ?? "").toLowerCase().includes("ensemble"),
+      (a) =>
+        !/ensemble|signal|conflict|aligned|poisson/i.test(a?.type ?? ""),
     );
     adjustments.push({ type: "ensemble_alignment", delta: ensembleImpact });
   }
@@ -713,12 +755,19 @@ export const validateDimensionWeights = (inputs: {
  * If a given *_inputs block is absent, any value Claude already provided is
  * left untouched so the dashboard still renders.
  */
-export function calculateResults(rawOutput: unknown): AnalysisResult {
+export function calculateResults(
+  rawOutput: unknown,
+  opts?: { bankroll?: number },
+): AnalysisResult {
   if (!rawOutput || typeof rawOutput !== "object") {
     return (rawOutput ?? {}) as AnalysisResult;
   }
 
   const result = clone(rawOutput) as AnalysisResult;
+
+  // Live bankroll drives all sizing. Defaults to STARTING_BANKROLL (tests).
+  const bankroll = num(opts?.bankroll) ?? BANKROLL_DEFAULTS.STARTING_BANKROLL;
+  result.bankroll_at_analysis = bankroll;
 
   // Parse home/away team names from the "Home vs Away" match string so
   // stake_labels can be generated from the verified Stake glossary.
@@ -746,12 +795,19 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
 
   // ── Straight-bet enrichment (bet_1 + bet_2) ──────────────────
   // Both are single-market straight bets: compute EV, apply the Pinnacle-gap
-  // bias correction, then Kelly-size the stake from the ADJUSTED EV.
+  // bias correction, then size the stake by fractional Kelly against the LIVE
+  // bankroll. Claude no longer supplies any sizing — bankroll + the
+  // BANKROLL_DEFAULTS constants own it. Claude kelly_inputs are IGNORED for
+  // bankroll/floor/ceiling; only decimal_odds is still read as a fallback.
   const enrichStraightBet = (
     bet: typeof result.bet_1,
-    defaults: { bankroll: number; fraction: number; floor: number; ceiling: number },
+    defaults: { minEv: number },
   ) => {
     if (!bet) return;
+
+    // FIX 2 — capture Claude's own skip BEFORE we touch active. We never flip a
+    // bet Claude explicitly skipped back to active.
+    const claudeSkipped = bet.active === false;
 
     // EV from raw variables.
     if (bet.ev_inputs) {
@@ -776,44 +832,46 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       bet.ev = adjustment.adjusted_ev;
       bet.ev_confidence = adjustment.ev_confidence;
       bet.pinnacle_check_note = adjustment.note;
-      bet.ev_rating =
-        adjustment.adjusted_ev >= 0.08
-          ? "STRONG"
-          : adjustment.adjusted_ev >= 0.05
-            ? "MARGINAL"
-            : "SKIP";
-      bet.active = adjustment.adjusted_ev >= 0.05;
     }
 
-    // Kelly-size the stake from the (adjusted) EV.
+    // Bankroll-based Kelly sizing from the (adjusted) EV.
     if (bet.ev !== undefined && bet.odds !== undefined) {
       const ki = bet.kelly_inputs ?? {};
       const kelly = calculateKellyStake({
         ev: bet.ev,
         decimal_odds: num(ki.decimal_odds) ?? bet.odds,
-        bankroll: num(ki.bankroll) ?? defaults.bankroll,
-        fraction: num(ki.fraction) ?? defaults.fraction,
-        floor: num(ki.floor) ?? defaults.floor,
-        ceiling: num(ki.ceiling) ?? defaults.ceiling,
+        bankroll,
+        fraction: BANKROLL_DEFAULTS.KELLY_FRACTION,
+        max_bet_pct: BANKROLL_DEFAULTS.MAX_BET_PCT,
+        min_actionable: BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE,
       });
       bet.kelly_result = kelly;
-      // The Kelly recommended_stake becomes the displayed stake.
+
+      bet.ev_rating =
+        bet.ev < 0
+          ? "NEGATIVE"
+          : bet.ev < defaults.minEv
+            ? "SKIP"
+            : bet.ev < 0.08
+              ? "MARGINAL"
+              : "STRONG";
+
+      // If Kelly says the edge is too small, mark it — but never overwrite a
+      // skip_reason Claude already set.
+      if (kelly.skipped_too_small && !bet.skip_reason) {
+        bet.skip_reason = kelly.reasoning;
+      }
+
+      // FIX 2 — active requires: Claude didn't skip, EV clears the threshold,
+      // and Kelly produced an actionable stake.
+      bet.active =
+        !claudeSkipped && bet.ev >= defaults.minEv && !kelly.skipped_too_small;
       bet.stake = `$${kelly.recommended_stake}`;
     }
   };
 
-  enrichStraightBet(result.bet_1, {
-    bankroll: 50,
-    fraction: 0.25,
-    floor: 10,
-    ceiling: 25,
-  });
-  enrichStraightBet(result.bet_2, {
-    bankroll: 50,
-    fraction: 0.25,
-    floor: 8,
-    ceiling: 15,
-  });
+  enrichStraightBet(result.bet_1, { minEv: 0.05 });
+  enrichStraightBet(result.bet_2, { minEv: 0.03 });
 
   // Auto-generate verified Stake stake_labels for the straight bets.
   if (result.bet_1) applyStakeLabel(result.bet_1);
@@ -1050,15 +1108,17 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
   // matter what Claude originally proposed. The gate only ever DOWNGRADES
   // (forces active=false); it never flips an inactive tier active, so states
   // like the jackpot's "insufficient signals" skip are preserved.
+  // FIX 2 — each tier gates at its own minimum EV (bet_2 at 0.03; the rest 0.05).
   const gateTier = (
     evValue: number | undefined,
     tier: { active?: boolean; ev_rating?: string } | undefined,
+    minEv: number,
   ) => {
     if (!tier || evValue === undefined || !Number.isFinite(evValue)) return;
     if (evValue < 0) {
       tier.ev_rating = "NEGATIVE";
       tier.active = false;
-    } else if (evValue < 0.05) {
+    } else if (evValue < minEv) {
       tier.ev_rating = "SKIP";
       tier.active = false;
     } else if (evValue < 0.08) {
@@ -1067,10 +1127,10 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       tier.ev_rating = "STRONG";
     }
   };
-  gateTier(num(result.bet_1?.ev), result.bet_1);
-  gateTier(num(result.bet_2?.ev), result.bet_2);
-  gateTier(num(result.bet_3?.parlay_ev), result.bet_3);
-  gateTier(num(result.bet_4?.jackpot_ev), result.bet_4);
+  gateTier(num(result.bet_1?.ev), result.bet_1, 0.05);
+  gateTier(num(result.bet_2?.ev), result.bet_2, 0.03);
+  gateTier(num(result.bet_3?.parlay_ev), result.bet_3, 0.05);
+  gateTier(num(result.bet_4?.jackpot_ev), result.bet_4, 0.05);
 
   // If a straight bet was gated inactive, zero its Kelly stake so the UI never
   // shows a stake on a bet the gate killed.
@@ -1080,6 +1140,98 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       if (sb.kelly_result) sb.kelly_result.recommended_stake = 0;
     }
   }
+
+  // ── Parlay sizing — flat FRACTIONS of bankroll, never Kelly ────
+  // Parlay probability estimates are too noisy to Kelly-size, so bet_3 and
+  // bet_4 get small fixed percentages of the live bankroll. If that rounds
+  // below the actionable minimum the parlay is dropped.
+  const sizeParlay = (
+    bet: { active?: boolean; stake?: string; skip_reason?: string | null } | undefined,
+    pct: number,
+  ) => {
+    if (!bet) return;
+    if (!bet.active) {
+      bet.stake = "$0";
+      return;
+    }
+    const s = Math.max(0, Math.round(bankroll * pct));
+    if (s < BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE) {
+      bet.active = false;
+      bet.stake = "$0";
+      if (!bet.skip_reason)
+        bet.skip_reason = "Bankroll too small for parlay allocation.";
+    } else {
+      bet.stake = `$${s}`;
+    }
+  };
+  sizeParlay(result.bet_3, BANKROLL_DEFAULTS.SGP_STAKE_PCT);
+  sizeParlay(result.bet_4, BANKROLL_DEFAULTS.JACKPOT_STAKE_PCT);
+
+  // ── MATCH EXPOSURE CAP (replaces redistribution) ──────────────
+  // Sum all active stakes; if over the per-match cap, scale down in REVERSE
+  // priority: drop bet_4, then bet_3, then shrink bet_2, never touching bet_1
+  // (highest EV) unless it alone exceeds the cap (then clamp it).
+  const cap = bankroll * BANKROLL_DEFAULTS.MAX_MATCH_EXPOSURE_PCT;
+  const stakeOf = (
+    bet: { active?: boolean; stake?: string } | undefined,
+  ): number => (bet && bet.active ? num(bet.stake) ?? 0 : 0);
+  const sumActive = () =>
+    stakeOf(result.bet_1) +
+    stakeOf(result.bet_2) +
+    stakeOf(result.bet_3) +
+    stakeOf(result.bet_4);
+
+  let exposureCapTriggered = false;
+  if (sumActive() > cap) {
+    exposureCapTriggered = true;
+
+    if (sumActive() > cap && result.bet_4?.active) {
+      result.bet_4.active = false;
+      result.bet_4.stake = "$0";
+      if (!result.bet_4.skip_reason)
+        result.bet_4.skip_reason = "Dropped to satisfy match exposure cap.";
+    }
+    if (sumActive() > cap && result.bet_3?.active) {
+      result.bet_3.active = false;
+      result.bet_3.stake = "$0";
+      if (!result.bet_3.skip_reason)
+        result.bet_3.skip_reason = "Dropped to satisfy match exposure cap.";
+    }
+    if (sumActive() > cap && result.bet_2?.active) {
+      const excess = sumActive() - cap;
+      const newStake = Math.floor(stakeOf(result.bet_2) - excess);
+      if (newStake < BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE) {
+        result.bet_2.active = false;
+        result.bet_2.stake = "$0";
+        if (result.bet_2.kelly_result)
+          result.bet_2.kelly_result.recommended_stake = 0;
+        if (!result.bet_2.skip_reason)
+          result.bet_2.skip_reason = "Shrunk below minimum by match exposure cap.";
+      } else {
+        result.bet_2.stake = `$${newStake}`;
+        if (result.bet_2.kelly_result)
+          result.bet_2.kelly_result.recommended_stake = newStake;
+      }
+    }
+    if (
+      sumActive() > cap &&
+      result.bet_1?.active &&
+      stakeOf(result.bet_1) > cap
+    ) {
+      const clamped = Math.floor(cap);
+      result.bet_1.stake = `$${clamped}`;
+      if (result.bet_1.kelly_result)
+        result.bet_1.kelly_result.recommended_stake = clamped;
+    }
+  }
+
+  // ── TOTALS (bankroll-sized; replaces the old $50 unallocated math) ──
+  const totalStaked = sumActive();
+  result.total_staked = `$${totalStaked.toFixed(2)}`;
+  result.match_exposure_pct = `${((totalStaked / bankroll) * 100).toFixed(1)}%`;
+  result.match_exposure_cap_triggered = exposureCapTriggered;
+  // Old UI bindings must never render stale $50 redistribution math.
+  result.unallocated_stake = "N/A — bankroll sizing";
 
   return result;
 }
@@ -1133,6 +1285,13 @@ export const WC2026_QUALIFICATION = {
  * Determine whether a specific group-stage fixture was a "dead rubber" — a game
  * the opponent had no sporting incentive in because their advancement (or
  * elimination) was already mathematically settled before kickoff.
+ *
+ * FIX 6 — this function REQUIRES *pre-match* standings rows (the table as it
+ * stood immediately before the fixture kicked off). Callers must reconstruct
+ * them with buildPreMatchStandings(); passing FINAL standings makes clinchedTop2
+ * true for every eventual top-2 finisher and corrupts the best-case third-place
+ * maths. Because points only ever INCREASE, a best_case projection that already
+ * falls below the pre-match cutoff remains a sound elimination proof.
  *
  * WC2026-aware: a team sitting 3rd in its group is NOT automatically eliminated.
  * It can still advance as one of the 8 best third-place finishers, so a 3rd-place

@@ -10,6 +10,7 @@ import {
   validateDimensionWeights,
   calculateResults,
   applyDeadRubberDiscount,
+  computeConfidence,
 } from "@/lib/calculate";
 import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
@@ -141,83 +142,87 @@ describe("calculateSGPEV", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// GROUP 2b — calculateKellyStake
+// GROUP 2b — calculateKellyStake (bankroll engine, floors GONE)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 describe("calculateKellyStake", () => {
-  it("floors at minimum when Kelly stake is below floor", () => {
-    // EV 0.08, odds 1.50
-    // full kelly = 0.08/0.50 = 16%
-    // fractional = 4% of $50 = $2
-    // below floor of $10 → $10
+  it("caps and rounds DOWN when raw stake exceeds the 2.5% cap", () => {
+    // full_kelly = 0.10/0.78 = 12.8%; fractional = 3.2%; raw = $16.03
+    // cap = 500 * 0.025 = $12.50 → min(16.03,12.50)=12.50 → floor → 12
     const result = calculateKellyStake({
-      ev: 0.08,
-      decimal_odds: 1.5,
-      bankroll: 50,
+      ev: 0.1,
+      decimal_odds: 1.78,
+      bankroll: 500,
       fraction: 0.25,
-      floor: 10,
-      ceiling: 25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
     });
-    expect(result.recommended_stake).toBe(10);
-    expect(result.full_kelly_pct).toBeCloseTo(16, 0);
+    expect(result.full_kelly_pct).toBeCloseTo(12.8, 1);
+    expect(result.raw_stake).toBeCloseTo(16.03, 1);
+    expect(result.recommended_stake).toBe(12);
+    expect(result.capped).toBe(true);
   });
 
-  it("caps at ceiling when Kelly stake exceeds ceiling", () => {
-    // EV 0.50, odds 2.00
-    // full kelly = 0.50/1.00 = 50%
-    // fractional = 12.5% of $300 = $37.50
-    // above ceiling of $25 → $25
+  it("skips when the Kelly stake is below the $2 minimum (edge too small)", () => {
+    // full_kelly = 0.03/4 = 0.75%; fractional = 0.1875%; raw ≈ $0.94 → skip
     const result = calculateKellyStake({
-      ev: 0.5,
-      decimal_odds: 2.0,
-      bankroll: 300,
+      ev: 0.03,
+      decimal_odds: 5.0,
+      bankroll: 500,
       fraction: 0.25,
-      floor: 10,
-      ceiling: 25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
     });
-    expect(result.recommended_stake).toBe(25);
+    expect(result.raw_stake).toBeCloseTo(0.94, 1);
+    expect(result.recommended_stake).toBe(0);
+    expect(result.skipped_too_small).toBe(true);
   });
 
-  it("returns 0 for negative EV", () => {
+  it("sizes an in-range stake without capping", () => {
+    // full_kelly = 0.06/0.8 = 7.5%; fractional = 1.875%; raw ≈ $9.38 → 9
     const result = calculateKellyStake({
-      ev: -0.05,
-      decimal_odds: 1.5,
-      bankroll: 50,
+      ev: 0.06,
+      decimal_odds: 1.8,
+      bankroll: 500,
       fraction: 0.25,
-      floor: 10,
-      ceiling: 25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
+    });
+    expect(result.raw_stake).toBeCloseTo(9.38, 1);
+    expect(result.recommended_stake).toBe(9);
+    expect(result.capped).toBe(false);
+  });
+
+  it("returns all zeros for negative EV", () => {
+    const result = calculateKellyStake({
+      ev: -0.02,
+      decimal_odds: 1.9,
+      bankroll: 500,
+      fraction: 0.25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
     });
     expect(result.recommended_stake).toBe(0);
+    expect(result.raw_stake).toBe(0);
+    expect(result.skipped_too_small).toBe(false);
     expect(result.reasoning).toContain("Negative");
   });
 
-  it("returns 0 for zero EV", () => {
+  it("scales stakes down with a smaller bankroll", () => {
+    // bankroll 100: raw = 3.2% of 100 = $3.21; cap = $2.50 → floor → 2
     const result = calculateKellyStake({
-      ev: 0,
-      decimal_odds: 2.0,
-      bankroll: 50,
+      ev: 0.1,
+      decimal_odds: 1.78,
+      bankroll: 100,
       fraction: 0.25,
-      floor: 10,
-      ceiling: 25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
     });
-    expect(result.recommended_stake).toBe(0);
-  });
-
-  it("correctly sizes EV 0.15 at odds 2.00", () => {
-    // full kelly = 0.15/1.00 = 15%
-    // fractional = 3.75% of $50 = $1.88
-    // floored at $10
-    const result = calculateKellyStake({
-      ev: 0.15,
-      decimal_odds: 2.0,
-      bankroll: 50,
-      fraction: 0.25,
-      floor: 10,
-      ceiling: 25,
-    });
-    expect(result.recommended_stake).toBe(10);
-    expect(result.full_kelly_pct).toBeCloseTo(15, 0);
+    expect(result.raw_stake).toBeCloseTo(3.21, 1);
+    expect(result.recommended_stake).toBe(2);
+    expect(result.capped).toBe(true);
   });
 });
+
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GROUP 3 — validateModelProbabilities
@@ -567,15 +572,25 @@ describe("adjustEVForPinnacleGap", () => {
     expect(result.adjusted_ev).toBeCloseTo(0.12 * 0.85, 4);
   });
 
-  it("returns HIGH confidence and increases EV when Stake is worse than Pinnacle", () => {
+  it("returns HIGH confidence and UNCHANGED EV when Stake is worse than Pinnacle (FIX 4)", () => {
     const result = adjustEVForPinnacleGap({
       raw_ev: 0.08,
       stake_odds: 1.95,
       pinnacle_odds: 2.05,
-      // gap = (1.95/2.05 - 1)*100 = -4.9% < -3% → increase 10%
+      // gap = (1.95/2.05 - 1)*100 = -4.9% < -3% → confidence up, EV unchanged
     });
     expect(result.ev_confidence).toBe("HIGH");
-    expect(result.adjusted_ev).toBeCloseTo(0.08 * 1.1, 4);
+    expect(result.adjusted_ev).toBeCloseTo(0.08, 4);
+  });
+
+  it("FIX 4: raw_ev 0.10, stake 1.70, pinnacle 1.80 → adjusted_ev 0.10 exactly, HIGH", () => {
+    const result = adjustEVForPinnacleGap({
+      raw_ev: 0.1,
+      stake_odds: 1.7,
+      pinnacle_odds: 1.8,
+    });
+    expect(result.adjusted_ev).toBeCloseTo(0.1, 4);
+    expect(result.ev_confidence).toBe("HIGH");
   });
 
   it("returns MEDIUM and unchanged EV when Pinnacle is null", () => {
@@ -877,5 +892,165 @@ describe("bettingGlossary", () => {
     expect(resolveMarketType("to advance")).toBe("TEAM_TO_QUALIFY");
     expect(resolveMarketType("et yes")).toBe("MATCH_EXTRA_TIME");
     expect(resolveMarketType("pens yes")).toBe("MATCH_PENALTIES");
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 11 — bankroll engine: exposure cap + totals (A3)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("bankroll exposure cap in calculateResults", () => {
+  const mk = () => ({
+    match: "USA vs Bosnia",
+    // ev ≈ 0.10 at odds 1.78 → Kelly raw $16.03, capped at 2.5% = $12 each
+    bet_1: {
+      active: true,
+      ev_inputs: { model_probability: 0.618, decimal_odds: 1.78 },
+    },
+    bet_2: {
+      active: true,
+      ev_inputs: { model_probability: 0.618, decimal_odds: 1.78 },
+    },
+    bet_3: { active: true, parlay_ev_inputs: { p_joint: 0.3, stake_sgp: 4.0 } },
+    bet_4: {
+      active: true,
+      jackpot_ev_inputs: { p_final: 0.2, combined_odds: 6.0 },
+    },
+  });
+
+  it("drops bet_4 then bet_3 to satisfy the 5% cap, leaving bet_1 untouched", () => {
+    const result = calculateResults(mk(), { bankroll: 500 });
+    expect(result.bet_1?.active).toBe(true);
+    expect(result.bet_1?.stake).toBe("$12");
+    expect(result.bet_2?.active).toBe(true);
+    expect(result.bet_4?.active).toBe(false);
+    expect(result.bet_3?.active).toBe(false);
+    expect(result.match_exposure_cap_triggered).toBe(true);
+  });
+
+  it("total_staked equals the exact sum of displayed active stakes", () => {
+    const result = calculateResults(mk(), { bankroll: 500 });
+    const parseNum = (s?: string) =>
+      Number.parseFloat(String(s ?? "").replace(/[^0-9.]/g, "")) || 0;
+    let sum = 0;
+    for (const b of [result.bet_1, result.bet_2, result.bet_3, result.bet_4]) {
+      if (b?.active) sum += parseNum(b.stake);
+    }
+    expect(result.total_staked).toBe(`$${sum.toFixed(2)}`);
+  });
+
+  it("sets unallocated_stake to the bankroll-sizing sentinel", () => {
+    const result = calculateResults(mk(), { bankroll: 500 });
+    expect(result.unallocated_stake).toBe("N/A — bankroll sizing");
+  });
+
+  it("scales stakes down with a smaller bankroll (bankroll 100)", () => {
+    const result = calculateResults(mk(), { bankroll: 100 });
+    // cap per bet = 2.5% of 100 = $2.50 → floor → $2
+    expect(result.bet_1?.stake).toBe("$2");
+    expect(result.bankroll_at_analysis).toBe(100);
+  });
+});
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 12 — Part B fixes (FIX 1, FIX 3, FIX 6)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("FIX 1 — confidence no double-count", () => {
+  it("counts the ensemble/conflict delta once, keeps unrelated adjustments", () => {
+    const conf = computeConfidence(
+      {
+        dimension_weighted_raw: 72,
+        adjustments: [
+          { type: "3_signal_conflict", delta: -5 },
+          { type: "xG_proxy_used", delta: -3 },
+        ],
+      },
+      { signal_1_model: 1.95, signal_2_poisson: 2.3, signal_3_historical: 2.4 },
+    );
+    // signals 1.95/2.3/2.4 → MAJORITY (impact 0). App DROPS Claude's -5 conflict
+    // (no double-count) and injects its own 0: 72 - 3 (xG survives) + 0 = 69.
+    expect(conf?.post_adjustment).toBe(69);
+    // The single injected ensemble delta replaces any Claude-supplied one.
+    expect(
+      conf?.adjustments.filter((a) =>
+        /ensemble|signal|conflict|aligned|poisson/i.test(a.type ?? ""),
+      ).length,
+    ).toBe(1);
+  });
+});
+
+describe("FIX 3 — resolveMarketType progressive matching", () => {
+  it("resolves parenthetical + variant names", () => {
+    expect(resolveMarketType("Goal Totals (Over/Under)")).toBe("GOAL_TOTALS");
+    expect(resolveMarketType("Moneyline (3-way)")).toBe("MONEYLINE_3WAY");
+    expect(resolveMarketType("Total Goals Over/Under 2.5")).toBe("GOAL_TOTALS");
+    expect(resolveMarketType("Asian Handicap -1")).toBe("ASIAN_HANDICAP");
+    expect(resolveMarketType("unknown market")).toBeNull();
+  });
+});
+
+describe("FIX 6 — detectDeadRubber requires pre-match rows", () => {
+  const thirdField = [
+    { team_id: "x1", group_label: "B", points: 4, goal_difference: 1, goals_for: 3 },
+    { team_id: "x2", group_label: "C", points: 4, goal_difference: 0, goals_for: 2 },
+    { team_id: "x3", group_label: "D", points: 3, goal_difference: 0, goals_for: 2 },
+  ];
+
+  it("(c) opponent 6 pts pre-match, rivals max 3/4/4 → dead rubber TRUE", () => {
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "opp", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
+        { team_id: "r1", points: 3, position: 2, matches_played: 2, goal_difference: 0, goals_for: 2 },
+        { team_id: "r2", points: 1, position: 3, matches_played: 2, goal_difference: -2, goals_for: 1 },
+        { team_id: "r3", points: 1, position: 4, matches_played: 2, goal_difference: -2, goals_for: 1 },
+      ],
+      all_groups_third_place_table: thirdField,
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(true);
+  });
+
+  it("(d) opponent 3 pts pre-match with a live rival → FALSE (old bug)", () => {
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "lead", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
+        { team_id: "opp", points: 3, position: 2, matches_played: 2, goal_difference: 0, goals_for: 3 },
+        { team_id: "rival", points: 3, position: 3, matches_played: 2, goal_difference: 0, goals_for: 2 },
+        { team_id: "r3", points: 0, position: 4, matches_played: 2, goal_difference: -4, goals_for: 0 },
+      ],
+      all_groups_third_place_table: thirdField,
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(false);
+  });
+
+  it("(e) opponent 0 pts, group complete, cross-group cutoff 1 → best case 0 < 1 → TRUE", () => {
+    const thirdEight = Array.from({ length: 8 }, (_, i) => ({
+      team_id: `z${i}`,
+      group_label: String.fromCharCode(66 + i), // B..I (not opp's group A)
+      points: 4 - Math.min(i, 3), // 4,3,2,1,1,1,1,1 → 8th best = 1
+      goal_difference: 0,
+      goals_for: 2,
+    }));
+    const r = detectDeadRubber({
+      fixture_matchday: 3,
+      fixture_date: "2026-06-27T18:00:00+00:00",
+      opponent_team_id: "opp",
+      opponent_group_standings: [
+        { team_id: "a", points: 6, position: 1, matches_played: 3, goal_difference: 4, goals_for: 6 },
+        { team_id: "b", points: 4, position: 2, matches_played: 3, goal_difference: 2, goals_for: 4 },
+        { team_id: "opp", points: 0, position: 3, matches_played: 3, goal_difference: -6, goals_for: 0 },
+        { team_id: "d", points: 3, position: 4, matches_played: 3, goal_difference: 0, goals_for: 2 },
+      ],
+      all_groups_third_place_table: thirdEight,
+      group_total_matchdays: 3,
+    });
+    expect(r.is_dead_rubber).toBe(true);
   });
 });

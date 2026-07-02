@@ -1933,6 +1933,151 @@ function buildAllStandings(payload: unknown): AllStandings {
   return { groupRows, thirdPlaceTable, raw };
 }
 
+// FIX 6 — reconstruct PRE-MATCH standings as of a given kickoff.
+//
+// The old dead-rubber path judged pre-match stakes with FINAL standings. Once
+// the group stage is complete every rival has 0 games left, so clinchedTop2 is
+// true for EVERY opponent that FINISHED top-2 — falsely discounting every
+// matchday-3 fixture against a top-2 finisher, and understating best-case
+// points in the third-place race. Replaying only the group games that kicked
+// off STRICTLY before the cutoff rebuilds the table the opponent actually
+// faced.
+//
+// `groupRows` (from the final all-groups standings) is used ONLY as a
+// name → {team_id, group_label} directory. `cutoffKickoffIso` is the full ISO
+// datetime of the fixture being judged; the strict `<` comparison excludes the
+// fixture itself and any simultaneous kickoffs.
+export function buildPreMatchStandings(
+  completedFixtures: unknown[],
+  groupRows: StandingRow[],
+  cutoffKickoffIso: string,
+): AllStandings {
+  // Directory: normalized team name -> {team_id, group_label}.
+  const dir = new Map<string, { team_id: string; group_label: string }>();
+  interface Acc {
+    team_id: string;
+    team_name: string;
+    group_label: string;
+    points: number;
+    goal_difference: number;
+    goals_for: number;
+    matches_played: number;
+  }
+  const acc = new Map<string, Acc>();
+  for (const r of groupRows) {
+    if (r.group_label === null) continue;
+    const key = normalize(r.team_name);
+    if (key) dir.set(key, { team_id: r.team_id, group_label: r.group_label });
+    if (!acc.has(r.team_id)) {
+      // Seed a zero row for every known group team — teams with no prior game
+      // still appear (0 pts, 0 played) so positions are complete.
+      acc.set(r.team_id, {
+        team_id: r.team_id,
+        team_name: r.team_name,
+        group_label: r.group_label,
+        points: 0,
+        goal_difference: 0,
+        goals_for: 0,
+        matches_played: 0,
+      });
+    }
+  }
+
+  const resolveId = (
+    name: string,
+  ): { team_id: string; group_label: string } | null => {
+    const n = normalize(name);
+    if (!n) return null;
+    const exact = dir.get(n);
+    if (exact) return exact;
+    for (const [k, v] of dir) {
+      if (k.includes(n) || n.includes(k)) return v;
+    }
+    return null;
+  };
+
+  for (const item of completedFixtures) {
+    const fixture = getField(item, ["fixture"]);
+    const date = String(getField(fixture, ["date"]) ?? "");
+    // Strict ISO compare: excludes the analysed fixture and simultaneous games.
+    if (!date || !(date < cutoffKickoffIso)) continue;
+    const round = String(getField(getField(item, ["league"]), ["round"]) ?? "");
+    if (!/group/i.test(round)) continue;
+    const teams = getField(item, ["teams"]);
+    const goals = getField(item, ["goals"]);
+    const hg = Number(getField(goals, ["home"]));
+    const ag = Number(getField(goals, ["away"]));
+    if (!Number.isFinite(hg) || !Number.isFinite(ag)) continue;
+    const homeRes = resolveId(String(getField(getField(teams, ["home"]), ["name"]) ?? ""));
+    const awayRes = resolveId(String(getField(getField(teams, ["away"]), ["name"]) ?? ""));
+    if (!homeRes || !awayRes) continue;
+    const hRow = acc.get(homeRes.team_id);
+    const aRow = acc.get(awayRes.team_id);
+    if (!hRow || !aRow) continue;
+    hRow.matches_played++;
+    aRow.matches_played++;
+    hRow.goals_for += hg;
+    aRow.goals_for += ag;
+    hRow.goal_difference += hg - ag;
+    aRow.goal_difference += ag - hg;
+    if (hg > ag) hRow.points += 3;
+    else if (hg < ag) aRow.points += 3;
+    else {
+      hRow.points += 1;
+      aRow.points += 1;
+    }
+  }
+
+  // Rank per group (points -> GD -> GF) to derive position.
+  const byGroup = new Map<string, Acc[]>();
+  for (const r of acc.values()) {
+    if (!byGroup.has(r.group_label)) byGroup.set(r.group_label, []);
+    byGroup.get(r.group_label)!.push(r);
+  }
+  const groupRowsOut: StandingRow[] = [];
+  for (const [g, list] of byGroup) {
+    list.sort(
+      (a, b) =>
+        b.points - a.points ||
+        b.goal_difference - a.goal_difference ||
+        b.goals_for - a.goals_for,
+    );
+    list.forEach((r, i) => {
+      groupRowsOut.push({
+        team_id: r.team_id,
+        team_name: r.team_name,
+        points: r.points,
+        position: i + 1,
+        matches_played: r.matches_played,
+        goal_difference: r.goal_difference,
+        goals_for: r.goals_for,
+        group_label: g,
+      });
+    });
+  }
+
+  const thirdPlaceTable: ThirdPlaceRow[] = groupRowsOut
+    .filter((r) => r.position === 3)
+    .map((r) => ({
+      team_id: r.team_id,
+      team_name: r.team_name,
+      group_label: r.group_label as string,
+      points: r.points,
+      goal_difference: r.goal_difference,
+      goals_for: r.goals_for,
+    }))
+    .sort(
+      (a, b) =>
+        b.points - a.points ||
+        b.goal_difference - a.goal_difference ||
+        b.goals_for - a.goals_for,
+    );
+
+  return { groupRows: groupRowsOut, thirdPlaceTable, raw: groupRowsOut };
+}
+
+
+
 // Resolve a standings row for an opponent named in an API-Football fixture, by
 // normalized case-insensitive (bidirectional contains) match across ALL groups.
 function resolveOpponentStandingRow(
@@ -1995,30 +2140,56 @@ async function computeTeamDeadRubber(
     };
   }
 
+  // FIX 6 — reconstruct PRE-MATCH standings per fixture instead of judging with
+  // final standings. getCompletedFixtures(2026) is day-cached, so this is
+  // usually zero new API calls. On failure we DO NOT discount (a missed
+  // discount is cheap; a false 0.2x corrupts form).
+  let completed: unknown[];
+  try {
+    completed = await getCompletedFixtures(2026);
+  } catch (e) {
+    return {
+      adjustment: applyDeadRubberDiscount(last5),
+      fixtureChecks: [],
+      groupFixtureCount: groupFixtures.length,
+      triggered: false,
+      reason: `pre-match standings unavailable — no discount applied (${
+        e instanceof Error ? e.message : String(e)
+      })`,
+    };
+  }
+
   const fixtureChecks: TeamDeadRubberResult["fixtureChecks"] = [];
   for (const f of last5) {
     if (!f.is_group_stage) continue;
-    const oppRow = resolveOpponentStandingRow(f.opponentName, all.groupRows);
-    if (!oppRow || oppRow.group_label === null) continue;
-    const opponentGroupStandings = all.groupRows.filter(
-      (r) => r.group_label === oppRow.group_label,
-    );
-    const r = detectDeadRubber({
-      fixture_matchday: f.matchday,
-      fixture_date: f.date,
-      opponent_team_id: oppRow.team_id,
-      opponent_group_standings: opponentGroupStandings,
-      all_groups_third_place_table: all.thirdPlaceTable,
-      group_total_matchdays: GROUP_TOTAL_MATCHDAYS,
-    });
-    f.is_dead_rubber = r.is_dead_rubber;
-    fixtureChecks.push({
-      opponent: f.opponentName,
-      matchday: f.matchday,
-      is_dead_rubber: r.is_dead_rubber,
-      reason: r.reason,
-      comparison: r.comparison,
-    });
+    try {
+      // Rebuild the table as it stood immediately BEFORE this fixture kicked off.
+      const preMatch = buildPreMatchStandings(completed, all.groupRows, f.date);
+      const oppRow = resolveOpponentStandingRow(f.opponentName, preMatch.groupRows);
+      if (!oppRow || oppRow.group_label === null) continue;
+      const opponentGroupStandings = preMatch.groupRows.filter(
+        (r) => r.group_label === oppRow.group_label,
+      );
+      const r = detectDeadRubber({
+        fixture_matchday: f.matchday,
+        fixture_date: f.date,
+        opponent_team_id: oppRow.team_id,
+        opponent_group_standings: opponentGroupStandings,
+        all_groups_third_place_table: preMatch.thirdPlaceTable,
+        group_total_matchdays: GROUP_TOTAL_MATCHDAYS,
+      });
+      f.is_dead_rubber = r.is_dead_rubber;
+      fixtureChecks.push({
+        opponent: f.opponentName,
+        matchday: f.matchday,
+        is_dead_rubber: r.is_dead_rubber,
+        reason: r.reason,
+        comparison: r.comparison,
+      });
+    } catch {
+      // Per-fixture reconstruction failure → no discount for this fixture.
+      f.is_dead_rubber = false;
+    }
   }
 
   return {
@@ -2026,7 +2197,7 @@ async function computeTeamDeadRubber(
     fixtureChecks,
     groupFixtureCount: groupFixtures.length,
     triggered: true,
-    reason: `All-groups standings resolved — ${groupFixtures.length} group-stage fixture(s) checked against cross-group 3rd-place table.`,
+    reason: `Pre-match standings reconstructed per fixture — ${groupFixtures.length} group-stage fixture(s) checked against the table as it stood before each kickoff.`,
   };
 }
 
@@ -2316,196 +2487,12 @@ export async function collectMatchData(
     blockOpts,
   );
 
-  // 6 (S3): confirmed lineups (TheStatsAPI).
-  // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
-  //
-  // LIVE-OBSERVED PROPAGATION BEHAVIOUR (France vs Sweden, mt_401944555):
-  // TheStatsAPI sets confirmed=true ~T-90 and dumps the FULL ~26-man squad into
-  // `substitutes`, but does NOT split the starting XI out of the squad until
-  // ~T-0 (kickoff). The delay between confirmed=true and a populated
-  // starting_xi is therefore tens of minutes and unpredictable — far longer
-  // than any 3-5 minute retry window can bridge. This is Option B: do a short
-  // burst of in-line retries (5 x 60s), and if still PROPAGATING, hand off to a
-  // final near-kickoff (T-15) background re-check in the UI.
-  await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (8/11)", async () => {
-    const matchId = await ensureStatsApiMatchId();
-    if (!matchId) {
-      throw new Error(
-        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date. Lineups unavailable.",
-      );
-    }
-    const withinWindow = match.minutesUntilKickoff <= 90;
-    // Option A bump folded in: 5 x 60s (5 minutes) inside the pre-kickoff window
-    // instead of 3 x 60s. Wider window, still cheap.
-    const maxAttempts = withinWindow ? 5 : 1;
-    let payload: unknown = null;
-    let state: LineupState = "NOT_ANNOUNCED";
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      payload = await saGet(`/football/matches/${matchId}/lineups`);
-      state = classifyLineupState(payload);
-      lastLineupState = state;
-      const tag = `attempt ${attempt + 1}/${maxAttempts}`;
-      if (state === "POPULATED") {
-        console.log(
-          `[S3 lineups] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — starting_xi populated for both teams.`,
-        );
-        return payload;
-      }
-      if (state === "PROPAGATING") {
-        console.warn(
-          `[S3 lineups] State 2 LINEUP PROPAGATING for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — confirmed=true but starting_xi ` +
-            `still empty (data being ingested). Trying API-Football fallback now.`,
-        );
-      } else {
-        console.warn(
-          `[S3 lineups] State 1 LINEUP NOT ANNOUNCED for matchId=${matchId} ` +
-            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not ` +
-            `published yet. Trying API-Football fallback now.`,
-        );
-      }
-
-      // Fire the API-Football fallback on EVERY attempt (not just after the full
-      // 5×60s TheStatsAPI retry burst). If a lineup lands in API-Football first,
-      // we pick it up immediately instead of blocking for up to 5 minutes.
-      const afEarly = await fetchApiFootballLineupFallback(match);
-      if (afEarly) {
-        lastLineupState = "POPULATED";
-        console.log(
-          `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
-            `${match.home} vs ${match.away} (TheStatsAPI was ${state}, ${tag}).`,
-        );
-        return afEarly;
-      }
-
-      if (attempt < maxAttempts - 1) await sleep(60000);
-    }
-
-    // Neither TheStatsAPI nor API-Football produced a populated XI within the
-    // retry window. Carry the resolved state in the thrown message so the caller
-    // knows whether this is NOT_ANNOUNCED vs PROPAGATING.
-    throw new Error(
-      state === "PROPAGATING"
-        ? "LINEUP PROPAGATING — confirmed=true but starting_xi never populated; API-Football fallback also empty."
-        : "LINEUP NOT ANNOUNCED — lineups not published yet (404); API-Football fallback also empty.",
-    );
-  });
-
-
-
-  // NOTE: CALL 6B / S4 (player stats for absences) runs LAST, after the
-  // mandatory Pinnacle call (S5), because TheStatsAPI enforces a tight rate
-  // limit. Running the player-stat burst first would starve S5. See below.
-
-
-  // 7 (S7): referee profile.
-  // PRIMARY = S7: TheStatsAPI dedicated endpoint /football/matches/{id}/referee,
-  // which returns CAREER TOTALS (games, yellow_cards, red_cards). We derive
-  // avg_yellow_cards_per_game = yellow_cards / games from it. This single call
-  // is spaced by STATSAPI_DELAY_MS inside saGet, so it sits in the sequential
-  // TheStatsAPI throttle order like every other S-call.
-  // fouls-per-game and penalties-per-game are NOT in the referee endpoint, so we
-  // enrich those two fields (when the budget allows) from API-Football's
-  // completed-fixture history. FALLBACK: if S7 returns a null referee (none
-  // assigned) or fails, fall back entirely to the API-Football-derived profile.
-  {
-    stepKeys.push("7");
-    onProgress({
-      step: stepKeys.length,
-      total: TOTAL_STEPS,
-      label: "Fetching referee profile (S7)... (9/11)",
-    });
-    if (!fixtureVerified) {
-      record("7", "Referee profile", "BLOCKED", undefined, blockOpts.blockReason);
-    } else if (!tryLoadCache("7")) {
-    currentDebugCall = "7";
-    try {
-      let profile: RefereeProfile | null = null;
-
-      // --- S7: TheStatsAPI dedicated referee endpoint (career totals) ---
-      const matchId = await ensureStatsApiMatchId();
-      if (matchId) {
-        try {
-          const refJson = await saGet(`/football/matches/${matchId}/referee`);
-          const refNode = getField(getField(refJson, ["data"]) ?? refJson, ["referee"]);
-          profile = buildRefereeProfileFromStatsApi(refNode);
-        } catch (e) {
-          console.warn("[analyse] S7 referee endpoint failed", e);
-        }
-      }
-
-      // --- API-Football enrichment / fallback ---
-      // When S7 gave us a referee, only run the (costly) API-Football history if
-      // the budget allows, and use it solely to fill fouls/penalties (and yellows
-      // if S7 lacked games). When S7 had no referee, use API-Football entirely.
-      const afName =
-        (typeof profile?.referee === "string" && profile.referee) || match.referee;
-      if (afName && !counterCritical) {
-        try {
-          const afProfile = await buildRefereeProfile(afName, !counterWarning);
-          if (afProfile) {
-            if (!profile) {
-              profile = afProfile; // FALLBACK: S7 null → API-Football profile.
-            } else {
-              profile.avg_fouls_per_game = afProfile.avg_fouls_per_game;
-              profile.penalties_awarded = afProfile.penalties_awarded;
-              if (profile.avg_yellow_cards_per_game === "NOT_AVAILABLE") {
-                profile.avg_yellow_cards_per_game = afProfile.avg_yellow_cards_per_game;
-              }
-              profile.source =
-                "TheStatsAPI /referee (yellows from career) + API-Football history (fouls/penalties)";
-            }
-          }
-        } catch (e) {
-          console.warn("[analyse] CALL 7 API-Football referee enrichment failed", e);
-        }
-      }
-
-      if (profile) {
-        record("7", "Referee profile (S7 + API-Football)", "SUCCESS", profile);
-      } else {
-        record(
-          "7",
-          "Referee profile",
-          "EMPTY",
-          undefined,
-          `Referee strictness: UNKNOWN. S7 returned no referee and no API-Football fixtures matched "${
-            match.referee ?? "unknown"
-          }" — cards market estimates use historical base rate only.`,
-        );
-      }
-    } catch (e) {
-      record(
-        "7",
-        "Referee profile",
-        "EMPTY",
-        undefined,
-        `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
-          e instanceof Error ? e.message : String(e)
-        })`,
-      );
-    } finally {
-      currentDebugCall = null;
-    }
-    }
-  }
-
-
-  // 8: predictions (blocked on C1 mismatch; else skipped if near daily cap)
-  await runStep(
-    "8",
-    "Fetching predictions... (10/11)",
-    () => afGet(`/predictions?fixture=${match.id}`, afKey),
-    {
-      ...blockOpts,
-      skip: counterWarning,
-      skipReason: "Skipped — daily API budget near limit (>=85).",
-    },
-  );
-
   // 9: odds (Stake via API-Football only)
-  await runStep("9", "Fetching odds... (11/11)", async () => {
+  // FIX 5 — runs immediately after CALL 5 (injuries) and BEFORE the CALL 6
+  // lineup retry loop, so odds are captured fresh rather than going stale while
+  // CALL 6 blocks up to 5×60s inside the pre-kickoff window. Order preserved:
+  // 9 → 9B → 6.
+  await runStep("9", "Fetching odds... (8/11)", async () => {
     // 9A: resolve Stake bookmaker id (cached)
     currentDebugCall = "9A";
     let stakeId: string | null =
@@ -2612,6 +2599,199 @@ export async function collectMatchData(
   }
 
 
+
+  // 6 (S3): confirmed lineups (TheStatsAPI).
+  // Reuses the S0 match_id, then fetches /football/matches/{match_id}/lineups.
+  //
+  // LIVE-OBSERVED PROPAGATION BEHAVIOUR (France vs Sweden, mt_401944555):
+  // TheStatsAPI sets confirmed=true ~T-90 and dumps the FULL ~26-man squad into
+  // `substitutes`, but does NOT split the starting XI out of the squad until
+  // ~T-0 (kickoff). The delay between confirmed=true and a populated
+  // starting_xi is therefore tens of minutes and unpredictable — far longer
+  // than any 3-5 minute retry window can bridge. This is Option B: do a short
+  // burst of in-line retries (5 x 60s), and if still PROPAGATING, hand off to a
+  // final near-kickoff (T-15) background re-check in the UI.
+  await runStep("6", "Fetching confirmed lineups (TheStatsAPI)... (9/11)", async () => {
+    const matchId = await ensureStatsApiMatchId();
+    if (!matchId) {
+      throw new Error(
+        "STATSAPI_ID_NOT_FOUND — no TheStatsAPI match resolved for these teams/date. Lineups unavailable.",
+      );
+    }
+    const withinWindow = match.minutesUntilKickoff <= 90;
+    // Option A bump folded in: 5 x 60s (5 minutes) inside the pre-kickoff window
+    // instead of 3 x 60s. Wider window, still cheap.
+    const maxAttempts = withinWindow ? 5 : 1;
+    let payload: unknown = null;
+    let state: LineupState = "NOT_ANNOUNCED";
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      payload = await saGet(`/football/matches/${matchId}/lineups`);
+      state = classifyLineupState(payload);
+      lastLineupState = state;
+      const tag = `attempt ${attempt + 1}/${maxAttempts}`;
+      if (state === "POPULATED") {
+        console.log(
+          `[S3 lineups] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — starting_xi populated for both teams.`,
+        );
+        return payload;
+      }
+      if (state === "PROPAGATING") {
+        console.warn(
+          `[S3 lineups] State 2 LINEUP PROPAGATING for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — confirmed=true but starting_xi ` +
+            `still empty (data being ingested). Trying API-Football fallback now.`,
+        );
+      } else {
+        console.warn(
+          `[S3 lineups] State 1 LINEUP NOT ANNOUNCED for matchId=${matchId} ` +
+            `(${match.home} vs ${match.away}, ${tag}) — endpoint 404, team sheet not ` +
+            `published yet. Trying API-Football fallback now.`,
+        );
+      }
+
+      // Fire the API-Football fallback on EVERY attempt (not just after the full
+      // 5×60s TheStatsAPI retry burst). If a lineup lands in API-Football first,
+      // we pick it up immediately instead of blocking for up to 5 minutes.
+      const afEarly = await fetchApiFootballLineupFallback(match);
+      if (afEarly) {
+        lastLineupState = "POPULATED";
+        console.log(
+          `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
+            `${match.home} vs ${match.away} (TheStatsAPI was ${state}, ${tag}).`,
+        );
+        return afEarly;
+      }
+
+      if (attempt < maxAttempts - 1) await sleep(60000);
+    }
+
+    // Neither TheStatsAPI nor API-Football produced a populated XI within the
+    // retry window. Carry the resolved state in the thrown message so the caller
+    // knows whether this is NOT_ANNOUNCED vs PROPAGATING.
+    throw new Error(
+      state === "PROPAGATING"
+        ? "LINEUP PROPAGATING — confirmed=true but starting_xi never populated; API-Football fallback also empty."
+        : "LINEUP NOT ANNOUNCED — lineups not published yet (404); API-Football fallback also empty.",
+    );
+  });
+
+
+
+  // NOTE: CALL 6B / S4 (player stats for absences) runs LAST, after the
+  // mandatory Pinnacle call (S5), because TheStatsAPI enforces a tight rate
+  // limit. Running the player-stat burst first would starve S5. See below.
+
+
+  // 7 (S7): referee profile.
+  // PRIMARY = S7: TheStatsAPI dedicated endpoint /football/matches/{id}/referee,
+  // which returns CAREER TOTALS (games, yellow_cards, red_cards). We derive
+  // avg_yellow_cards_per_game = yellow_cards / games from it. This single call
+  // is spaced by STATSAPI_DELAY_MS inside saGet, so it sits in the sequential
+  // TheStatsAPI throttle order like every other S-call.
+  // fouls-per-game and penalties-per-game are NOT in the referee endpoint, so we
+  // enrich those two fields (when the budget allows) from API-Football's
+  // completed-fixture history. FALLBACK: if S7 returns a null referee (none
+  // assigned) or fails, fall back entirely to the API-Football-derived profile.
+  {
+    stepKeys.push("7");
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching referee profile (S7)... (10/11)",
+    });
+    if (!fixtureVerified) {
+      record("7", "Referee profile", "BLOCKED", undefined, blockOpts.blockReason);
+    } else if (!tryLoadCache("7")) {
+    currentDebugCall = "7";
+    try {
+      let profile: RefereeProfile | null = null;
+
+      // --- S7: TheStatsAPI dedicated referee endpoint (career totals) ---
+      const matchId = await ensureStatsApiMatchId();
+      if (matchId) {
+        try {
+          const refJson = await saGet(`/football/matches/${matchId}/referee`);
+          const refNode = getField(getField(refJson, ["data"]) ?? refJson, ["referee"]);
+          profile = buildRefereeProfileFromStatsApi(refNode);
+        } catch (e) {
+          console.warn("[analyse] S7 referee endpoint failed", e);
+        }
+      }
+
+      // --- API-Football enrichment / fallback ---
+      // When S7 gave us a referee, only run the (costly) API-Football history if
+      // the budget allows, and use it solely to fill fouls/penalties (and yellows
+      // if S7 lacked games). When S7 had no referee, use API-Football entirely.
+      const afName =
+        (typeof profile?.referee === "string" && profile.referee) || match.referee;
+      if (afName && !counterCritical) {
+        try {
+          const afProfile = await buildRefereeProfile(afName, !counterWarning);
+          if (afProfile) {
+            if (!profile) {
+              profile = afProfile; // FALLBACK: S7 null → API-Football profile.
+            } else {
+              profile.avg_fouls_per_game = afProfile.avg_fouls_per_game;
+              profile.penalties_awarded = afProfile.penalties_awarded;
+              if (profile.avg_yellow_cards_per_game === "NOT_AVAILABLE") {
+                profile.avg_yellow_cards_per_game = afProfile.avg_yellow_cards_per_game;
+              }
+              profile.source =
+                "TheStatsAPI /referee (yellows from career) + API-Football history (fouls/penalties)";
+            }
+          }
+        } catch (e) {
+          console.warn("[analyse] CALL 7 API-Football referee enrichment failed", e);
+        }
+      }
+
+      if (profile) {
+        record("7", "Referee profile (S7 + API-Football)", "SUCCESS", profile);
+      } else {
+        record(
+          "7",
+          "Referee profile",
+          "EMPTY",
+          undefined,
+          `Referee strictness: UNKNOWN. S7 returned no referee and no API-Football fixtures matched "${
+            match.referee ?? "unknown"
+          }" — cards market estimates use historical base rate only.`,
+        );
+      }
+    } catch (e) {
+      record(
+        "7",
+        "Referee profile",
+        "EMPTY",
+        undefined,
+        `Referee strictness: UNKNOWN. Referee profile unavailable — cards market estimates use historical base rate only. (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+    } finally {
+      currentDebugCall = null;
+    }
+    }
+  }
+
+
+  // 8: predictions (blocked on C1 mismatch; else skipped if near daily cap)
+  await runStep(
+    "8",
+    "Fetching predictions... (11/11)",
+    () => afGet(`/predictions?fixture=${match.id}`, afKey),
+    {
+      ...blockOpts,
+      skip: counterWarning,
+      skipReason: "Skipped — daily API budget near limit (>=85).",
+    },
+  );
+  // (CALL 9 + CALL 9B moved earlier — see just after CALL 5 injuries. FIX 5:
+  //  odds must be fetched BEFORE the CALL 6 lineup retry loop, which can block
+  //  up to 5×60s inside T-90 and leave odds stale.)
+
+
   // ---- S6: dead-rubber detection (group-stage games in last-5 form) ----
   // Runs AFTER CALL 4 (recent form) using the already-fetched last-5 lists, and
   // BEFORE the optional CALL 6B player-stat burst so the mandatory all-groups
@@ -2692,6 +2872,7 @@ export async function collectMatchData(
           "All-groups standings (3rd-place-aware dead-rubber check)",
           all && all.groupRows.length ? "SUCCESS" : "EMPTY",
           {
+            note: "Dead-rubber checks use PRE-MATCH standings reconstructed as of each analysed fixture's kickoff ISO (FIX 6). all_groups_standings below are the FINAL table, shown only as the name→id/group directory.",
             wc2026_qualification: WC2026_QUALIFICATION,
             all_groups_standings: all?.groupRows ?? [],
             cross_group_third_place_table: (all?.thirdPlaceTable ?? []).map(
@@ -3577,6 +3758,7 @@ export async function retrySingleCall(
             rec("S6", "All-groups standings (dead-rubber check)", "SKIPPED", undefined, "NOT TRIGGERED — all last-5 fixtures are knockout stage.");
           } else {
             rec("S6", "All-groups standings (dead-rubber check)", all && all.groupRows.length ? "SUCCESS" : "EMPTY", {
+              note: "Dead-rubber checks use PRE-MATCH standings reconstructed as of each fixture's kickoff ISO (FIX 6).",
               wc2026_qualification: WC2026_QUALIFICATION,
               all_groups_standings: all?.groupRows ?? [],
               home: { dead_rubbers_flagged: homeDr.adjustment.dead_rubber_count, reason: homeDr.reason },
