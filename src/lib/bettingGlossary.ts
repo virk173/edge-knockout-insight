@@ -307,6 +307,31 @@ export const MARKET_NAME_MAP: Record<string, StakeMarketType> = {
 export const resolveMarketType = (
   claudeMarketName: string,
 ): StakeMarketType | null => {
+  if (!claudeMarketName) return null;
   const normalized = claudeMarketName.toLowerCase().trim();
-  return MARKET_NAME_MAP[normalized] ?? null;
+
+  // FIX 3 — progressive matching. Exact-match alone fails on Claude's own
+  // few-shot names like "Goal Totals (Over/Under)" or "Total Goals Over/Under
+  // 2.5". Try exact, then parenthetical-stripped, then the longest map key
+  // contained anywhere in the name.
+
+  // 1) exact
+  if (MARKET_NAME_MAP[normalized]) return MARKET_NAME_MAP[normalized];
+
+  // 2) strip parentheticals + collapse whitespace
+  const stripped = normalized
+    .replace(/\s*\(.*?\)\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripped && MARKET_NAME_MAP[stripped]) return MARKET_NAME_MAP[stripped];
+
+  // 3) longest map key CONTAINED in the (stripped) name
+  const haystack = stripped || normalized;
+  let best: { key: string; type: StakeMarketType } | null = null;
+  for (const key of Object.keys(MARKET_NAME_MAP)) {
+    if (haystack.includes(key) && (!best || key.length > best.key.length)) {
+      best = { key, type: MARKET_NAME_MAP[key] };
+    }
+  }
+  return best ? best.type : null;
 };

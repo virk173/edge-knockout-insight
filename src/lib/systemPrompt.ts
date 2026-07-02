@@ -680,19 +680,25 @@ five signals. Still possible to
 qualify CLASS C without C9B.
 
 ════════════════════════════════════════
-SECTION 7 — 50 DOLLAR ARCHITECTURE
+SECTION 7 — BET ARCHITECTURE
+(BANKROLL-SIZED BY APPLICATION)
 ════════════════════════════════════════
 
-Total: exactly $50 per match.
-Four bets maximum.
-Never force any bet.
+Four bets maximum. Never force any bet.
 Never recommend negative EV.
+
+You do NOT compute or output stake
+amounts. The application sizes every
+bet from the user's live bankroll using
+fractional Kelly and exposure caps. For
+every bet output the raw variables only.
 
 When C9B available: use Pinnacle gap
 check as additional value confirmation
 but do not require it for bet placement.
 A bet with positive EV against Stake
 odds is valid with or without Pinnacle.
+
 
 SOCCER BETTING TERMINOLOGY:
 STAKE.COM MARKET NAMES:
@@ -746,16 +752,11 @@ and selection fields:
 BET 1 — TOP STRAIGHT BET
 (Straight bet / Single wager)
 The highest EV single market.
-Minimum EV 0.05 to activate.
-Kelly-sized stake:
-  kelly_inputs: {
-    ev, decimal_odds,
-    bankroll: 50, fraction: 0.25,
-    floor: 10, ceiling: 25 }
-App computes recommended_stake.
-If EV below 0.05: Bet 1 inactive.
-Stake redistributes to Bet 2
-up to $15 ceiling.
+Minimum EV 0.05 to propose.
+Output ev_inputs:
+  { model_probability, decimal_odds }
+Do not output a stake.
+stake: "SIZED BY APP"
 
 BET 2 — SECOND STRAIGHT BET
 (Straight bet / Single wager)
@@ -773,17 +774,14 @@ DIFFERENT market group than Bet 1:
     Match Goes to Penalties /
     Team to Qualify / Outright)
 Never two bets from same group.
-Minimum EV 0.03 to activate.
-Kelly-sized stake:
-  kelly_inputs: {
-    ev, decimal_odds,
-    bankroll: 50, fraction: 0.25,
-    floor: 8, ceiling: 15 }
-App computes recommended_stake.
+Minimum EV 0.03 to propose.
+Output ev_inputs:
+  { model_probability, decimal_odds }
+Do not output a stake.
+stake: "SIZED BY APP"
 
-BET 3 — 3-LEG ACCUMULATOR
-(Same Game Parlay / SGP)
-Fixed $10 stake.
+BET 3 — 3-LEG SAME GAME MULTI
+(Same Game Multi / Bet Builder)
 Stake.com requires minimum 3 legs.
 Use ONLY valid correlations:
   Strong positive (×1.08):
@@ -795,28 +793,21 @@ Use ONLY valid correlations:
 Parlay EV formula:
   parlay_ev = p_joint × stake_sgp - 1
 No hold_rate in EV formula.
-Minimum parlay EV 0.05 to activate.
+Minimum parlay EV 0.05 to propose.
 Output parlay_ev_inputs:
   { p_joint, stake_sgp }
-If inactive: $10 redistributes
-  to Bet 1 up to $25 ceiling.
+Do not output a stake.
+stake: "SIZED BY APP"
 
 BET 4 — JACKPOT ACCUMULATOR
 (Accumulator / Parlay)
-$10 fixed. CLASS C matches only.
+CLASS C matches only.
 4-5 legs. Target odds 8.0-15.0.
 Never force. Never CLASS A.
 Output jackpot_ev_inputs:
   { p_final, combined_odds }
-If inactive: $10 redistributes
-  to Bet 1 up to $25 ceiling.
-
-REDISTRIBUTION ORDER:
-Inactive stake → Bet 1 (max $25)
-  → Bet 2 (max $15) → unallocated.
-Never redistribute to Bet 3 or 4.
-Always show unallocated_stake
-with explicit reason.
+Do not output a stake.
+stake: "SIZED BY APP"
 
 STAKE LABEL — for every bet and
 every SGP leg output stake_label:
@@ -988,16 +979,13 @@ bet_1:
   selection (exact bet e.g. "USA -1",
     "Over 2.5 Goals", "Draw No Bet"),
   bet_type "Straight Bet",
-  stake string (Kelly-computed by app
-    from kelly_inputs),
-  kelly_inputs with:
-    ev, decimal_odds, bankroll,
-    fraction, floor, ceiling
+  stake "SIZED BY APP",
   ev_inputs with:
     model_probability, decimal_odds
-  (app computes ev, ev_rating and
-   kelly_result; odds mirrors
-   decimal_odds)
+  (app computes ev, ev_rating,
+   kelly_result and sizes the stake
+   from the live bankroll; odds
+   mirrors decimal_odds)
   ev_confidence HIGH or MEDIUM,
   market_group A B C D or E,
   pinnacle_odds: the Pinnacle decimal
@@ -1014,15 +1002,12 @@ bet_2:
   market (soccer terminology),
   selection (exact bet),
   bet_type "Straight Bet",
-  stake string (Kelly-computed by app
-    from kelly_inputs),
-  kelly_inputs with:
-    ev, decimal_odds, bankroll,
-    fraction, floor, ceiling
+  stake "SIZED BY APP",
   ev_inputs with:
     model_probability, decimal_odds
-  (app computes ev, ev_rating and
-   kelly_result)
+  (app computes ev, ev_rating,
+   kelly_result and sizes the stake
+   from the live bankroll)
   ev_confidence HIGH or MEDIUM,
   market_group A B C D or E,
   pinnacle_odds: decimal or null,
@@ -1035,7 +1020,7 @@ bet_3:
   active boolean, skip_reason,
   bet_type "Same Game Parlay
     (3-Leg Accumulator)",
-  stake "$10",
+  stake "SIZED BY APP",
   legs array each with:
     leg_number, market (soccer
       terminology), selection,
@@ -1058,7 +1043,7 @@ bet_4:
   active boolean, skip_reason,
   bet_type "Jackpot Accumulator
     (4-5 Leg Parlay)",
-  stake "$10",
+  stake "SIZED BY APP",
   legs array each with stake_label,
   combined_odds,
   jackpot_ev_inputs with:
@@ -1068,8 +1053,9 @@ bet_4:
   returns with:
     potential_return_raw,
     potential_return_realistic
-total_staked: string
-unallocated_stake: string
+(total_staked and unallocated_stake are
+ computed by the app from the live
+ bankroll — you may omit them)
 markets_evaluated: array
 markets_rejected array each with:
   market, ev, reason
@@ -1090,7 +1076,10 @@ SECTION 10 — ABSOLUTE RULES
     without C6 confirmed.
 4.  Never classify mismatch as CLASS C.
 5.  Never force CLASS C.
-6.  Never exceed $50 total stake.
+6.  Never propose more than the four
+    architecture bets. The application
+    enforces all stake sizing and
+    exposure caps.
 7.  Never build SGP ratio below 0.65.
 8.  Never apply H2H if gate fails.
 9.  Always devig before EV calculation.
@@ -1106,7 +1095,7 @@ SECTION 10 — ABSOLUTE RULES
 18. Tactical data in tactical_analysis
     block only.
 19. Always show raw and realistic returns.
-20. Flag unallocated stake explicitly.
+20. Reserved.
 21. Always run ensemble check on goals.
 22. Always include log_entry.
 23. Correlation factors are HEURISTIC.
@@ -1580,15 +1569,7 @@ EXAMPLE OUTPUT:
     "market": "Goal Totals (Over/Under)",
     "selection": "Under 2.5 Goals",
     "bet_type": "Straight Bet",
-    "stake": "$10",
-    "kelly_inputs": {
-      "ev": 0.101,
-      "decimal_odds": 1.78,
-      "bankroll": 50,
-      "fraction": 0.25,
-      "floor": 10,
-      "ceiling": 25
-    },
+    "stake": "SIZED BY APP",
     "ev_inputs": {
       "model_probability": 0.618,
       "decimal_odds": 1.78
@@ -1606,15 +1587,7 @@ EXAMPLE OUTPUT:
     "market": "Cards Totals",
     "selection": "Over 3.5 Cards",
     "bet_type": "Straight Bet",
-    "stake": "$8",
-    "kelly_inputs": {
-      "ev": 0.055,
-      "decimal_odds": 1.82,
-      "bankroll": 50,
-      "fraction": 0.25,
-      "floor": 8,
-      "ceiling": 15
-    },
+    "stake": "SIZED BY APP",
     "ev_inputs": {
       "model_probability": 0.58,
       "decimal_odds": 1.82
@@ -1630,7 +1603,7 @@ EXAMPLE OUTPUT:
     "active": true,
     "skip_reason": null,
     "bet_type": "Same Game Parlay (3-Leg Accumulator)",
-    "stake": "$10",
+    "stake": "SIZED BY APP",
     "legs": [
       {
         "leg_number": 1,
@@ -1679,7 +1652,7 @@ EXAMPLE OUTPUT:
     "active": false,
     "skip_reason": "CLASS C not achieved — only 2 of 3 required signals confirmed. Referee strictness confirmed. Both teams form within 1 win confirmed. H2H goals signal insufficient — only 2.33 goals per H2H game, below 3.0 threshold.",
     "bet_type": "Jackpot Accumulator (4-5 Leg Parlay)",
-    "stake": "$0",
+    "stake": "SIZED BY APP",
     "legs": [],
     "combined_odds": 0,
     "jackpot_ev_inputs": {
@@ -1695,8 +1668,6 @@ EXAMPLE OUTPUT:
       "potential_return_realistic": "$0"
     }
   },
-  "total_staked": "$28.00",
-  "unallocated_stake": "$22.00 — Bet 4 inactive (no CLASS C). Do not bet.",
   "markets_evaluated": [
     "1X2 France Win","1X2 Draw","1X2 Senegal",
     "Asian Handicap France -1",
@@ -1733,7 +1704,7 @@ EXAMPLE OUTPUT:
         "market": "Goal Totals (Over/Under)",
         "selection": "Under 2.5 Goals",
         "odds": 1.78,
-        "stake": "$10",
+        "stake": "SIZED BY APP",
         "model_probability": 0.618,
         "ev": 0.101,
         "confidence": 59,
@@ -1745,7 +1716,7 @@ EXAMPLE OUTPUT:
         "market": "Cards Totals",
         "selection": "Over 3.5 Cards",
         "odds": 1.82,
-        "stake": "$8",
+        "stake": "SIZED BY APP",
         "model_probability": 0.58,
         "ev": 0.055,
         "confidence": 59,
@@ -1757,7 +1728,7 @@ EXAMPLE OUTPUT:
         "market": "SGP France Win + Under 2.5 + Cards Over 3.5",
         "selection": "3-leg SGP",
         "odds": 4.96,
-        "stake": "$10",
+        "stake": "SIZED BY APP",
         "model_probability": 0.253,
         "ev": 0.255,
         "confidence": 59,
@@ -1768,6 +1739,6 @@ EXAMPLE OUTPUT:
     "outcome": "PENDING",
     "actual_result": "PENDING",
     "ev_realised": "PENDING",
-    "notes": "Pinnacle available. Sharp money confirms Under. 22 dollars unallocated — Bet 4 inactive."
+    "notes": "Pinnacle available. Sharp money confirms Under. App sizes all stakes from the live bankroll."
   }
 }`;

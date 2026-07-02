@@ -486,7 +486,7 @@ function Index() {
 
     try {
       const parsed = tryParse();
-      const enriched = calculateResults(parsed);
+      const enriched = calculateResults(parsed, { bankroll: getBankroll() });
       const savedAt = Date.now();
       patchState(match.id, {
         analysisRaw: cleaned,
@@ -605,6 +605,17 @@ Start your response with { and end with }.`;
       toast.error("Match already finished — no calls run.");
       return;
     }
+
+    // FIX 7 — stale-status guard. If kickoff has passed but the fixture is not
+    // flagged completed, the status may simply be stale. Confirm before burning
+    // quota; only proceed if the user says kickoff is genuinely delayed.
+    if (minsToKickoff < 0) {
+      const proceed = window.confirm(
+        "Kickoff has passed and fixture status may be stale. Only continue if kickoff is genuinely delayed. Run calls anyway?",
+      );
+      if (!proceed) return;
+    }
+
 
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
