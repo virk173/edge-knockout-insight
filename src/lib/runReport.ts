@@ -643,7 +643,7 @@ function callDataFromSaved(
   return out;
 }
 
-
+export function generateRunReport(
   match: string,
   round: string,
   kickoff: string,
