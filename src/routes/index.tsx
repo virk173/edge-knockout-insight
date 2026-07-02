@@ -32,8 +32,17 @@ import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import {
+  plainEnsembleAlignment,
+  plainModelProbabilities,
+  plainDimensionWeights,
+} from "@/lib/plainEnglish";
 import { getBankroll, setBankroll } from "@/lib/bankroll";
-import { generateRunReport } from "@/lib/runReport";
+import {
+  generateRunReport,
+  buildPersistedCallSummary,
+  buildKeyExtracts,
+} from "@/lib/runReport";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 import {
   readResultCache,
@@ -45,7 +54,7 @@ import { BettingDashboard } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
-  appendLogEntry,
+  appendEnrichedResult,
   getLogEntries,
   setRecommendationOutcome,
   clearLog,
@@ -558,6 +567,10 @@ function Index() {
         usedFallbackModel: res.used_fallback_model === true,
         fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
+      // FIX 2 — persist a reload-safe call summary + key extracts so the Run
+      // Report can rebuild its PIPELINE/CALL DATA sections after a page reload
+      // (the live collection is wiped on reload).
+      const savedCollection = getState(match.id).collection;
       writeResultCache({
         matchId: match.id,
         match: `${match.home} vs ${match.away}`,
@@ -567,15 +580,26 @@ function Index() {
         tokenUsage,
         responseTimeMs,
         savedAt,
+        callSummary: savedCollection
+          ? buildPersistedCallSummary(savedCollection.callResults)
+          : undefined,
+        keyExtracts: savedCollection
+          ? buildKeyExtracts(savedCollection)
+          : undefined,
       });
       toast.success("Analysis complete");
 
-      const logEntry = normalized.log_entry;
-      if (logEntry && typeof logEntry === "object") {
-        const updated = appendLogEntry(logEntry);
-        setLogEntries(updated);
-        toast.success("Saved to backtesting log");
-      }
+      // FIX 1: build the log entry from APP-computed values (never Claude's raw
+      // log_entry, which can claim positive EV the app has gated to inactive).
+      // Always append — a match with zero qualifying bets is still recorded.
+      const updated = appendEnrichedResult(normalized, { matchId: match.id });
+      setLogEntries(updated);
+      const loggedCount = updated[updated.length - 1]?.recommendations.length ?? 0;
+      toast.success(
+        loggedCount > 0
+          ? "Saved to backtesting log"
+          : "Logged (no qualifying bets)",
+      );
     } catch {
       const head = rawJson.slice(0, 500);
       const tail = rawJson.length > 500 ? rawJson.slice(-500) : "";
@@ -1525,6 +1549,9 @@ function MatchView({
                 <button
                   type="button"
                   onClick={() => {
+                    // FIX 2 — after reload state.collection is null; fall back to
+                    // the persisted call summary + key extracts from the cache.
+                    const persisted = readResultCache(match.id);
                     const report = generateRunReport(
                       `${match.home} vs ${match.away}`,
                       match.round ?? "N/A",
@@ -1540,6 +1567,10 @@ function MatchView({
                         venueCity: match.venueCity,
                         referee: match.referee,
                         fixtureId: match.id,
+                      },
+                      {
+                        callSummary: persisted?.callSummary,
+                        keyExtracts: persisted?.keyExtracts,
                       },
                     );
                     navigator.clipboard
@@ -1676,6 +1707,12 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
   const mp = result.model_probabilities;
   const ec = result.ensemble_check;
   const dw = result.dimension_weights_validation;
+  // FIX 5 — plain-English "What does this mean?" toggle.
+  const [plain, setPlain] = useState(false);
+  const Plain = ({ text }: { text: string }) =>
+    plain ? (
+      <div className="mt-0.5 font-sans text-[11px] italic text-slate/80">{text}</div>
+    ) : null;
 
   const recomputed =
     ec &&
@@ -1690,7 +1727,17 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
       <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
         Validation Checks
       </summary>
-      <div className="space-y-4 border-t border-border px-3 py-3 font-mono text-xs text-slate">
+      <div className="flex justify-end border-t border-border px-3 pt-2">
+        <button
+          type="button"
+          onClick={() => setPlain((v) => !v)}
+          className="rounded border border-border px-2 py-0.5 text-[11px] text-slate hover:text-foreground"
+        >
+          ⓘ What does this mean? {plain ? "(on)" : "(off)"}
+        </button>
+      </div>
+      <div className="space-y-4 px-3 py-3 font-mono text-xs text-slate">
+
         {/* model_probabilities */}
         <div>
           <div className="mb-1 font-semibold text-foreground">
@@ -1719,7 +1766,9 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain text={plainModelProbabilities(!!mp)} />
         </div>
+
 
         {/* ensemble_check.alignment */}
         <div>
@@ -1767,7 +1816,9 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain text={plainEnsembleAlignment(ec?.alignment ?? recomputed?.alignment)} />
         </div>
+
 
         {/* dimension_weights_validation */}
         <div>
@@ -1805,7 +1856,11 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain
+            text={plainDimensionWeights(!!dw && dw.mismatch_flags.length > 0)}
+          />
         </div>
+
       </div>
     </details>
   );

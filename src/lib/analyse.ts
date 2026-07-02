@@ -355,6 +355,95 @@ function compactInjuries(data: unknown): Array<Record<string, unknown>> {
   });
 }
 
+// FIX 3a — map a TheStatsAPI /football/teams/{id}/injuries-suspensions payload
+// into the CALL 5 (API-Football /injuries) compact shape the compactor reads
+// (player.name, team.name, player.type, player.reason) plus active +
+// expected_return. Only active=true records are returned, so they count as
+// genuine absences for the CALL 6B trigger.
+// TODO: injuries-suspensions returns player_id only (no player name). A squad
+// lookup (GET /football/teams/{id}/players) could resolve names — deferred.
+function mapStatsApiInjuries(
+  payload: unknown,
+  teamName: string | null,
+): Array<Record<string, unknown>> {
+  const node = getField(payload, ["data"]) ?? payload;
+  const out: Array<Record<string, unknown>> = [];
+  const push = (rec: unknown, kind: "injury" | "suspension") => {
+    if (getField(rec, ["active"]) !== true) return; // only active absences count
+    const pid = getField(rec, ["player_id"]);
+    out.push({
+      player: {
+        name:
+          getField(rec, ["player_name", "name"]) ??
+          (pid != null ? String(pid) : null),
+        type:
+          kind === "suspension"
+            ? "Suspension"
+            : (getField(rec, ["status"]) ?? "Injury"),
+        reason: getField(rec, ["reason"]) ?? null,
+      },
+      team: { name: teamName },
+      active: true,
+      expected_return:
+        getField(rec, ["expected_return"]) ?? getField(rec, ["end_date"]) ?? null,
+      source: "TheStatsAPI injuries-suspensions fallback",
+    });
+  };
+  for (const inj of extractArray(getField(node, ["injuries"]))) push(inj, "injury");
+  for (const sus of extractArray(getField(node, ["suspensions"])))
+    push(sus, "suspension");
+  return out;
+}
+
+// FIX 3b — map TheStatsAPI /football/matches rows into the API-Football fixture
+// shape scorelinesFrom() understands (fixture.date, league.round, teams, goals),
+// so the existing CALL 3 compactor + H2H gate work unchanged. Filters to rows
+// where the OTHER side matches the away team (contains-style, like
+// resolveOpponentStandingRow), newest first, capped at 10.
+// TODO: real post-match xG lives at /football/matches/{id}/player-stats (settles
+// 1-2h after FT; live returns 409) — not fetched in this build.
+function statsApiMatchesToFixtures(
+  payload: unknown,
+  awayTeamName: string,
+): Array<Record<string, unknown>> {
+  const rows = extractArray(getField(payload, ["data"]) ?? payload);
+  const oppo = normalize(awayTeamName);
+  return rows
+    .filter((mt) => {
+      const hn = normalize(
+        String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""),
+      );
+      const an = normalize(
+        String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""),
+      );
+      return (
+        (!!hn && (hn.includes(oppo) || oppo.includes(hn))) ||
+        (!!an && (an.includes(oppo) || oppo.includes(an)))
+      );
+    })
+    .sort((a, b) => {
+      const da = String(getField(a, ["utc_date"]) ?? "");
+      const db = String(getField(b, ["utc_date"]) ?? "");
+      return db.localeCompare(da); // newest first
+    })
+    .slice(0, 10)
+    .map((mt) => {
+      const score = getField(mt, ["score"]);
+      return {
+        fixture: { date: getField(mt, ["utc_date"]) ?? null },
+        league: { round: getField(mt, ["stage_name"]) ?? null },
+        teams: {
+          home: { name: getField(getField(mt, ["home_team"]), ["name"]) ?? null },
+          away: { name: getField(getField(mt, ["away_team"]), ["name"]) ?? null },
+        },
+        goals: {
+          home: getField(score, ["home"]) ?? null,
+          away: getField(score, ["away"]) ?? null,
+        },
+      };
+    });
+}
+
 // Maps a validated raw response to the compact Claude-facing shape. Calls not
 // listed here (7, 9A, 9B, 10) are already small and pass through unchanged.
 function compactForClaude(n: string, data: unknown): unknown {
@@ -2560,7 +2649,42 @@ export async function collectMatchData(
     blockOpts,
   );
 
-  // 4 step 1: home recent form
+  // FIX 3b — PAST MEETINGS fallback. When CALL 3 (API-Football headtohead) is
+  // EMPTY, reconstruct head-to-head from TheStatsAPI /football/matches (there is
+  // no dedicated H2H endpoint). The existing H2H gate (3+ competitive) still
+  // applies downstream; scorelines are formatted via scorelinesFrom on the
+  // API-Football-shaped rows we synthesise here.
+  if (callResults["3"]?.status === "EMPTY") {
+    const ref = await ensureStatsApiMatch();
+    if (ref?.homeTeamId) {
+      currentDebugCall = "3";
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const payload = await saGet(
+          `/football/matches?team_id=${ref.homeTeamId}&date_to=${today}&per_page=100`,
+        );
+        const fixtures = statsApiMatchesToFixtures(
+          payload,
+          ref.awayTeamName ?? match.away,
+        );
+        record(
+          "3",
+          "PAST MEETINGS (TheStatsAPI workaround — not a dedicated H2H endpoint)",
+          fixtures.length ? "SUCCESS" : "EMPTY",
+          fixtures.length ? fixtures : undefined,
+          fixtures.length
+            ? undefined
+            : "No past meetings found via TheStatsAPI fallback.",
+        );
+      } catch (e) {
+        // Keep the original EMPTY status on failure.
+        console.warn("[analyse] CALL 3 TheStatsAPI fallback failed", e);
+      } finally {
+        currentDebugCall = null;
+      }
+    }
+  }
+
   let homeFixtureIds: number[] = [];
   await runStep(
     "4-1",
@@ -2604,6 +2728,53 @@ export async function collectMatchData(
     () => afGet(`/injuries?fixture=${match.id}`, afKey),
     blockOpts,
   );
+
+  // FIX 3a — INJURIES fallback. When CALL 5 (API-Football /injuries) is EMPTY or
+  // FAILED, pull TheStatsAPI /football/teams/{id}/injuries-suspensions for each
+  // side and merge into the CALL 5 shape the compactor reads. Only active=true
+  // records are kept, so they count as absences for the CALL 6B trigger.
+  {
+    const c5 = callResults["5"]?.status;
+    if (c5 === "EMPTY" || c5 === "FAILED") {
+      const ref = await ensureStatsApiMatch();
+      if (ref?.homeTeamId || ref?.awayTeamId) {
+        currentDebugCall = "5";
+        const merged: Array<Record<string, unknown>> = [];
+        let anyFetched = false;
+        const teams: Array<[string | null, string | null]> = [
+          [ref?.homeTeamId ?? null, ref?.homeTeamName ?? match.home],
+          [ref?.awayTeamId ?? null, ref?.awayTeamName ?? match.away],
+        ];
+        for (const [teamId, teamName] of teams) {
+          if (!teamId) continue;
+          try {
+            const payload = await saGet(
+              `/football/teams/${teamId}/injuries-suspensions`,
+            );
+            anyFetched = true;
+            merged.push(...mapStatsApiInjuries(payload, teamName));
+          } catch (e) {
+            console.warn(
+              `[analyse] CALL 5 injuries fallback failed for ${teamId}`,
+              e,
+            );
+          }
+        }
+        if (anyFetched) {
+          record(
+            "5",
+            "Injuries (TheStatsAPI injuries-suspensions fallback)",
+            merged.length ? "SUCCESS" : "EMPTY",
+            merged.length ? merged : undefined,
+            merged.length
+              ? undefined
+              : "No active injuries/suspensions via TheStatsAPI fallback.",
+          );
+        }
+        currentDebugCall = null;
+      }
+    }
+  }
 
   // 9: odds (Stake via API-Football only)
   // FIX 5 — runs immediately after CALL 5 (injuries) and BEFORE the CALL 6

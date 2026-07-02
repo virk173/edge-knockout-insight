@@ -1,5 +1,6 @@
 import {
   extractStakeMarkets,
+  buildCallPanelSummary,
   type CollectionResult,
   type CallResult,
   type LineupState,
@@ -9,6 +10,10 @@ import type {
   Absence,
   ConfidenceAdjustment,
 } from "@/lib/analysisResult";
+import type {
+  PersistedCallSummaryRow,
+  PersistedKeyExtracts,
+} from "@/lib/resultCache";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
@@ -503,6 +508,141 @@ function buildCallData(
   return out;
 }
 
+// ─────────────────────────────────────────────────────────────
+// FIX 2 — reload-safe summary builders + renderers. The live collection
+// (state.collection) is wiped on reload, so we persist a compact call
+// summary + key extracts and rebuild PIPELINE/CALL DATA from them.
+// ─────────────────────────────────────────────────────────────
+
+/** Build the persist-safe call summary from a live call-results map. */
+export function buildPersistedCallSummary(
+  callResults: Record<string, CallResult>,
+): PersistedCallSummaryRow[] {
+  return buildCallPanelSummary(callResults).rows.map((row) => ({
+    id: row.spec.id,
+    label: row.spec.label,
+    status: row.status,
+    cached: row.status === "CACHED",
+  }));
+}
+
+/** Build the persist-safe key extracts from the live collection. */
+export function buildKeyExtracts(callStatuses: CallStatusMap): PersistedKeyExtracts {
+  const cr = callStatuses?.callResults ?? {};
+  const stakeRoot = cr["9"]?.data as { stakeOdds?: unknown } | null | undefined;
+  const odds9A =
+    cr["9"]?.status === "SUCCESS"
+      ? extractStakeMarkets(stakeRoot?.stakeOdds ?? null)
+      : null;
+  const pin = cr["9B"]?.data as
+    | { bookmaker?: string; is_pinnacle?: boolean }
+    | null
+    | undefined;
+  const ref = cr["7"]?.data as
+    | { referee?: string; avg_yellow_cards_per_game?: number | string }
+    | null
+    | undefined;
+  return {
+    odds9A,
+    bookmaker9B: cr["9B"]?.status === "SUCCESS" ? (pin?.bookmaker ?? null) : null,
+    isPinnacle9B: !!pin?.is_pinnacle,
+    lineupState: lineupText(
+      callStatuses?.lineupState,
+      callStatuses?.lineupResolved ?? false,
+    ),
+    refereeName: cr["7"]?.status === "SUCCESS" ? (ref?.referee ?? null) : null,
+    refereeYellows:
+      cr["7"]?.status === "SUCCESS"
+        ? (ref?.avg_yellow_cards_per_game ?? null)
+        : null,
+  };
+}
+
+const SAVED_HEADER = "(from saved run — reload-safe summary)";
+const isReady = (s: string) => s === "SUCCESS" || s === "CACHED";
+
+/** PIPELINE section rebuilt from a persisted call summary. */
+function pipelineFromSaved(
+  summary: PersistedCallSummaryRow[],
+  keyExtracts: PersistedKeyExtracts | undefined,
+  dataQuality: string | undefined,
+): string[] {
+  const af = summary.filter((r) => r.id.startsWith("C"));
+  const sa = summary.filter((r) => r.id.startsWith("S"));
+  const afOk = af.filter((r) => isReady(r.status)).length;
+  const saOk = sa.filter((r) => isReady(r.status)).length;
+  const failed = summary.filter((r) => r.status === "FAILED").map((r) => r.label);
+  const empty = summary.filter((r) => r.status === "EMPTY").map((r) => r.label);
+  return [
+    `PIPELINE ${SAVED_HEADER}`,
+    `API-Football: ${afOk}/${af.length} succeeded`,
+    `TheStatsAPI: ${saOk}/${sa.length} succeeded`,
+    `Failed: ${failed.length ? failed.join(", ") : "none"}`,
+    `Empty: ${empty.length ? empty.join(", ") : "none"}`,
+    `Lineups: ${na(keyExtracts?.lineupState)}`,
+    `Data quality: ${na(dataQuality)}`,
+    "",
+  ];
+}
+
+/** CALL DATA section rebuilt from persisted key extracts. */
+function callDataFromSaved(
+  keyExtracts: PersistedKeyExtracts | undefined,
+  meta: RunReportMeta,
+): string[] {
+  const out: string[] = [`CALL DATA ${SAVED_HEADER}`, "─────────────────"];
+  const home = na(meta.home);
+  const away = na(meta.away);
+  out.push(`C1  Fixture: ${home} vs ${away}`);
+  out.push(`    Fixture ID: ${na(meta.fixtureId)}`);
+
+  // C7 referee
+  out.push(`C7  Referee: ${na(keyExtracts?.refereeName ?? meta.referee)}`);
+  out.push(`    avg yellows: ${na(keyExtracts?.refereeYellows)}`);
+
+  // C9A stake odds (same extract shape as live)
+  const sm = keyExtracts?.odds9A?.markets;
+  out.push("C9A Stake odds:");
+  out.push(
+    `    Home: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
+      v.includes("home"),
+    )} Draw: ${stakePrice(sm, "1X2 (Match Winner)", (v) =>
+      v.includes("draw"),
+    )} Away: ${stakePrice(sm, "1X2 (Match Winner)", (v) => v.includes("away"))}`,
+  );
+  out.push(
+    `    Over 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
+      v.includes("over"),
+    )} Under 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
+      v.includes("under"),
+    )}`,
+  );
+  out.push(`    Overround: ${stakeOverround(sm)}`);
+
+  // C9B pinnacle source
+  out.push("C9B Pinnacle odds:");
+  if (keyExtracts?.bookmaker9B || keyExtracts?.isPinnacle9B) {
+    const source = keyExtracts?.isPinnacle9B
+      ? "PINNACLE"
+      : String(keyExtracts?.bookmaker9B ?? "").toUpperCase() || "EMPTY";
+    out.push(`    Source: ${source}`);
+    if (!keyExtracts?.isPinnacle9B) {
+      out.push(
+        `    ⚠ NOTE: Pinnacle unavailable — ${
+          keyExtracts?.bookmaker9B ?? "retail book"
+        } returned as fallback.`,
+      );
+    }
+  } else {
+    out.push("    Source: EMPTY");
+  }
+
+  // Lineups (state only — full XI not persisted)
+  out.push("S3  Lineups:");
+  out.push(`    State: ${na(keyExtracts?.lineupState)}`);
+  return out;
+}
+
 export function generateRunReport(
   match: string,
   round: string,
@@ -512,6 +652,10 @@ export function generateRunReport(
   claudeRaw: string,
   lastRunAt: Date,
   meta: RunReportMeta = {},
+  saved?: {
+    callSummary?: PersistedCallSummaryRow[];
+    keyExtracts?: PersistedKeyExtracts;
+  },
 ): string {
   const cr = callStatuses?.callResults ?? {};
   const r = normalizeAnalysisResult(analysisResult);
@@ -531,39 +675,60 @@ export function generateRunReport(
   );
   push(RULE);
 
-  // ── Pipeline ────────────────────────────────────────────
-  push("PIPELINE");
-  push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
-  push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
-  push(`Failed: ${statusList(cr, "FAILED")}`);
-  push(`Empty: ${statusList(cr, "EMPTY")}`);
-  push(
-    `Lineups: ${lineupText(
+  // ── Pipeline + Call data ────────────────────────────────
+  // FIX 2 — after reload the live collection is empty; rebuild both sections
+  // from the persisted saved summary so we never falsely show "0/8".
+  const hasLive = Object.keys(cr).length > 0;
+  const useSaved = !hasLive && (saved?.callSummary?.length ?? 0) > 0;
+
+  if (useSaved) {
+    for (const line of pipelineFromSaved(
+      saved!.callSummary!,
+      saved!.keyExtracts,
+      r.data_quality,
+    )) {
+      push(line);
+    }
+    for (const line of callDataFromSaved(saved!.keyExtracts, meta)) {
+      push(line);
+    }
+    push(RULE);
+    push();
+  } else {
+    push("PIPELINE");
+    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
+    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
+    push(`Failed: ${statusList(cr, "FAILED")}`);
+    push(`Empty: ${statusList(cr, "EMPTY")}`);
+    push(
+      `Lineups: ${lineupText(
+        callStatuses?.lineupState,
+        callStatuses?.lineupResolved ?? false,
+      )}`,
+    );
+    push(`Data quality: ${na(r.data_quality)}`);
+    push(
+      `Dead-rubber discounted: ${
+        typeof callStatuses?.deadRubberFlagged === "number"
+          ? callStatuses.deadRubberFlagged
+          : 0
+      } fixtures`,
+    );
+    push();
+
+    // ── Call data (actual extracted values) ─────────────────
+    for (const line of buildCallData(
+      cr,
       callStatuses?.lineupState,
       callStatuses?.lineupResolved ?? false,
-    )}`,
-  );
-  push(`Data quality: ${na(r.data_quality)}`);
-  push(
-    `Dead-rubber discounted: ${
-      typeof callStatuses?.deadRubberFlagged === "number"
-        ? callStatuses.deadRubberFlagged
-        : 0
-    } fixtures`,
-  );
-  push();
-
-  // ── Call data (actual extracted values) ─────────────────
-  for (const line of buildCallData(
-    cr,
-    callStatuses?.lineupState,
-    callStatuses?.lineupResolved ?? false,
-    meta,
-  )) {
-    push(line);
+      meta,
+    )) {
+      push(line);
+    }
+    push(RULE);
+    push();
   }
-  push(RULE);
-  push();
+
 
 
   const cs = r.confidence_scores;

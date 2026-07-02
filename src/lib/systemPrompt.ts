@@ -533,6 +533,13 @@ Adjustments:
   CRITICAL ABSENCE: D4 18, D2 17
   All fit confirmed C6: D4 5, D1 40
 
+When multiple adjustment rules apply
+simultaneously, apply them in order and
+then ADD any remainder to D1 so the six
+weights ALWAYS sum to exactly 100. Sum
+your six numbers before output; if not
+100, fix D1.
+
 D1 — FORM
 Recency multipliers:
   Knockout: 1.0x
@@ -1246,7 +1253,13 @@ SECTION 10 — ABSOLUTE RULES
     confidence_inputs.dimension_weighted_raw.
     Never omit this field. If no special
     adjustment applies, use the default
-    35/25/20/10/5/5 split.
+    35/25/20/10/5/5 split. When multiple
+    adjustment rules apply simultaneously,
+    apply them in order and then ADD any
+    remainder to D1 so the six weights
+    ALWAYS sum to exactly 100. Sum your
+    six numbers before output; if not 100,
+    fix D1.
 
 35. STATUS VOCABULARY DISCIPLINE.
     Only use status values that actually

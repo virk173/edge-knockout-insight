@@ -7,12 +7,14 @@ import {
   normalizeDimensions,
 } from "@/lib/analysisResult";
 import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
+import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
 // ─────────────────────────────────────────────────────────────
 export function AnalysisDetails({ result }: { result: AnalysisResult }) {
   const [open, setOpen] = useState(false);
+  const [plain, setPlain] = useState(false);
   const absences = result.player_intelligence.absences;
   const tactical = result.tactical_analysis;
   const dims = normalizeDimensions(result.confidence_scores.dimension_breakdown);
@@ -125,9 +127,19 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
           {/* Confidence breakdown */}
           {(dims.length > 0 || adjustments.length > 0) && (
             <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-slate">
-                Confidence Breakdown
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate">
+                  Confidence Breakdown
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPlain((v) => !v)}
+                  className="rounded border border-border px-2 py-0.5 text-[11px] text-slate hover:text-foreground"
+                >
+                  ⓘ What does this mean? {plain ? "(on)" : "(off)"}
+                </button>
+              </div>
+
               {dims.map((d, i) => (
                 <div
                   key={i}
@@ -163,6 +175,11 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                     {(adj.delta ?? 0) >= 0 ? "+" : ""}
                     {adj.delta}
                   </span>
+                  {plain && (
+                    <span className="basis-full font-sans text-[11px] italic text-slate/80">
+                      {plainConfidenceAdjustment(adj.type ?? "")}
+                    </span>
+                  )}
                 </div>
               ))}
               {typeof result.confidence_scores.final_confidence === "number" && (
