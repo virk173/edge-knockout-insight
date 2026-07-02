@@ -38,6 +38,15 @@ export interface LogRecommendation {
   outcome: Outcome;
   // Strict-signal regime: paper bets never touch the bankroll on settlement.
   paper?: boolean;
+  // Shadow Pick: the best-available candidate logged as a $0 paper bet when
+  // nothing qualified. Feeds CLV + calibration, excluded from the edge verdict.
+  shadow?: boolean;
+  // Discretionary "I placed this" bet: real money, tracked to the dollar, but
+  // EXCLUDED from the model's edge-verdict aggregates.
+  action_bet?: boolean;
+  // Ledger id of the bankroll settlement created for an action bet (so a later
+  // outcome change can reverse/re-apply it). Set by the UI on settlement.
+  settled_ledger_id?: string;
   // Closing Line Value (see clv.ts). Populated by settleClv().
   closing_odds?: number;
   closing_source?: string;
@@ -162,6 +171,9 @@ export function appendLogEntry(raw: RawLogEntry | null | undefined): LogEntry[] 
         ensemble_alignment: sanitizeString(r?.ensemble_alignment),
         sharp_signal: sanitizeString(r?.sharp_signal),
         paper: r?.paper === true,
+        shadow: r?.shadow === true,
+        action_bet: r?.action_bet === true,
+        settled_ledger_id: sanitizeString(r?.settled_ledger_id),
         closing_odds:
           typeof r?.closing_odds === "number" ? r.closing_odds : undefined,
         closing_source: sanitizeString(r?.closing_source),
@@ -288,9 +300,83 @@ export function buildLogEntryFromEnriched(
     });
   }
 
+  // ── SHADOW PICK ───────────────────────────────────────────────
+  // If nothing qualified (recs empty) but calculate.ts flagged a shadow_pick,
+  // log that single candidate as a $0 paper bet (shadow: true) so CLV +
+  // calibration volume keeps growing. Excluded from bankroll + edge verdict.
+  let shadowEv: number | undefined;
+  if (recs.length === 0) {
+    const shadowStraight = (bet: StraightBet | undefined, tier: number) => {
+      if (!bet || bet.shadow_pick !== true) return false;
+      shadowEv = typeof bet.ev === "number" ? bet.ev : undefined;
+      recs.push({
+        tier,
+        market: bet.market,
+        selection: bet.selection,
+        odds: typeof bet.odds === "number" ? bet.odds : undefined,
+        stake: "$0",
+        paper: true,
+        shadow: true,
+        model_probability:
+          typeof bet.model_probability === "number"
+            ? bet.model_probability
+            : undefined,
+        ev: shadowEv,
+        confidence: finalConfidence,
+        ensemble_alignment: alignment,
+        sharp_signal: sanitizeString(bet.pinnacle_check_note),
+        outcome: "PENDING",
+      });
+      return true;
+    };
+    const done =
+      shadowStraight(result.bet_1, 1) || shadowStraight(result.bet_2, 2);
+    if (!done && sgp?.shadow_pick === true) {
+      shadowEv = typeof sgp.parlay_ev === "number" ? sgp.parlay_ev : undefined;
+      recs.push({
+        tier: 3,
+        market: sgp.bet_type ?? "Same Game Parlay (3-Leg Accumulator)",
+        selection: legsSelection(sgp.legs),
+        odds:
+          typeof sgp.combined_odds_sgp === "number"
+            ? sgp.combined_odds_sgp
+            : undefined,
+        stake: "$0",
+        paper: true,
+        shadow: true,
+        model_probability: typeof sgp.p_joint === "number" ? sgp.p_joint : undefined,
+        ev: shadowEv,
+        confidence: finalConfidence,
+        ensemble_alignment: alignment,
+        outcome: "PENDING",
+      });
+    } else if (!done && jack?.shadow_pick === true) {
+      shadowEv = typeof jack.jackpot_ev === "number" ? jack.jackpot_ev : undefined;
+      recs.push({
+        tier: 4,
+        market: jack.bet_type ?? "Jackpot Accumulator (4-5 Leg Parlay)",
+        selection: legsSelection(jack.legs),
+        odds:
+          typeof jack.combined_odds === "number" ? jack.combined_odds : undefined,
+        stake: "$0",
+        paper: true,
+        shadow: true,
+        model_probability: undefined,
+        ev: shadowEv,
+        confidence: finalConfidence,
+        ensemble_alignment: alignment,
+        outcome: "PENDING",
+      });
+    }
+  }
+
+  const isShadow = recs.length === 1 && recs[0].shadow === true;
   const claudeNote = sanitizeString(result.log_entry?.notes);
-  const notes =
-    recs.length === 0
+  const notes = isShadow
+    ? `SHADOW — best available had no value (EV ${
+        typeof shadowEv === "number" ? shadowEv.toFixed(3) : "—"
+      })`
+    : recs.length === 0
       ? "No qualifying bets — all EV negative or gated."
       : claudeNote
         ? `Claude note: ${claudeNote}`
@@ -324,6 +410,88 @@ export function appendEnrichedResult(
   const existing = getLogEntries();
   const entry = buildLogEntryFromEnriched(result, opts);
   const updated = [...existing, entry];
+  writeLogEntries(updated);
+  return updated;
+}
+
+/**
+ * Input for a discretionary "I placed this" action bet. Real money — tracked to
+ * the dollar and settled against the bankroll — but excluded from the MODEL's
+ * edge-verdict aggregates so hunches never contaminate the edge measurement.
+ */
+export interface ActionBetInput {
+  matchId?: number;
+  match?: string;
+  date?: string;
+  round?: string;
+  tier?: number | string;
+  market?: string;
+  selection?: string;
+  odds?: number;
+  stake?: number; // actual dollars staked
+  model_probability?: number;
+  ev?: number; // APP-computed EV (never Claude's)
+  ensemble_alignment?: string;
+}
+
+/**
+ * Append a single action bet. It is written as its own LogEntry (carrying the
+ * matchId so CLV can settle against the closing capture) with one
+ * action_bet-flagged recommendation.
+ */
+export function appendActionBet(input: ActionBetInput): LogEntry[] {
+  const existing = getLogEntries();
+  const rec: LogRecommendation = {
+    tier: input.tier,
+    market: input.market,
+    selection: input.selection,
+    odds:
+      typeof input.odds === "number" && Number.isFinite(input.odds)
+        ? input.odds
+        : undefined,
+    stake:
+      typeof input.stake === "number" && Number.isFinite(input.stake)
+        ? `$${input.stake}`
+        : undefined,
+    model_probability:
+      typeof input.model_probability === "number"
+        ? input.model_probability
+        : undefined,
+    ev: typeof input.ev === "number" ? input.ev : undefined,
+    ensemble_alignment: sanitizeString(input.ensemble_alignment),
+    action_bet: true,
+    paper: false,
+    outcome: "PENDING",
+  };
+  const entry: LogEntry = {
+    id: makeId(),
+    savedAt: new Date().toISOString(),
+    match: input.match,
+    matchId: typeof input.matchId === "number" ? input.matchId : undefined,
+    date: input.date,
+    round: input.round,
+    notes: "💵 ACTION — user-placed discretionary bet (real money).",
+    recommendations: [rec],
+  };
+  const updated = [...existing, entry];
+  writeLogEntries(updated);
+  return updated;
+}
+
+/** Patch arbitrary fields on a single recommendation (e.g. settled_ledger_id). */
+export function updateRecommendation(
+  entryId: string,
+  recIndex: number,
+  patch: Partial<LogRecommendation>,
+): LogEntry[] {
+  const entries = getLogEntries();
+  const updated = entries.map((e) => {
+    if (e.id !== entryId) return e;
+    const recs = e.recommendations.map((r, i) =>
+      i === recIndex ? { ...r, ...patch } : r,
+    );
+    return { ...e, recommendations: recs };
+  });
   writeLogEntries(updated);
   return updated;
 }
@@ -465,7 +633,11 @@ export interface LogSummary {
 }
 
 export function computeSummary(entries: LogEntry[]): LogSummary {
-  const recs = entries.flatMap((e) => e.recommendations);
+  // MODEL performance only — action bets (discretionary) and shadow picks
+  // ($0 volume markers) are excluded so they never distort ROI / win rate.
+  const recs = entries
+    .flatMap((e) => e.recommendations)
+    .filter((r) => r.action_bet !== true && r.shadow !== true);
 
   let totalStaked = 0;
   let totalReturned = 0;
@@ -651,7 +823,15 @@ function allRecs(entries: LogEntry[]): LogRecommendation[] {
 }
 
 export function computeClvSummary(entries: LogEntry[]): ClvSummary {
-  const recs = allRecs(entries).filter((r) => typeof r.clv_pct === "number");
+  // Edge-verdict aggregates measure the MODEL's edge only — action bets AND
+  // shadow picks are excluded (verification #4). Only genuine model
+  // recommendations (real + strict-signal paper) count toward the verdict.
+  const recs = allRecs(entries).filter(
+    (r) =>
+      typeof r.clv_pct === "number" &&
+      r.action_bet !== true &&
+      r.shadow !== true,
+  );
   const n = recs.length;
   const avg =
     n > 0 ? recs.reduce((s, r) => s + (r.clv_pct as number), 0) / n : null;
@@ -713,6 +893,9 @@ export function computeClvSummary(entries: LogEntry[]): ClvSummary {
 export function getCalibrationSamples(entries: LogEntry[]): CalibrationSample[] {
   const out: CalibrationSample[] = [];
   for (const r of allRecs(entries)) {
+    // Shadow picks DO feed calibration volume (they are the model's own best
+    // pick). Discretionary action bets do NOT — their odds are user-edited.
+    if (r.action_bet === true) continue;
     if (r.outcome !== "WON" && r.outcome !== "LOST") continue; // excludes PENDING/PUSH/VOID
     if (typeof r.model_probability !== "number") continue;
     if (typeof r.odds !== "number" || r.odds <= 0) continue;
@@ -740,6 +923,7 @@ export function computeCalibrationTable(
 ): CalibrationBucketRow[] {
   const settled = allRecs(entries).filter(
     (r) =>
+      r.action_bet !== true &&
       (r.outcome === "WON" || r.outcome === "LOST") &&
       typeof r.model_probability === "number",
   );
@@ -769,3 +953,38 @@ export function computeCalibrationTable(
     };
   });
 }
+
+// ─────────────────────────────────────────────────────────────
+// Action-bet aggregate — discretionary "I placed this" bets, tracked to the
+// dollar but kept OUT of the model's edge verdict. Shown in its own row.
+// ─────────────────────────────────────────────────────────────
+export interface ActionBetSummary {
+  count: number; // total action recs (any outcome)
+  settledCount: number; // WON + LOST
+  pl: number; // realised profit/loss in dollars
+  avgClv: number | null; // avg CLV over action recs that have a close captured
+}
+
+export function computeActionBetSummary(entries: LogEntry[]): ActionBetSummary {
+  const recs = allRecs(entries).filter((r) => r.action_bet === true);
+  let pl = 0;
+  let settled = 0;
+  for (const r of recs) {
+    const stake = parseStake(r.stake);
+    if (r.outcome === "WON") {
+      const odds = typeof r.odds === "number" ? r.odds : 0;
+      pl += stake * (odds - 1);
+      settled += 1;
+    } else if (r.outcome === "LOST") {
+      pl -= stake;
+      settled += 1;
+    }
+  }
+  const clvRecs = recs.filter((r) => typeof r.clv_pct === "number");
+  const avgClv =
+    clvRecs.length > 0
+      ? clvRecs.reduce((s, r) => s + (r.clv_pct as number), 0) / clvRecs.length
+      : null;
+  return { count: recs.length, settledCount: settled, pl, avgClv };
+}
+

@@ -37,7 +37,12 @@ import {
   plainModelProbabilities,
   plainDimensionWeights,
 } from "@/lib/plainEnglish";
-import { getBankroll, setBankroll } from "@/lib/bankroll";
+import {
+  getBankroll,
+  setBankroll,
+  settleBet,
+  removeLedgerEntry,
+} from "@/lib/bankroll";
 import {
   generateRunReport,
   buildPersistedCallSummary,
@@ -50,11 +55,16 @@ import {
   extractSgpChain,
   formatResultAgo,
 } from "@/lib/resultCache";
-import { BettingDashboard } from "@/components/betting/BettingDashboard";
+import {
+  BettingDashboard,
+  type ActionBetDraft,
+} from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
   appendEnrichedResult,
+  appendActionBet,
+  updateRecommendation,
   getLogEntries,
   setRecommendationOutcome,
   clearLog,
@@ -346,10 +356,71 @@ function Index() {
   }
 
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
-    const updated = setRecommendationOutcome(entryId, recIndex, next);
+    // Capture the rec BEFORE mutating so we can settle action bets against the
+    // bankroll. Action bets are real money: WON/LOST create a ledger entry;
+    // cycling away reverses the prior settlement idempotently.
+    const priorEntry = logEntries.find((e) => e.id === entryId);
+    const rec = priorEntry?.recommendations[recIndex];
+
+    let updated = setRecommendationOutcome(entryId, recIndex, next);
+
+    if (rec?.action_bet === true) {
+      if (rec.settled_ledger_id) {
+        removeLedgerEntry(rec.settled_ledger_id);
+      }
+      const stake = Number(String(rec.stake ?? "").replace(/[^0-9.]/g, ""));
+      const odds = typeof rec.odds === "number" ? rec.odds : 0;
+      if ((next === "WON" || next === "LOST") && stake > 0 && odds > 0) {
+        const led = settleBet({
+          match: priorEntry?.match ?? "—",
+          bet_label: `💵 ${[rec.market, rec.selection]
+            .filter(Boolean)
+            .join(" — ")}`,
+          stake,
+          odds,
+          outcome: next,
+        });
+        updated = updateRecommendation(entryId, recIndex, {
+          settled_ledger_id: led.id,
+        });
+      } else {
+        updated = updateRecommendation(entryId, recIndex, {
+          settled_ledger_id: undefined,
+        });
+      }
+      setBankrollState(getBankroll());
+    }
+
     setLogEntries(updated);
     refitCalibration(updated);
   }
+
+  function handlePlaceActionBet(draft: ActionBetDraft) {
+    const match = activeMatchId != null ? matches?.find((m) => m.id === activeMatchId) : undefined;
+    const result = activeState.analysisResult as AnalysisResult | undefined;
+    const updated = appendActionBet({
+      matchId: typeof activeMatchId === "number" ? activeMatchId : undefined,
+      match:
+        result?.match ??
+        (match ? `${match.home} vs ${match.away}` : undefined),
+      date: result?.kickoff_UTC ?? match?.kickoffUtc,
+      round: result?.round ?? match?.round ?? undefined,
+      tier: draft.tier,
+      market: draft.market,
+      selection: draft.selection,
+      odds: draft.odds,
+      stake: draft.stake,
+      model_probability: draft.model_probability,
+      ev: draft.ev,
+    });
+    setLogEntries(updated);
+    toast.success(
+      `💵 Action bet logged: $${draft.stake}${
+        typeof draft.odds === "number" ? ` @ ${draft.odds}` : ""
+      }`,
+    );
+  }
+
 
   function handleSetManualClosingOdds(
     entryId: string,
@@ -961,6 +1032,7 @@ Start your response with { and end with }.`;
           onResumeCalls={() => handleResumeCalls(activeMatch)}
           onClearCache={() => handleClearMatchCache(activeMatch)}
           onResetBudget={handleResetBudget}
+          onPlaceActionBet={handlePlaceActionBet}
           patchState={(partial) => patchState(activeMatch.id, partial)}
         />
       ) : (
@@ -1242,6 +1314,7 @@ function MatchView({
   onResumeCalls,
   onClearCache,
   onResetBudget,
+  onPlaceActionBet,
   patchState,
 }: {
   match: AnalysedMatch;
@@ -1257,6 +1330,7 @@ function MatchView({
   onResumeCalls: () => void;
   onClearCache: () => void;
   onResetBudget: () => void;
+  onPlaceActionBet: (draft: ActionBetDraft) => void;
   patchState: (partial: Partial<MatchState>) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
@@ -1541,7 +1615,11 @@ function MatchView({
 
             {state.analysisResult !== null ? (
               <>
-                <BettingDashboard result={state.analysisResult as AnalysisResult} />
+                <BettingDashboard
+                  result={state.analysisResult as AnalysisResult}
+                  onPlaceActionBet={onPlaceActionBet}
+                />
+
                 <ValidationChecksView result={state.analysisResult as AnalysisResult} />
                 <div className="rounded-md border border-signal-green/40 bg-signal-green/5 px-4 py-3 font-mono text-xs text-signal-green">
                   ✓ Saved to backtesting log — view it from the Backtest Log tab.

@@ -11,11 +11,26 @@ import {
   type StraightBet,
   type SgpBet,
   type JackpotBet,
+  type MarketRejected,
 } from "@/lib/analysisResult";
+import { computeEv } from "@/lib/calculate";
 import { CARD, fmtOdds, sgpCombinedOdds, SectionLabel } from "./parts/helpers";
 import { MatchHeader } from "./parts/MatchHeader";
 import { TopBets } from "./parts/TopBets";
 import { AnalysisDetails } from "./parts/AnalysisDetails";
+
+// ─────────────────────────────────────────────────────────────
+// Action-bet ("I placed this") draft passed up to the page.
+// ─────────────────────────────────────────────────────────────
+export interface ActionBetDraft {
+  tier: number | string;
+  market?: string;
+  selection?: string;
+  odds?: number;
+  stake: number;
+  model_probability?: number;
+  ev?: number;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Expandable text (reasoning)
@@ -375,6 +390,433 @@ function YourBets({ result }: { result: AnalysisResult }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// All Candidates — every evaluated bet, always visible, honest labels
+// ─────────────────────────────────────────────────────────────
+interface Candidate {
+  key: string;
+  label: string;
+  tier: number;
+  market?: string;
+  selectionLines: string[];
+  selectionText: string;
+  odds?: number;
+  ev?: number; // APP-computed EV (never Claude's log_entry)
+  modelProb?: number; // calibrated
+  active: boolean;
+  paper: boolean;
+  shadow: boolean;
+  minEv: number;
+  stakeLabel?: string;
+  suggestedStake: string;
+  reason?: string;
+}
+
+function numOf(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function straightCandidate(
+  bet: StraightBet | undefined,
+  index: number,
+  minEv: number,
+): Candidate {
+  const active = bet?.active === true && bet?.paper_bet !== true;
+  const paper = bet?.active === true && bet?.paper_bet === true;
+  const selText =
+    [bet?.market, bet?.selection].filter(Boolean).join(" — ") || "—";
+  return {
+    key: `bet_${index}`,
+    label: `Bet ${index} · Straight`,
+    tier: index,
+    market: bet?.market,
+    selectionLines: [selText],
+    selectionText: selText,
+    odds: numOf(bet?.odds),
+    ev: numOf(bet?.ev),
+    modelProb: numOf(bet?.model_probability),
+    active,
+    paper,
+    shadow: bet?.shadow_pick === true,
+    minEv,
+    stakeLabel: bet?.stake_label,
+    suggestedStake: active
+      ? bet?.stake ?? "—"
+      : paper
+        ? "$0 (paper)"
+        : "$0 suggested",
+    reason: bet?.skip_reason ?? bet?.paper_reason ?? undefined,
+  };
+}
+
+function parlayCandidate(
+  bet: SgpBet | JackpotBet | undefined,
+  opts: {
+    key: string;
+    label: string;
+    tier: number;
+    odds?: number;
+    ev?: number;
+    modelProb?: number;
+    minEv: number;
+  },
+): Candidate {
+  const active = bet?.active === true && bet?.paper_bet !== true;
+  const paper = bet?.active === true && bet?.paper_bet === true;
+  const legs = bet?.legs ?? [];
+  const lines = legs.map(
+    (l) =>
+      `${[l.market, l.selection].filter(Boolean).join(": ") || "—"}${
+        typeof l.odds === "number" ? ` @ ${fmtOdds(l.odds)}` : ""
+      }`,
+  );
+  const stakeLabel =
+    legs
+      .map((l) => l.stake_label)
+      .filter(Boolean)
+      .join("  +  ") || undefined;
+  return {
+    key: opts.key,
+    label: opts.label,
+    tier: opts.tier,
+    market: bet?.bet_type,
+    selectionLines: lines.length > 0 ? lines : ["—"],
+    selectionText: legs
+      .map((l) => [l.market, l.selection].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join("  /  "),
+    odds: numOf(opts.odds),
+    ev: numOf(opts.ev),
+    modelProb: numOf(opts.modelProb),
+    active,
+    paper,
+    shadow: bet?.shadow_pick === true,
+    minEv: opts.minEv,
+    stakeLabel,
+    suggestedStake: active
+      ? bet?.stake ?? "—"
+      : paper
+        ? "$0 (paper)"
+        : "$0 suggested",
+    reason: bet?.skip_reason ?? bet?.paper_reason ?? undefined,
+  };
+}
+
+function buildCandidates(result: AnalysisResult): Candidate[] {
+  const b3 = result.bet_3;
+  const b4 = result.bet_4;
+  return [
+    straightCandidate(result.bet_1, 1, 0.05),
+    straightCandidate(result.bet_2, 2, 0.03),
+    parlayCandidate(b3, {
+      key: "bet_3",
+      label: "Bet 3 · Same Game Parlay",
+      tier: 3,
+      odds: sgpCombinedOdds(b3) ?? b3?.combined_odds_sgp,
+      ev: b3?.parlay_ev,
+      modelProb: b3?.p_joint,
+      minEv: 0.05,
+    }),
+    parlayCandidate(b4, {
+      key: "bet_4",
+      label: "Bet 4 · Jackpot",
+      tier: 4,
+      odds: b4?.combined_odds,
+      ev: b4?.jackpot_ev,
+      modelProb: b4?.jackpot_ev_inputs?.p_final,
+      minEv: 0.05,
+    }),
+  ];
+}
+
+function valueBadge(c: Candidate): {
+  text: string;
+  cls: string;
+  subtitle?: string;
+} {
+  if (c.active && !c.paper)
+    return {
+      text: "✅ VALUE",
+      cls: "border-signal-green/50 bg-signal-green/15 text-signal-green",
+    };
+  if (c.paper)
+    return {
+      text: "📝 PAPER",
+      cls: "border-signal-blue/50 bg-signal-blue/15 text-signal-blue",
+    };
+  if (typeof c.ev === "number" && c.ev < 0)
+    return {
+      text: "⛔ NO VALUE",
+      cls: "border-signal-red/50 bg-signal-red/15 text-signal-red",
+      subtitle:
+        "Price is worse than our estimated chance — expected to lose money over time",
+    };
+  return {
+    text: "⚠️ BELOW THRESHOLD",
+    cls: "border-accent-amber/50 bg-accent-amber/15 text-accent-amber",
+  };
+}
+
+const pct = (v?: number) =>
+  typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : "—";
+const evPct = (v?: number) =>
+  typeof v === "number" && Number.isFinite(v)
+    ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`
+    : "—";
+
+function CandidateCard({
+  c,
+  onPlaceActionBet,
+}: {
+  c: Candidate;
+  onPlaceActionBet?: (draft: ActionBetDraft) => void;
+}) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [stake, setStake] = useState("");
+  const [oddsStr, setOddsStr] = useState(
+    typeof c.odds === "number" ? String(c.odds) : "",
+  );
+  const [placed, setPlaced] = useState(false);
+
+  const badge = valueBadge(c);
+  const marketImplied =
+    typeof c.odds === "number" && c.odds > 0 ? 1 / c.odds : undefined;
+
+  const confirm = () => {
+    const stakeNum = Number(stake);
+    const oddsNum = Number(oddsStr);
+    if (!Number.isFinite(stakeNum) || stakeNum <= 0) return;
+    onPlaceActionBet?.({
+      tier: c.tier,
+      market: c.market ?? c.label,
+      selection: c.selectionText || c.selectionLines.join(" / "),
+      odds: Number.isFinite(oddsNum) && oddsNum > 0 ? oddsNum : c.odds,
+      stake: stakeNum,
+      model_probability: c.modelProb,
+      ev: c.ev,
+    });
+    setPlaced(true);
+    setFormOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate">
+          {c.label}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {c.shadow && (
+            <span className="rounded-full border border-[#a78bfa]/50 bg-[#a78bfa]/15 px-2 py-0.5 text-[11px] font-bold text-[#a78bfa]">
+              👻 SHADOW
+            </span>
+          )}
+          <span
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[11px] font-bold",
+              badge.cls,
+            )}
+          >
+            {badge.text}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-0.5">
+        {c.selectionLines.map((line, i) => (
+          <p key={i} className="text-sm font-semibold text-foreground">
+            {line}
+          </p>
+        ))}
+        <p className="text-xs text-slate">
+          Odds: <span className="font-semibold text-foreground">{fmtOdds(c.odds)}</span>
+        </p>
+      </div>
+
+      {badge.subtitle && (
+        <p className="text-xs text-signal-red">{badge.subtitle}</p>
+      )}
+
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+        <span className="text-slate">
+          App EV:{" "}
+          <span
+            className={cn(
+              "font-bold",
+              typeof c.ev === "number" && c.ev < 0
+                ? "text-signal-red"
+                : "text-signal-green",
+            )}
+          >
+            {evPct(c.ev)}
+          </span>
+        </span>
+        <span className="text-slate">
+          Our estimate:{" "}
+          <span className="font-semibold text-foreground">{pct(c.modelProb)}</span>
+        </span>
+        <span className="text-slate">
+          Market's estimate:{" "}
+          <span className="font-semibold text-foreground">{pct(marketImplied)}</span>
+        </span>
+      </div>
+
+      {c.stakeLabel && (
+        <p className="flex items-start gap-1 text-xs text-slate">
+          <MapPin size={12} className="mt-0.5 shrink-0 text-accent-amber" />
+          <span>{c.stakeLabel}</span>
+        </p>
+      )}
+
+      <p className="text-xs text-slate">
+        Suggested stake:{" "}
+        <span className="font-semibold text-foreground">{c.suggestedStake}</span>
+      </p>
+
+      {c.reason && !c.active && (
+        <p className="text-xs italic text-slate/80">{c.reason}</p>
+      )}
+
+      {onPlaceActionBet && (
+        <div className="border-t border-border pt-2">
+          {placed ? (
+            <p className="text-xs font-semibold text-signal-green">
+              💵 Logged as an action bet.
+            </p>
+          ) : !formOpen ? (
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="text-xs font-semibold text-accent-amber hover:underline"
+            >
+              💵 I placed this
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate">
+                Stake ($)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={stake}
+                  onChange={(e) => setStake(e.target.value)}
+                  className="w-24 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate">
+                Odds taken
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={oddsStr}
+                  onChange={(e) => setOddsStr(e.target.value)}
+                  className="w-24 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={confirm}
+                className="rounded bg-accent-amber px-3 py-1.5 text-xs font-bold text-background"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormOpen(false)}
+                className="px-2 py-1.5 text-xs text-slate hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
+  const [open, setOpen] = useState(false);
+  if (!markets || markets.length === 0) return null;
+  return (
+    <div className="border-t border-border pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 text-xs font-semibold text-slate hover:text-foreground"
+      >
+        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        Show {markets.length} rejected market{markets.length === 1 ? "" : "s"}
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {markets.map((m, i) => {
+            const recomputed = computeEv(
+              m.ev_inputs?.model_probability,
+              m.ev_inputs?.decimal_odds,
+            );
+            const evText =
+              recomputed !== undefined
+                ? evPct(recomputed)
+                : typeof m.ev === "number"
+                  ? `${evPct(m.ev)} (unverified)`
+                  : "—";
+            return (
+              <div
+                key={i}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 rounded border border-border bg-card/30 px-3 py-1.5 text-xs"
+              >
+                <span className="font-semibold text-foreground">
+                  {m.market ?? "—"}
+                </span>
+                <span className="text-slate">EV: {evText}</span>
+                {m.reason && (
+                  <span className="w-full text-slate/80">{m.reason}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CandidatesCard({
+  result,
+  onPlaceActionBet,
+}: {
+  result: AnalysisResult;
+  onPlaceActionBet?: (draft: ActionBetDraft) => void;
+}) {
+  const candidates = buildCandidates(result);
+  return (
+    <div className={cn(CARD, "flex flex-col gap-4")}>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-xl font-bold text-foreground">
+          📋 All Candidates
+        </h2>
+        <p className="text-sm text-slate">Every bet evaluated this match</p>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {candidates.map((c) => (
+          <CandidateCard
+            key={c.key}
+            c={c}
+            onPlaceActionBet={onPlaceActionBet}
+          />
+        ))}
+      </div>
+
+      <RejectedMarkets markets={result.markets_rejected ?? []} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+
 // Analyst note
 // ─────────────────────────────────────────────────────────────
 function AnalystNote({ note }: { note?: string }) {
@@ -433,7 +875,13 @@ function BottomBar({ result }: { result: AnalysisResult }) {
 // ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
-export function BettingDashboard({ result }: { result: AnalysisResult }) {
+export function BettingDashboard({
+  result,
+  onPlaceActionBet,
+}: {
+  result: AnalysisResult;
+  onPlaceActionBet?: (draft: ActionBetDraft) => void;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <TopBets result={result} />
@@ -441,6 +889,8 @@ export function BettingDashboard({ result }: { result: AnalysisResult }) {
       <MatchHeader result={result} />
 
       <YourBets result={result} />
+
+      <CandidatesCard result={result} onPlaceActionBet={onPlaceActionBet} />
 
       <AnalystNote note={result.analyst_note} />
 

@@ -1350,6 +1350,33 @@ export function calculateResults(
     (b) => b && b.active && b.paper_bet,
   ).length;
 
+  // ── SHADOW PICK ───────────────────────────────────────────────
+  // When NOTHING qualifies (0 active real bets AND 0 active paper bets), pick
+  // the single candidate with the HIGHEST app-computed EV — even if negative —
+  // and flag it shadow_pick. It is logged as a $0 paper bet (see
+  // buildLogEntryFromEnriched) so CLV + calibration volume keeps growing, but
+  // it never touches the bankroll. Exactly one per match, never more.
+  for (const b of allBets) {
+    if (b) b.shadow_pick = false;
+  }
+  if (result.real_bet_count === 0 && result.paper_bet_count === 0) {
+    const candidates: Array<{
+      bet: { shadow_pick?: boolean };
+      ev: number | undefined;
+    }> = [
+      { bet: result.bet_1, ev: num(result.bet_1?.ev) },
+      { bet: result.bet_2, ev: num(result.bet_2?.ev) },
+      { bet: result.bet_3, ev: num(result.bet_3?.parlay_ev) },
+      { bet: result.bet_4, ev: num(result.bet_4?.jackpot_ev) },
+    ].filter(
+      (c) => c.bet && typeof c.ev === "number" && Number.isFinite(c.ev),
+    );
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => (b.ev as number) - (a.ev as number));
+      candidates[0].bet.shadow_pick = true;
+    }
+  }
+
   return result;
 }
 

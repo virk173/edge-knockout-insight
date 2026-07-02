@@ -18,6 +18,7 @@ import {
   cycleOutcome,
   downloadCsv,
   computeClvSummary,
+  computeActionBetSummary,
   computeCalibrationTable,
 } from "@/lib/backtestLog";
 import { getCalibration } from "@/lib/calibration";
@@ -77,6 +78,7 @@ export function BacktestLog({
   const summary = computeSummary(entries);
   const totalRecs = countRecommendations(entries);
   const clv = computeClvSummary(entries);
+  const actionSummary = computeActionBetSummary(entries);
   const calTable = computeCalibrationTable(entries);
   const calibration = getCalibration();
 
@@ -240,7 +242,32 @@ export function BacktestLog({
         >
           {clv.verdictText}
         </div>
+
+        {actionSummary.count > 0 && (
+          <div className="mt-4 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-4 py-3 text-sm">
+            <span className="font-semibold text-accent-amber">💵 Action bets:</span>{" "}
+            <span className="text-foreground">{actionSummary.count}</span>
+            {", P/L "}
+            <span
+              className={
+                actionSummary.pl >= 0 ? "text-signal-green" : "text-signal-red"
+              }
+            >
+              {actionSummary.pl >= 0 ? "+" : "−"}${Math.abs(actionSummary.pl).toFixed(2)}
+            </span>
+            {", avg CLV "}
+            <span className="text-foreground">
+              {actionSummary.avgClv === null
+                ? "—"
+                : `${actionSummary.avgClv >= 0 ? "+" : ""}${actionSummary.avgClv.toFixed(1)}%`}
+            </span>
+            <span className="ml-1 text-xs text-slate">
+              (excluded from the edge verdict above)
+            </span>
+          </div>
+        )}
       </div>
+
 
       {/* Calibration */}
       <div className="rounded-xl border border-border bg-card/40 p-6">
@@ -316,9 +343,11 @@ export function BacktestLog({
                         <div
                           key={i}
                           className={`rounded-lg border p-4 ${
-                            rec.paper
-                              ? "border-signal-blue/40 bg-signal-blue/5"
-                              : "border-border bg-background/60"
+                            rec.action_bet
+                              ? "border-accent-amber/40 bg-accent-amber/5"
+                              : rec.paper
+                                ? "border-signal-blue/40 bg-signal-blue/5"
+                                : "border-border bg-background/60"
                           }`}
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -329,7 +358,17 @@ export function BacktestLog({
                                     T{rec.tier}
                                   </span>
                                 )}
-                                {rec.paper && (
+                                {rec.action_bet && (
+                                  <span className="mr-2 rounded border border-accent-amber/40 bg-accent-amber/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-accent-amber">
+                                    💵 Action
+                                  </span>
+                                )}
+                                {rec.shadow && (
+                                  <span className="mr-2 rounded border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#a78bfa]">
+                                    👻 Shadow
+                                  </span>
+                                )}
+                                {rec.paper && !rec.action_bet && (
                                   <span className="mr-2 rounded border border-signal-blue/40 bg-signal-blue/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-signal-blue">
                                     📝 Paper
                                   </span>
