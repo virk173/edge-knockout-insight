@@ -47,9 +47,14 @@ import {
   getLogEntries,
   setRecommendationOutcome,
   clearLog,
+  settleClvAll,
+  settleClv,
+  setManualClosingOdds,
+  getCalibrationSamples,
   type LogEntry,
   type Outcome,
 } from "@/lib/backtestLog";
+import { getCalibration, fitLambda } from "@/lib/calibration";
 import {
   getApiCallCount,
   budgetLevel,
@@ -219,6 +224,13 @@ function Index() {
   const [fixturesFetchedAt, setFixturesFetchedAt] = useState<number | null>(null);
   const [apiCalls, setApiCalls] = useState(0);
   const [bankroll, setBankrollState] = useState(() => getBankroll());
+  const [strictMode, setStrictMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("edge_strict_mode") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
 
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
@@ -255,7 +267,7 @@ function Index() {
 
   useEffect(() => {
     setApiCalls(getApiCallCount());
-    setLogEntries(getLogEntries());
+    setLogEntries(settleClvAll());
     // One-time cleanup: the old background-job pattern wrote edge_job_* keys.
     // That pattern no longer exists (analysis is a direct synchronous call), so
     // purge any stale entries left over from a previous version.
@@ -311,13 +323,36 @@ function Index() {
 
 
 
+  function refitCalibration(entries: LogEntry[]) {
+    const prev = getCalibration().lambda;
+    const samples = getCalibrationSamples(entries);
+    const next = fitLambda(samples);
+    if (Math.abs(next - prev) >= 0.05) {
+      toast.success(
+        `Calibration updated: λ ${prev} → ${next} (n=${samples.length})`,
+      );
+    }
+  }
+
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
-    setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
+    const updated = setRecommendationOutcome(entryId, recIndex, next);
+    setLogEntries(updated);
+    refitCalibration(updated);
+  }
+
+  function handleSetManualClosingOdds(
+    entryId: string,
+    recIndex: number,
+    odds: number,
+  ) {
+    setManualClosingOdds(entryId, recIndex, odds);
+    setLogEntries(settleClv(entryId));
   }
 
   function handleClearLog() {
     setLogEntries(clearLog());
   }
+
 
   // Cycle Claude loading messages + elapsed timer while the active match analyses.
   useEffect(() => {
@@ -488,7 +523,11 @@ function Index() {
 
     try {
       const parsed = tryParse();
-      const enriched = calculateResults(parsed, { bankroll: getBankroll() });
+      const enriched = calculateResults(parsed, {
+        bankroll: getBankroll(),
+        strictMode: strictMode,
+        lambda: getCalibration().lambda,
+      });
       const savedAt = Date.now();
       patchState(match.id, {
         analysisRaw: cleaned,
@@ -811,6 +850,26 @@ Start your response with { and end with }.`;
           >
             💰 ${bankroll}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !strictMode;
+              setStrictMode(next);
+              try {
+                localStorage.setItem("edge_strict_mode", String(next));
+              } catch {
+                /* ignore */
+              }
+            }}
+            className={`rounded-md border px-2.5 py-1 font-mono text-xs font-semibold ${
+              strictMode
+                ? "border-accent-amber/50 text-accent-amber"
+                : "border-border text-slate"
+            }`}
+            title="Real stakes only on FULL/PARTIAL data + aligned ensemble + confirmed lineups. Everything else logs as paper."
+          >
+            STRICT {strictMode ? "ON" : "OFF"}
+          </button>
           <span
             className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
             title="API-Football calls used today (resets at midnight UTC)"
@@ -826,6 +885,7 @@ Start your response with { and end with }.`;
             entries={logEntries}
             onCycleOutcome={handleCycleOutcome}
             onClear={handleClearLog}
+            onSetManualClosingOdds={handleSetManualClosingOdds}
           />
         </main>
       ) : view === "fixtures" ? (

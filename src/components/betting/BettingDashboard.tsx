@@ -345,6 +345,51 @@ function NavLabel({ label }: { label?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Calibration sub-line + paper helpers
+// ─────────────────────────────────────────────────────────────
+function lambdaFromNote(note?: string): number | null {
+  if (!note) return null;
+  const m = note.match(/λ\s*=?\s*([0-9.]+)/);
+  return m ? Number.parseFloat(m[1]) : null;
+}
+
+function CalibrationLine({ bet }: { bet: StraightBet }) {
+  if (typeof bet.model_probability !== "number") return null;
+  const cal = bet.model_probability * 100;
+  const raw = bet.model_probability_raw;
+  const lam = lambdaFromNote(bet.calibration_note);
+  return (
+    <span className="text-xs text-slate">
+      p: <span className="font-semibold text-foreground">{cal.toFixed(1)}%</span>
+      {typeof raw === "number" ? (
+        <span className="text-slate">
+          {" "}
+          (raw {(raw * 100).toFixed(1)}%
+          {lam != null ? `, λ ${lam}` : ""})
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+// A paper bet renders with a 📝 PAPER badge, blue-grey border, its paper_reason,
+// and its would-be Kelly stake struck-through.
+const PAPER_WRAP =
+  "rounded-md border border-signal-blue/40 bg-signal-blue/5 p-3";
+
+function PaperReason({ reason }: { reason?: string }) {
+  if (!reason) return null;
+  return (
+    <span className="text-[13px] text-signal-blue">📝 Paper (not staked): {reason}</span>
+  );
+}
+
+function wouldStakeText(bet: { kelly_result?: { recommended_stake?: number } }): string {
+  const s = bet.kelly_result?.recommended_stake;
+  return typeof s === "number" && Number.isFinite(s) ? `would stake $${s}` : "would stake —";
+}
+
+// ─────────────────────────────────────────────────────────────
 // Individual bet rows for the unified "Your Bets" card
 // ─────────────────────────────────────────────────────────────
 function StraightBetRow({
@@ -367,11 +412,17 @@ function StraightBetRow({
     );
   }
 
+  const paper = bet.paper_bet === true;
   const kelly = kellyText(bet);
   return (
-    <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
-      <span className="font-bold text-signal-green">
-        ✅ BET {index} — Straight Bet
+    <div
+      className={cn(
+        "flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0",
+        paper && PAPER_WRAP,
+      )}
+    >
+      <span className={cn("font-bold", paper ? "text-signal-blue" : "text-signal-green")}>
+        {paper ? "📝 PAPER" : "✅"} BET {index} — Straight Bet
       </span>
       <span className="text-base font-semibold text-foreground">
         {bet.market ?? "—"}: <span className="text-accent-amber">{bet.selection ?? "—"}</span>
@@ -379,8 +430,17 @@ function StraightBetRow({
       <span className="text-sm text-slate">
         Odds: <span className="font-bold text-foreground">{fmtOdds(bet.odds)}</span>
         {" | "}
-        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "—"}</span>
+        Stake:{" "}
+        {paper ? (
+          <>
+            <span className="font-semibold text-slate line-through">{wouldStakeText(bet)}</span>
+            <span className="ml-1.5 font-bold text-signal-blue">$0 (PAPER)</span>
+          </>
+        ) : (
+          <span className="font-bold text-signal-green">{bet.stake ?? "—"}</span>
+        )}
       </span>
+      <CalibrationLine bet={bet} />
       <span className="text-sm text-slate">
         EV: <span className={cn("font-bold", evTextClass(bet.ev))}>{evPctText(bet.ev)}</span>
         {kelly ? <> {" | "}{kelly}</> : null}
@@ -388,6 +448,7 @@ function StraightBetRow({
           <span className="text-slate"> ({bet.ev_confidence} confidence)</span>
         ) : null}
       </span>
+      {paper && <PaperReason reason={bet.paper_reason} />}
       <NavLabel label={bet.stake_label} />
       <ExpandableText text={bet.reasoning} />
     </div>
@@ -408,13 +469,14 @@ function SgpBetRow({ bet }: { bet?: SgpBet }) {
     );
   }
 
+  const paper = bet.paper_bet === true;
   const legs = bet.legs ?? [];
   const odds = sgpCombinedOdds(bet);
   const ret = bet.returns?.potential_return_realistic;
   return (
-    <div className="flex flex-col gap-1 border-t border-border pt-4">
-      <span className="font-bold text-signal-green">
-        ✅ BET 3 — 3-Leg Accumulator
+    <div className={cn("flex flex-col gap-1 border-t border-border pt-4", paper && PAPER_WRAP)}>
+      <span className={cn("font-bold", paper ? "text-signal-blue" : "text-signal-green")}>
+        {paper ? "📝 PAPER" : "✅"} BET 3 — 3-Leg Accumulator
       </span>
       <span className="text-base font-semibold text-foreground">
         Same Game Parlay @{" "}
@@ -434,7 +496,12 @@ function SgpBetRow({ bet }: { bet?: SgpBet }) {
         )}
       </ul>
       <span className="text-sm text-slate">
-        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        Stake:{" "}
+        {paper ? (
+          <span className="font-bold text-signal-blue">$0 (PAPER)</span>
+        ) : (
+          <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        )}
         {ret ? (
           <>
             {" | "}
@@ -444,6 +511,7 @@ function SgpBetRow({ bet }: { bet?: SgpBet }) {
         {" | "}
         EV: <span className={cn("font-bold", evTextClass(bet.parlay_ev))}>{evPctText(bet.parlay_ev)}</span>
       </span>
+      {paper && <PaperReason reason={bet.paper_reason} />}
       <NavLabel
         label={
           bet.legs?.[0]?.stake_label
@@ -472,11 +540,14 @@ function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
     );
   }
 
+  const paper = bet.paper_bet === true;
   const legs = bet.legs ?? [];
   const ret = bet.returns?.potential_return_realistic;
   return (
-    <div className="flex flex-col gap-1 border-t border-border pt-4">
-      <span className="font-bold text-signal-green">✅ BET 4 — Jackpot</span>
+    <div className={cn("flex flex-col gap-1 border-t border-border pt-4", paper && PAPER_WRAP)}>
+      <span className={cn("font-bold", paper ? "text-signal-blue" : "text-signal-green")}>
+        {paper ? "📝 PAPER" : "✅"} BET 4 — Jackpot
+      </span>
       <span className="text-base font-semibold text-foreground">
         Accumulator @{" "}
         <span className="text-accent-amber">{fmtOdds(bet.combined_odds)}</span>
@@ -492,7 +563,12 @@ function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
         ))}
       </ul>
       <span className="text-sm text-slate">
-        Stake: <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        Stake:{" "}
+        {paper ? (
+          <span className="font-bold text-signal-blue">$0 (PAPER)</span>
+        ) : (
+          <span className="font-bold text-signal-green">{bet.stake ?? "$10"}</span>
+        )}
         {ret ? (
           <>
             {" | "}
@@ -500,6 +576,7 @@ function JackpotBetRow({ bet }: { bet?: JackpotBet }) {
           </>
         ) : null}
       </span>
+      {paper && <PaperReason reason={bet.paper_reason} />}
     </div>
   );
 }
@@ -525,6 +602,14 @@ function YourBets({ result }: { result: AnalysisResult }) {
         {showDqWarning && (
           <p className="text-xs font-semibold text-accent-amber">
             ⚠️ Data quality: {dq.includes("THIN") ? "THIN" : "PARTIAL"}
+          </p>
+        )}
+        {(typeof result.real_bet_count === "number" ||
+          typeof result.paper_bet_count === "number") && (
+          <p className="text-xs font-semibold text-slate">
+            <span className="text-signal-green">{result.real_bet_count ?? 0} real</span>
+            {" · "}
+            <span className="text-signal-blue">{result.paper_bet_count ?? 0} 📝 paper</span>
           </p>
         )}
       </div>

@@ -22,13 +22,17 @@ import type {
   ConfidenceAdjustment,
   DimensionWeights,
   DimensionWeightsValidation,
+  JackpotBet,
   ModelProbabilities,
   RestDisparity,
+  SgpBet,
+  StraightBet,
   TravelBurden,
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
 import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 import { BANKROLL_DEFAULTS } from "@/lib/bankroll";
+import { calibrateProbability, DEFAULT_LAMBDA } from "@/lib/calibration";
 
 /*
  * KNOWN GAPS — see also analyse.ts
@@ -757,7 +761,7 @@ export const validateDimensionWeights = (inputs: {
  */
 export function calculateResults(
   rawOutput: unknown,
-  opts?: { bankroll?: number },
+  opts?: { bankroll?: number; lambda?: number; strictMode?: boolean },
 ): AnalysisResult {
   if (!rawOutput || typeof rawOutput !== "object") {
     return (rawOutput ?? {}) as AnalysisResult;
@@ -768,6 +772,13 @@ export function calculateResults(
   // Live bankroll drives all sizing. Defaults to STARTING_BANKROLL (tests).
   const bankroll = num(opts?.bankroll) ?? BANKROLL_DEFAULTS.STARTING_BANKROLL;
   result.bankroll_at_analysis = bankroll;
+
+  // Calibration shrink factor λ (fit from settled results). Defaults to the
+  // prior 0.7. EV/Kelly for straight bets run on the CALIBRATED probability.
+  const lambda = num(opts?.lambda) ?? DEFAULT_LAMBDA;
+  // Strict-signal regime: real money only on bets that pass qualifiesForRealStake;
+  // everything else becomes a $0 paper bet. Default ON.
+  const strictMode = opts?.strictMode ?? true;
 
   // Parse home/away team names from the "Home vs Away" match string so
   // stake_labels can be generated from the verified Stake glossary.
@@ -809,14 +820,31 @@ export function calculateResults(
     // bet Claude explicitly skipped back to active.
     const claudeSkipped = bet.active === false;
 
-    // EV from raw variables.
+    // EV from raw variables — computed on the CALIBRATED probability.
     if (bet.ev_inputs) {
-      const ev = computeEv(bet.ev_inputs.model_probability, bet.ev_inputs.decimal_odds);
-      if (ev !== undefined) {
-        bet.ev = ev;
-        if (bet.model_probability === undefined)
-          bet.model_probability = num(bet.ev_inputs.model_probability);
-        if (bet.odds === undefined) bet.odds = num(bet.ev_inputs.decimal_odds);
+      const rawModelP = num(bet.ev_inputs.model_probability);
+      const odds = num(bet.ev_inputs.decimal_odds);
+      // Calibration: shrink the model probability toward the market price by λ
+      // (fit from settled results) BEFORE computing EV. EV, the Pinnacle
+      // adjustment, the EV gate and Kelly ALL run on this calibrated value so
+      // an overconfident model can never inflate a stake.
+      if (rawModelP !== undefined && odds !== undefined) {
+        const calP = calibrateProbability(rawModelP, odds, lambda);
+        bet.model_probability_raw = round(rawModelP, 4);
+        bet.model_probability = round(calP, 4);
+        bet.calibration_note =
+          `Model ${(rawModelP * 100).toFixed(1)}% → shrunk λ=${lambda} ` +
+          `toward market ${((1 / odds) * 100).toFixed(1)}% = ${(calP * 100).toFixed(1)}%`;
+        bet.odds = bet.odds ?? odds;
+        const ev = computeEv(calP, odds);
+        if (ev !== undefined) bet.ev = ev;
+      } else {
+        const ev = computeEv(rawModelP, odds);
+        if (ev !== undefined) {
+          bet.ev = ev;
+          if (bet.model_probability === undefined) bet.model_probability = rawModelP;
+          if (bet.odds === undefined) bet.odds = odds;
+        }
       }
     }
 
@@ -882,6 +910,12 @@ export function calculateResults(
   // ── bet_3 — 3-leg SGP EV. parlay_ev = p_joint × stake_sgp − 1 (NO hold_rate
   // term; the hold is already priced into stake_sgp). Falls back to the legacy
   // p_final / effective_sgp_price pair only for old cached results.
+  //
+  // NOTE: SGP joint probability (p_joint) is NOT calibrated. Calibration shrinks
+  // a single model probability toward a single market price, but p_joint is a
+  // Claude-derived correlation-adjusted product with no clean market anchor, and
+  // the parlay stake is a flat 1% of bankroll regardless of EV — so calibrating
+  // it would add noise without changing sizing. It stays Claude-derived.
   const b3 = result.bet_3;
   if (b3?.parlay_ev_inputs) {
     const pj = b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final;
@@ -1167,14 +1201,54 @@ export function calculateResults(
   sizeParlay(result.bet_3, BANKROLL_DEFAULTS.SGP_STAKE_PCT);
   sizeParlay(result.bet_4, BANKROLL_DEFAULTS.JACKPOT_STAKE_PCT);
 
+  // ── STRICT-SIGNAL REGIME → PAPER BETS ─────────────────────────
+  // Every positive-EV bet is LOGGED, but real money only rides bets that pass
+  // the strict gate. When strictMode is ON, an ACTIVE bet that fails
+  // qualifiesForRealStake() becomes a $0 paper bet: fully tracked for CLV +
+  // calibration, but excluded from exposure-cap math and bankroll settlement.
+  // Paper bets keep their would-be Kelly result for the record.
+  if (strictMode) {
+    const paperize = (
+      bet:
+        | {
+            active?: boolean;
+            paper_bet?: boolean;
+            paper_reason?: string;
+            stake?: string;
+          }
+        | undefined,
+      reason: string | null,
+    ) => {
+      if (!bet || !bet.active) return;
+      if (reason) {
+        bet.paper_bet = true;
+        bet.paper_reason = reason;
+        bet.stake = "$0 (PAPER)";
+      } else {
+        bet.paper_bet = false;
+      }
+    };
+    paperize(result.bet_1, qualifyStraight(result.bet_1, result));
+    paperize(result.bet_2, qualifyStraight(result.bet_2, result));
+    paperize(result.bet_3, qualifySgp(result.bet_3, result));
+    paperize(result.bet_4, qualifyJackpot(result.bet_4, result));
+  } else {
+    // Old behaviour: paper_bet false everywhere.
+    for (const b of [result.bet_1, result.bet_2, result.bet_3, result.bet_4]) {
+      if (b) b.paper_bet = false;
+    }
+  }
+
   // ── MATCH EXPOSURE CAP (replaces redistribution) ──────────────
-  // Sum all active stakes; if over the per-match cap, scale down in REVERSE
+  // Sum all active REAL stakes; if over the per-match cap, scale down in REVERSE
   // priority: drop bet_4, then bet_3, then shrink bet_2, never touching bet_1
-  // (highest EV) unless it alone exceeds the cap (then clamp it).
+  // (highest EV) unless it alone exceeds the cap (then clamp it). Paper bets are
+  // $0 and excluded from this math.
   const cap = bankroll * BANKROLL_DEFAULTS.MAX_MATCH_EXPOSURE_PCT;
   const stakeOf = (
-    bet: { active?: boolean; stake?: string } | undefined,
-  ): number => (bet && bet.active ? num(bet.stake) ?? 0 : 0);
+    bet: { active?: boolean; paper_bet?: boolean; stake?: string } | undefined,
+  ): number =>
+    bet && bet.active && !bet.paper_bet ? num(bet.stake) ?? 0 : 0;
   const sumActive = () =>
     stakeOf(result.bet_1) +
     stakeOf(result.bet_2) +
@@ -1233,7 +1307,95 @@ export function calculateResults(
   // Old UI bindings must never render stale $50 redistribution math.
   result.unallocated_stake = "N/A — bankroll sizing";
 
+  // ── REAL vs PAPER counts ──────────────────────────────────────
+  const allBets = [result.bet_1, result.bet_2, result.bet_3, result.bet_4];
+  result.real_bet_count = allBets.filter(
+    (b) => b && b.active && !b.paper_bet,
+  ).length;
+  result.paper_bet_count = allBets.filter(
+    (b) => b && b.active && b.paper_bet,
+  ).length;
+
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// STRICT-SIGNAL QUALIFICATION — real-money gate
+// ─────────────────────────────────────────────────────────────
+/*
+ * qualifiesForRealStake: returns null when a bet PASSES (rides real money),
+ * else a human-readable string naming the FIRST failed condition (paper_reason).
+ *
+ * Shared failures (all bet types):
+ *   - data_quality is THIN
+ *   - ensemble_check.alignment is CONFLICT
+ *   - bet.ev_confidence is LOW
+ *   - lineup_dependency.level === "HIGH" and lineup_confirmed !== true
+ */
+function sharedFailure(
+  bet: { ev_confidence?: string } | undefined,
+  result: AnalysisResult,
+): string | null {
+  if (String(result.data_quality ?? "").toUpperCase() === "THIN") {
+    return "Data quality THIN";
+  }
+  const alignment = (result as { ensemble_check?: { alignment?: string } })
+    .ensemble_check?.alignment;
+  if (String(alignment ?? "").toUpperCase() === "CONFLICT") {
+    return "Ensemble alignment CONFLICT";
+  }
+  if (String(bet?.ev_confidence ?? "").toUpperCase() === "LOW") {
+    return "EV confidence LOW";
+  }
+  const level = String(result.lineup_dependency?.level ?? "").toUpperCase();
+  if (level === "HIGH" && result.lineup_confirmed !== true) {
+    return "HIGH lineup dependency, lineup not confirmed";
+  }
+  return null;
+}
+
+function qualifyStraight(
+  bet: StraightBet | undefined,
+  result: AnalysisResult,
+): string | null {
+  if (!bet) return null;
+  return sharedFailure(bet, result);
+}
+
+function qualifySgp(
+  bet: SgpBet | undefined,
+  result: AnalysisResult,
+): string | null {
+  if (!bet) return null;
+  const shared = sharedFailure(bet as { ev_confidence?: string }, result);
+  if (shared) return shared;
+  // bet_3 additionally FAILS unless every leg has ev !== undefined and ≥ 0.
+  const legs = bet.legs ?? [];
+  const allLegsPositive = legs.every(
+    (l: { ev?: number }) => l.ev !== undefined && (l.ev as number) >= 0,
+  );
+  if (!legs.length || !allLegsPositive) {
+    return "A parlay leg has missing/negative EV";
+  }
+  return null;
+}
+
+function qualifyJackpot(
+  bet: JackpotBet | undefined,
+  result: AnalysisResult,
+): string | null {
+  if (!bet) return null;
+  const shared = sharedFailure(bet as { ev_confidence?: string }, result);
+  if (shared) return shared;
+  // bet_4 additionally FAILS unless classification is JACKPOT / CLASS C.
+  const cls = String(
+    (result as { classification?: string }).classification ?? "",
+  ).toUpperCase();
+  const isJackpotClass = cls.includes("JACKPOT") || cls.includes("CLASS C");
+  if (!isJackpotClass) {
+    return "Not a JACKPOT / CLASS C classification";
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────

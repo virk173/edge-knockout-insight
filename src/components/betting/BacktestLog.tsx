@@ -17,13 +17,30 @@ import {
   countRecommendations,
   cycleOutcome,
   downloadCsv,
+  computeClvSummary,
+  computeCalibrationTable,
 } from "@/lib/backtestLog";
+import { getCalibration } from "@/lib/calibration";
 
 const OUTCOME_BADGE: Record<Outcome, string> = {
   PENDING: "border-slate/40 bg-slate/10 text-slate",
   WON: "border-signal-green/50 bg-signal-green/10 text-signal-green",
   LOST: "border-signal-red/50 bg-signal-red/10 text-signal-red",
 };
+
+function clvNode(rec: { clv_pct?: number; closing_source?: string }): React.ReactNode {
+  if (typeof rec.clv_pct !== "number" || !Number.isFinite(rec.clv_pct)) {
+    return <span className="text-slate">CLV: no close captured</span>;
+  }
+  const cls = rec.clv_pct >= 0 ? "text-signal-green" : "text-signal-red";
+  const sign = rec.clv_pct > 0 ? "+" : "";
+  return (
+    <span className={cls}>
+      CLV: {sign}
+      {rec.clv_pct.toFixed(1)}% vs {rec.closing_source ?? "?"} close
+    </span>
+  );
+}
 
 function num(value: number | undefined, digits = 2): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
@@ -49,14 +66,19 @@ export function BacktestLog({
   entries,
   onCycleOutcome,
   onClear,
+  onSetManualClosingOdds,
 }: {
   entries: LogEntry[];
   onCycleOutcome: (entryId: string, recIndex: number, next: Outcome) => void;
   onClear: () => void;
+  onSetManualClosingOdds?: (entryId: string, recIndex: number, odds: number) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const summary = computeSummary(entries);
   const totalRecs = countRecommendations(entries);
+  const clv = computeClvSummary(entries);
+  const calTable = computeCalibrationTable(entries);
+  const calibration = getCalibration();
 
   return (
     <div className="flex w-full max-w-5xl flex-col gap-6">
@@ -162,6 +184,104 @@ export function BacktestLog({
         </div>
       </div>
 
+      {/* CLV aggregate */}
+      <div className="rounded-xl border border-border bg-card/40 p-6">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate">
+          Closing Line Value (CLV)
+        </p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <Stat label="Bets with CLV">
+            <span className="text-accent-amber">{clv.betsWithClv}</span>
+          </Stat>
+          <Stat label="Avg CLV">{signedAmber(clv.avgClv, "%")}</Stat>
+          <Stat label="Beat the close">
+            {clv.beatPct === null ? (
+              <span className="text-slate">—</span>
+            ) : (
+              <span className="text-accent-amber">
+                {clv.beatCount} of {clv.betsWithClv} ({clv.beatPct.toFixed(0)}%)
+              </span>
+            )}
+          </Stat>
+        </div>
+
+        {clv.byGroup.length > 0 && (
+          <div className="mt-6 border-t border-border pt-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate">
+              CLV by market group
+            </p>
+            <div className="flex flex-col gap-2">
+              {clv.byGroup.map((g) => (
+                <div
+                  key={g.bucket}
+                  className="flex items-center justify-between gap-3 font-mono text-sm"
+                >
+                  <span className="font-semibold text-foreground">{g.bucket}</span>
+                  <span className="text-slate">
+                    <span className="text-accent-amber">{g.bets}</span> bets · avg{" "}
+                    {signedAmber(g.avgClv, "%")} · {g.beat} beat
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div
+          className={`mt-6 rounded-md border px-4 py-3 text-sm font-semibold ${
+            clv.verdict === "EDGE"
+              ? "border-signal-green/50 bg-signal-green/10 text-signal-green"
+              : clv.verdict === "NEGATIVE"
+                ? "border-signal-red/50 bg-signal-red/10 text-signal-red"
+                : clv.verdict === "NEUTRAL"
+                  ? "border-accent-amber/50 bg-accent-amber/10 text-accent-amber"
+                  : "border-border bg-background/60 text-slate"
+          }`}
+        >
+          {clv.verdictText}
+        </div>
+      </div>
+
+      {/* Calibration */}
+      <div className="rounded-xl border border-border bg-card/40 p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate">
+            Probability calibration
+          </p>
+          <span className="font-mono text-xs text-slate">
+            λ <span className="text-accent-amber">{calibration.lambda}</span> · n{" "}
+            <span className="text-accent-amber">{calibration.n}</span> · Brier{" "}
+            <span className="text-accent-amber">
+              {calibration.brier === null ? "—" : calibration.brier.toFixed(4)}
+            </span>
+          </span>
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-4 gap-2 border-b border-border pb-2 font-mono text-[10px] uppercase tracking-wide text-slate">
+            <span>Bucket</span>
+            <span className="text-right">Predicted</span>
+            <span className="text-right">Realized</span>
+            <span className="text-right">Count</span>
+          </div>
+          {calTable.map((row) => (
+            <div
+              key={row.label}
+              className="grid grid-cols-4 gap-2 font-mono text-sm"
+            >
+              <span className="font-semibold text-foreground">{row.label}</span>
+              <span className="text-right text-slate">
+                {row.predictedAvg === null ? "—" : `${row.predictedAvg.toFixed(0)}%`}
+              </span>
+              <span className="text-right text-accent-amber">
+                {row.realizedWinPct === null ? "—" : `${row.realizedWinPct.toFixed(0)}%`}
+              </span>
+              <span className="text-right text-slate">{row.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+
       {/* Entries */}
       {entries.length === 0 ? (
         <p className="pt-6 text-center text-sm text-slate">
@@ -195,7 +315,11 @@ export function BacktestLog({
                       return (
                         <div
                           key={i}
-                          className="rounded-lg border border-border bg-background/60 p-4"
+                          className={`rounded-lg border p-4 ${
+                            rec.paper
+                              ? "border-signal-blue/40 bg-signal-blue/5"
+                              : "border-border bg-background/60"
+                          }`}
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="flex flex-col gap-1">
@@ -203,6 +327,11 @@ export function BacktestLog({
                                 {rec.tier !== undefined && rec.tier !== null && (
                                   <span className="mr-2 text-xs font-bold uppercase text-slate">
                                     T{rec.tier}
+                                  </span>
+                                )}
+                                {rec.paper && (
+                                  <span className="mr-2 rounded border border-signal-blue/40 bg-signal-blue/10 px-1.5 py-0.5 text-[10px] font-bold uppercase text-signal-blue">
+                                    📝 Paper
                                   </span>
                                 )}
                                 {rec.market ?? "—"}
@@ -276,6 +405,31 @@ export function BacktestLog({
                                     : "text-signal-red"
                               }
                             />
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs font-semibold">
+                            {clvNode(rec)}
+                            <label className="flex items-center gap-2 text-slate">
+                              <span className="font-normal">Closing odds:</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="1"
+                                defaultValue={
+                                  typeof rec.closing_odds === "number"
+                                    ? rec.closing_odds
+                                    : ""
+                                }
+                                onBlur={(e) => {
+                                  const v = parseFloat(e.target.value);
+                                  if (Number.isFinite(v) && v > 1) {
+                                    onSetManualClosingOdds?.(entry.id, i, v);
+                                  }
+                                }}
+                                className="w-20 rounded border border-border bg-background px-2 py-1 font-mono text-xs text-foreground focus:border-accent-amber focus:outline-none"
+                                placeholder="—"
+                              />
+                            </label>
                           </div>
                         </div>
                       );
