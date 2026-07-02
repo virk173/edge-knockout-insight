@@ -1032,6 +1032,7 @@ Start your response with { and end with }.`;
           onResumeCalls={() => handleResumeCalls(activeMatch)}
           onClearCache={() => handleClearMatchCache(activeMatch)}
           onResetBudget={handleResetBudget}
+          onPlaceActionBet={handlePlaceActionBet}
           patchState={(partial) => patchState(activeMatch.id, partial)}
         />
       ) : (
