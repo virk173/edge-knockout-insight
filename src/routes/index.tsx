@@ -23,6 +23,7 @@ import {
   refetchLineups,
   retrySingleCall,
   buildCallPanelSummary,
+  captureClosingOdds,
   LINEUP_STATE_INFO,
   type CollectionResult,
   type ProgressUpdate,
