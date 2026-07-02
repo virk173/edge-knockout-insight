@@ -55,7 +55,10 @@ import {
   extractSgpChain,
   formatResultAgo,
 } from "@/lib/resultCache";
-import { BettingDashboard } from "@/components/betting/BettingDashboard";
+import {
+  BettingDashboard,
+  type ActionBetDraft,
+} from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
