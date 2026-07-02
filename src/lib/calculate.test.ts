@@ -918,7 +918,7 @@ describe("bankroll exposure cap in calculateResults", () => {
   });
 
   it("drops bet_4 then bet_3 to satisfy the 5% cap, leaving bet_1 untouched", () => {
-    const result = calculateResults(mk(), { bankroll: 500 });
+    const result = calculateResults(mk(), { bankroll: 500, lambda: 1, strictMode: false });
     expect(result.bet_1?.active).toBe(true);
     expect(result.bet_1?.stake).toBe("$12");
     expect(result.bet_2?.active).toBe(true);
@@ -928,7 +928,7 @@ describe("bankroll exposure cap in calculateResults", () => {
   });
 
   it("total_staked equals the exact sum of displayed active stakes", () => {
-    const result = calculateResults(mk(), { bankroll: 500 });
+    const result = calculateResults(mk(), { bankroll: 500, lambda: 1, strictMode: false });
     const parseNum = (s?: string) =>
       Number.parseFloat(String(s ?? "").replace(/[^0-9.]/g, "")) || 0;
     let sum = 0;
@@ -939,12 +939,12 @@ describe("bankroll exposure cap in calculateResults", () => {
   });
 
   it("sets unallocated_stake to the bankroll-sizing sentinel", () => {
-    const result = calculateResults(mk(), { bankroll: 500 });
+    const result = calculateResults(mk(), { bankroll: 500, lambda: 1, strictMode: false });
     expect(result.unallocated_stake).toBe("N/A — bankroll sizing");
   });
 
   it("scales stakes down with a smaller bankroll (bankroll 100)", () => {
-    const result = calculateResults(mk(), { bankroll: 100 });
+    const result = calculateResults(mk(), { bankroll: 100, lambda: 1, strictMode: false });
     // cap per bet = 2.5% of 100 = $2.50 → floor → $2
     expect(result.bet_1?.stake).toBe("$2");
     expect(result.bankroll_at_analysis).toBe(100);
@@ -1052,5 +1052,114 @@ describe("FIX 6 — detectDeadRubber requires pre-match rows", () => {
       group_total_matchdays: 3,
     });
     expect(r.is_dead_rubber).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GROUP 13 — strict-signal regime + paper bets (Part 3)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("strict-signal qualification → paper bets", () => {
+  const mkGood = () => ({
+    match: "USA vs Bosnia",
+    data_quality: "FULL",
+    ensemble_check: { alignment: "ALIGNED" },
+    classification: "JACKPOT",
+    lineup_confirmed: true,
+    bet_1: {
+      active: true,
+      ev_confidence: "HIGH",
+      ev_inputs: { model_probability: 0.62, decimal_odds: 1.9 },
+    },
+  });
+
+  it("PASS: full data + aligned + HIGH confidence stays REAL", () => {
+    const r = calculateResults(mkGood(), { bankroll: 500, strictMode: true });
+    expect(r.bet_1?.paper_bet).toBe(false);
+    expect(r.bet_1?.stake).not.toContain("PAPER");
+    expect(r.real_bet_count).toBe(1);
+    expect(r.paper_bet_count).toBe(0);
+  });
+
+  it("FAIL: THIN data → paper with reason", () => {
+    const raw = { ...mkGood(), data_quality: "THIN" };
+    const r = calculateResults(raw, { bankroll: 500, strictMode: true });
+    expect(r.bet_1?.paper_bet).toBe(true);
+    expect(r.bet_1?.paper_reason).toMatch(/THIN/i);
+    expect(r.bet_1?.stake).toBe("$0 (PAPER)");
+    expect(r.paper_bet_count).toBe(1);
+  });
+
+  it("FAIL: ensemble CONFLICT → paper", () => {
+    // alignment is recomputed from signals (single source of truth); diverging
+    // signals (>0.3 apart pairwise) force CONFLICT.
+    const raw = {
+      ...mkGood(),
+      ensemble_check: {
+        signal_1_model: 1.0,
+        signal_2_poisson: 2.0,
+        signal_3_historical: 3.0,
+      },
+    };
+    const r = calculateResults(raw, { bankroll: 500, strictMode: true });
+    expect(r.ensemble_check?.alignment).toBe("CONFLICT");
+    expect(r.bet_1?.paper_bet).toBe(true);
+    expect(r.bet_1?.paper_reason).toMatch(/CONFLICT/i);
+  });
+
+  it("FAIL: HIGH lineup dependency without confirmation → paper", () => {
+    const raw = {
+      ...mkGood(),
+      lineup_confirmed: false,
+      lineup_dependency: { level: "HIGH" },
+    };
+    const r = calculateResults(raw, { bankroll: 500, strictMode: true });
+    expect(r.bet_1?.paper_bet).toBe(true);
+    expect(r.bet_1?.paper_reason).toMatch(/lineup/i);
+  });
+
+  it("strictMode false → paper_bet always false (old behaviour)", () => {
+    const raw = { ...mkGood(), data_quality: "THIN" };
+    const r = calculateResults(raw, { bankroll: 500, strictMode: false });
+    expect(r.bet_1?.paper_bet).toBe(false);
+  });
+
+  it("paper bets are excluded from exposure-cap totals", () => {
+    const raw = { ...mkGood(), data_quality: "THIN" };
+    const r = calculateResults(raw, { bankroll: 500, strictMode: true });
+    expect(r.total_staked).toBe("$0.00");
+  });
+});
+
+describe("calibration wired into calculateResults", () => {
+  it("sets raw + calibrated probability and a note", () => {
+    const raw = {
+      data_quality: "FULL",
+      ensemble_check: { alignment: "ALIGNED" },
+      lineup_confirmed: true,
+      bet_1: {
+        active: true,
+        ev_confidence: "HIGH",
+        ev_inputs: { model_probability: 0.65, decimal_odds: 1.78 },
+      },
+    };
+    const r = calculateResults(raw, { bankroll: 500, lambda: 0.7 });
+    expect(r.bet_1?.model_probability_raw).toBeCloseTo(0.65, 4);
+    expect(r.bet_1?.model_probability).toBeCloseTo(0.6235, 3);
+    expect(r.bet_1?.calibration_note).toMatch(/λ=0\.7/);
+  });
+
+  it("λ=1 leaves EV on the raw model probability", () => {
+    const raw = {
+      data_quality: "FULL",
+      ensemble_check: { alignment: "ALIGNED" },
+      lineup_confirmed: true,
+      bet_1: {
+        active: true,
+        ev_confidence: "HIGH",
+        ev_inputs: { model_probability: 0.65, decimal_odds: 1.78 },
+      },
+    };
+    const r = calculateResults(raw, { bankroll: 500, lambda: 1 });
+    expect(r.bet_1?.model_probability).toBeCloseTo(0.65, 4);
   });
 });

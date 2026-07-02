@@ -15,6 +15,7 @@ import {
 } from "./apiCounter";
 import { apiFootballGet } from "./apiFootball";
 import { readCallCache, writeCallCache } from "./callCache";
+import { writeClosingCapture, type ClosingCapture } from "./clv";
 
 /*
  * KNOWN GAPS — documented, not bugs
@@ -985,6 +986,123 @@ function buildPinnacleSummary(
   return markets.length
     ? { bookmaker: bookmakerName, is_pinnacle, markets, raw: chosen }
     : null;
+}
+
+// ============================================================================
+// CLV CLOSING-ODDS CAPTURE (PART 1B)
+// ----------------------------------------------------------------------------
+// Standalone fetcher that runs ONLY the odds calls (CALL 9 Stake path + CALL 9B
+// TheStatsAPI path) FRESH, bypassing the 15-min per-call cache used by
+// collectMatchData (we call afGet / saGet directly). Used to snapshot the
+// closing line near kickoff for Closing Line Value (CLV) tracking.
+//
+// Source precedence:
+//   - 9B is_pinnacle=true  → store Pinnacle last_seen prices, source PINNACLE.
+//                            Pinnacle prices OVERRIDE Stake per market.
+//   - Stake succeeded      → source STAKE (Stake prices).
+//   - Stake failed, 9B retail only → source RETAIL (retail last_seen prices).
+//   - nothing usable       → return null (NEVER guess a price).
+// ============================================================================
+export async function captureClosingOdds(
+  match: AnalysedMatch,
+): Promise<ClosingCapture | null> {
+  const prices: Record<string, Array<{ selection: string; odds: number }>> = {};
+
+  // ---- Stake odds (CALL 9 path), fresh ------------------------------------
+  let stakeOk = false;
+  try {
+    let stakeId: string | null =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem("stake_bookmaker_id")
+        : null;
+    if (!stakeId) {
+      const bookmakers = await afGet(`/odds/bookmakers`);
+      const stake = extractArray(bookmakers).find((b) => {
+        const name = getField(b, ["name"]);
+        return typeof name === "string" && normalize(name).includes("stake");
+      });
+      const id = getField(stake, ["id"]);
+      if (id !== undefined) {
+        stakeId = String(id);
+        if (typeof window !== "undefined")
+          window.localStorage.setItem("stake_bookmaker_id", stakeId);
+      }
+    }
+    const afOdds = await afGet(
+      `/odds?fixture=${match.id}${stakeId ? `&bookmaker=${stakeId}` : ""}`,
+    );
+    const trimmed = extractStakeMarkets(afOdds);
+    if (trimmed) {
+      for (const [label, values] of Object.entries(trimmed.markets)) {
+        const outs = values
+          .map((v) => ({ selection: v.value, odds: Number(v.odd) }))
+          .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
+        if (outs.length) prices[label] = outs;
+      }
+      stakeOk = Object.keys(prices).length > 0;
+    }
+  } catch (e) {
+    console.warn("[clv] Stake odds capture failed", e);
+  }
+
+  // ---- TheStatsAPI odds (CALL 9B path), fresh -----------------------------
+  let isPinnacle = false;
+  let retailOnly = false;
+  try {
+    const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
+    const matchId = ref?.id ?? null;
+    if (matchId) {
+      const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
+      const summary = buildPinnacleSummary(oddsJson);
+      if (summary) {
+        isPinnacle = summary.is_pinnacle;
+        // Build { label → outcomes } from the summary's last_seen prices.
+        const saPrices: Record<string, Array<{ selection: string; odds: number }>> = {};
+        for (const mk of summary.markets) {
+          const outs = mk.outcomes
+            .map((o) => ({ selection: o.name, odds: Number(o.current) }))
+            .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
+          if (outs.length) saPrices[mk.market] = outs;
+        }
+        if (isPinnacle) {
+          // Pinnacle takes precedence per market — overlay onto Stake prices.
+          for (const [label, outs] of Object.entries(saPrices)) prices[label] = outs;
+        } else if (!stakeOk) {
+          // Retail 9B stored only when Stake failed.
+          for (const [label, outs] of Object.entries(saPrices)) prices[label] = outs;
+          retailOnly = Object.keys(saPrices).length > 0;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[clv] TheStatsAPI odds capture failed", e);
+  }
+
+  if (Object.keys(prices).length === 0) return null;
+
+  const source: ClosingCapture["source"] = isPinnacle
+    ? "PINNACLE"
+    : stakeOk
+      ? "STAKE"
+      : retailOnly
+        ? "RETAIL"
+        : "STAKE";
+
+  const now = Date.now();
+  const koMs = Date.parse(match.kickoffUtc);
+  const minutesBeforeKickoff = Number.isFinite(koMs)
+    ? Math.round((koMs - now) / 60000)
+    : 0;
+
+  const capture: ClosingCapture = {
+    matchId: match.id,
+    capturedAt: now,
+    minutesBeforeKickoff,
+    source,
+    prices,
+  };
+  writeClosingCapture(capture);
+  return capture;
 }
 
 // Extract Stake 1X2 (Match Winner) odds from an API-Football /odds response.

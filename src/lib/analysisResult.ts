@@ -237,6 +237,12 @@ export interface StraightBet {
   ev_confidence?: "HIGH" | "MEDIUM" | "LOW";
   pinnacle_check_note?: string;
   reasoning?: string;
+  // Calibration (computed app-side, see calibration.ts / calculate.ts).
+  model_probability_raw?: number;
+  calibration_note?: string;
+  // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
+  paper_bet?: boolean;
+  paper_reason?: string;
 }
 
 export interface SgpBet {
@@ -257,6 +263,9 @@ export interface SgpBet {
   parlay_ev?: number;
   ev_rating?: string;
   reasoning?: string;
+  // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
+  paper_bet?: boolean;
+  paper_reason?: string;
 }
 
 export interface JackpotBet {
@@ -272,6 +281,9 @@ export interface JackpotBet {
   jackpot_ev?: number;
   ev_rating?: string;
   class_c_signals?: string[];
+  // Strict-signal / paper-bet mode (computed app-side, see calculate.ts).
+  paper_bet?: boolean;
+  paper_reason?: string;
 }
 
 
@@ -346,6 +358,13 @@ export interface AnalysisResult {
   match_exposure_pct?: string;
   match_exposure_cap_triggered?: boolean;
   bankroll_at_analysis?: number;
+  // Strict-signal regime (computed app-side, see calculate.ts).
+  real_bet_count?: number;
+  paper_bet_count?: number;
+  // Lineup dependency signals used by the strict qualification gate. Claude may
+  // emit lineup_dependency.level; lineup_confirmed is set by the pipeline/UI.
+  lineup_dependency?: { level?: "HIGH" | "MEDIUM" | "LOW" | string };
+  lineup_confirmed?: boolean;
   markets_evaluated?: string[];
   markets_rejected?: MarketRejected[];
   key_risk_flag?: string;
