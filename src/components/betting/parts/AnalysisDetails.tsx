@@ -140,7 +140,7 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                   </span>
                 </div>
               ))}
-              {typeof result.confidence_scores?.dimension_weighted_raw === "number" && (
+              {typeof result.confidence_scores.dimension_weighted_raw === "number" && (
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-slate">Weighted raw</span>
                   <span className="font-semibold text-foreground">
