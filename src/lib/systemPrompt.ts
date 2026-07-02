@@ -533,6 +533,13 @@ Adjustments:
   CRITICAL ABSENCE: D4 18, D2 17
   All fit confirmed C6: D4 5, D1 40
 
+When multiple adjustment rules apply
+simultaneously, apply them in order and
+then ADD any remainder to D1 so the six
+weights ALWAYS sum to exactly 100. Sum
+your six numbers before output; if not
+100, fix D1.
+
 D1 — FORM
 Recency multipliers:
   Knockout: 1.0x
