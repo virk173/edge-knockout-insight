@@ -1697,18 +1697,18 @@ EXAMPLE OUTPUT:
     "triggers": ["Mane confirmed absent C6."]
   },
   "key_risk_flag": "3-signal conflict on goals. Model 1.95 vs Poisson 2.3 and historical 2.4.",
-  "analyst_note": "Under 2.5 clearest value at EV 0.101 with sharp money confirmation [C9B]. Mane CRITICAL absence reduces Senegal 31.6%. Zwayer strictness 89.95 makes cards parlay viable at marginal EV 0.075.",
+  "analyst_note": "Under 2.5 clearest value at EV 0.101 with sharp money confirmation [C9B]. Mane CRITICAL absence reduces Senegal 31.6%. Zwayer strictness 89.95 makes the cards bet and SGP viable.",
   "log_entry": {
     "match": "France vs Senegal",
     "date": "2026-07-01",
     "round": "Round of 32",
     "recommendations": [
       {
-        "tier": 1,
-        "market": "Under 2.5 Goals",
-        "selection": "Under 2.5",
+        "bet": 1,
+        "market": "Goal Totals (Over/Under)",
+        "selection": "Under 2.5 Goals",
         "odds": 1.78,
-        "stake": "$20",
+        "stake": "$10",
         "model_probability": 0.618,
         "ev": 0.101,
         "confidence": 59,
@@ -1716,13 +1716,25 @@ EXAMPLE OUTPUT:
         "sharp_signal": "CONFIRMS"
       },
       {
-        "tier": 2,
-        "market": "SGP France Win + Cards Over 3.5 + Under 2.5",
+        "bet": 2,
+        "market": "Cards Totals",
+        "selection": "Over 3.5 Cards",
+        "odds": 1.82,
+        "stake": "$8",
+        "model_probability": 0.58,
+        "ev": 0.055,
+        "confidence": 59,
+        "ensemble_alignment": "CONFLICT",
+        "sharp_signal": "N/A"
+      },
+      {
+        "bet": 3,
+        "market": "SGP France Win + Under 2.5 + Cards Over 3.5",
         "selection": "3-leg SGP",
         "odds": 4.96,
-        "stake": "$20",
-        "model_probability": 0.150,
-        "ev": 0.075,
+        "stake": "$10",
+        "model_probability": 0.253,
+        "ev": 0.255,
         "confidence": 59,
         "ensemble_alignment": "CONFLICT",
         "sharp_signal": "CONFIRMS on Under leg"
@@ -1731,6 +1743,6 @@ EXAMPLE OUTPUT:
     "outcome": "PENDING",
     "actual_result": "PENDING",
     "ev_realised": "PENDING",
-    "notes": "Pinnacle available. Sharp money confirms Under. 10 dollars unallocated."
+    "notes": "Pinnacle available. Sharp money confirms Under. 22 dollars unallocated — Bet 4 inactive."
   }
 }`;
