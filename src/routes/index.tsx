@@ -1856,7 +1856,11 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
           ) : (
             <div className="text-slate">not present in output</div>
           )}
+          <Plain
+            text={plainDimensionWeights(!!dw && dw.mismatch_flags.length > 0)}
+          />
         </div>
+
       </div>
     </details>
   );
