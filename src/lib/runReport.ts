@@ -98,9 +98,6 @@ function fmtAbsence(a: Absence): string {
   ].join("\n");
 }
 
-function fmtLeg(leg: TierLeg, i: number): string {
-  return `  Leg ${leg?.leg_number ?? i + 1}: ${na(leg?.selection)} @ ${num(leg?.odds)}`;
-}
 
 // ─────────────────────────────────────────────────────────────
 // CALL DATA helpers — pull the ACTUAL extracted values out of each
