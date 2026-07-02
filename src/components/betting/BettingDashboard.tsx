@@ -753,6 +753,25 @@ function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
       {open && (
         <div className="mt-2 flex flex-col gap-1.5">
           {markets.map((m, i) => {
+            // Cards is a permanent source gap, not an analysis rejection —
+            // render it as a neutral data-gap note, never a red "rejected" row.
+            if (isCardsMarket(m.market)) {
+              return (
+                <div
+                  key={i}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 rounded border border-border bg-card/30 px-3 py-1.5 text-xs"
+                >
+                  <span className="font-semibold text-foreground">
+                    {m.market ?? "—"}
+                  </span>
+                  <span className="text-slate">{CARDS_UNAVAILABLE_SHORT}</span>
+                  <span className="w-full text-slate/80">
+                    Not carried by current odds source (verified across 33
+                    bookmakers, July 2026) — data gap, not a model judgment.
+                  </span>
+                </div>
+              );
+            }
             const recomputed = computeEv(
               m.ev_inputs?.model_probability,
               m.ev_inputs?.decimal_odds,
