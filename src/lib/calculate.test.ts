@@ -11,6 +11,7 @@ import {
   calculateResults,
   applyDeadRubberDiscount,
 } from "@/lib/calculate";
+import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GROUP 1 — calculateEV
