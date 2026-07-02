@@ -252,7 +252,7 @@ export interface SgpBet {
   skip_reason?: string | null;
   bet_type?: string; // "Same Game Parlay (3-Leg Accumulator)"
   stake?: string;
-  legs?: TierLeg[];
+  legs: TierLeg[]; // guaranteed by normalizeAnalysisResult() (may be empty)
   p_independent?: number;
   correlation_factor?: number;
   p_joint?: number;
