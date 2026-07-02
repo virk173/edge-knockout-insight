@@ -308,7 +308,7 @@ function Index() {
         if (!cached) continue;
         next[m.id] = {
           ...(existing ?? EMPTY_MATCH_STATE),
-          analysisResult: cached.result,
+          analysisResult: normalizeAnalysisResult(cached.result),
           analysisRaw: cached.rawClaudeJson,
           tokenUsage: cached.tokenUsage,
           analysisSavedAt: cached.savedAt,
