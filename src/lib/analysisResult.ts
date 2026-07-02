@@ -130,7 +130,8 @@ export interface ConfidenceScores {
   // Raw variables from Claude (preferred source of truth).
   confidence_inputs?: ConfidenceInputs;
   dimension_weighted_raw?: number;
-  adjustments?: ConfidenceAdjustment[];
+  // Guaranteed by normalizeAnalysisResult() — always an array (may be empty).
+  adjustments: ConfidenceAdjustment[];
   post_adjustment?: number;
   bayesian_applied?: boolean;
   bayesian_formula?: string;
