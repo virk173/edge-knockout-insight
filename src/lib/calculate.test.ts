@@ -1030,21 +1030,25 @@ describe("FIX 6 — detectDeadRubber requires pre-match rows", () => {
     expect(r.is_dead_rubber).toBe(false);
   });
 
-  it("(e) opponent 0 pts, cross-group cutoff 4 → best case 3 < 4 → TRUE", () => {
+  it("(e) opponent 0 pts, group complete, cross-group cutoff 1 → best case 0 < 1 → TRUE", () => {
+    const thirdEight = Array.from({ length: 8 }, (_, i) => ({
+      team_id: `z${i}`,
+      group_label: String.fromCharCode(66 + i), // B..I (not opp's group A)
+      points: 4 - Math.min(i, 3), // 4,3,2,1,1,1,1,1 → 8th best = 1
+      goal_difference: 0,
+      goals_for: 2,
+    }));
     const r = detectDeadRubber({
       fixture_matchday: 3,
       fixture_date: "2026-06-27T18:00:00+00:00",
       opponent_team_id: "opp",
       opponent_group_standings: [
-        { team_id: "a", points: 6, position: 1, matches_played: 2, goal_difference: 4, goals_for: 6 },
-        { team_id: "b", points: 4, position: 2, matches_played: 2, goal_difference: 2, goals_for: 4 },
-        { team_id: "opp", points: 0, position: 3, matches_played: 2, goal_difference: -6, goals_for: 0 },
-        { team_id: "d", points: 3, position: 4, matches_played: 2, goal_difference: 0, goals_for: 2 },
+        { team_id: "a", points: 6, position: 1, matches_played: 3, goal_difference: 4, goals_for: 6 },
+        { team_id: "b", points: 4, position: 2, matches_played: 3, goal_difference: 2, goals_for: 4 },
+        { team_id: "opp", points: 0, position: 3, matches_played: 3, goal_difference: -6, goals_for: 0 },
+        { team_id: "d", points: 3, position: 4, matches_played: 3, goal_difference: 0, goals_for: 2 },
       ],
-      all_groups_third_place_table: [
-        { team_id: "z1", group_label: "B", points: 4, goal_difference: 1, goals_for: 3 },
-        { team_id: "z2", group_label: "C", points: 4, goal_difference: 0, goals_for: 2 },
-      ],
+      all_groups_third_place_table: thirdEight,
       group_total_matchdays: 3,
     });
     expect(r.is_dead_rubber).toBe(true);
