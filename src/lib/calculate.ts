@@ -1024,9 +1024,19 @@ export function calculateResults(rawOutput: unknown): AnalysisResult {
       tier.ev_rating = "STRONG";
     }
   };
-  gateTier(num(result.tier_1_anchor?.ev), result.tier_1_anchor);
-  gateTier(num(result.tier_2_parlay?.parlay_ev), result.tier_2_parlay);
-  gateTier(num(result.tier_3_jackpot?.jackpot_ev), result.tier_3_jackpot);
+  gateTier(num(result.bet_1?.ev), result.bet_1);
+  gateTier(num(result.bet_2?.ev), result.bet_2);
+  gateTier(num(result.bet_3?.parlay_ev), result.bet_3);
+  gateTier(num(result.bet_4?.jackpot_ev), result.bet_4);
+
+  // If a straight bet was gated inactive, zero its Kelly stake so the UI never
+  // shows a stake on a bet the gate killed.
+  for (const sb of [result.bet_1, result.bet_2]) {
+    if (sb && sb.active === false) {
+      sb.stake = "$0";
+      if (sb.kelly_result) sb.kelly_result.recommended_stake = 0;
+    }
+  }
 
   return result;
 }
