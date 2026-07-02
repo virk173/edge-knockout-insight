@@ -1612,7 +1612,11 @@ function MatchView({
 
             {state.analysisResult !== null ? (
               <>
-                <BettingDashboard result={state.analysisResult as AnalysisResult} />
+                <BettingDashboard
+                  result={state.analysisResult as AnalysisResult}
+                  onPlaceActionBet={handlePlaceActionBet}
+                />
+
                 <ValidationChecksView result={state.analysisResult as AnalysisResult} />
                 <div className="rounded-md border border-signal-green/40 bg-signal-green/5 px-4 py-3 font-mono text-xs text-signal-green">
                   ✓ Saved to backtesting log — view it from the Backtest Log tab.
