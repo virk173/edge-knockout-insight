@@ -400,9 +400,11 @@ function Index() {
     const result = activeState.analysisResult as AnalysisResult | undefined;
     const updated = appendActionBet({
       matchId: typeof activeMatchId === "number" ? activeMatchId : undefined,
-      match: result?.match ?? match?.label,
+      match:
+        result?.match ??
+        (match ? `${match.home} vs ${match.away}` : undefined),
       date: result?.kickoff_UTC ?? match?.kickoffUtc,
-      round: result?.round,
+      round: result?.round ?? match?.round ?? undefined,
       tier: draft.tier,
       market: draft.market,
       selection: draft.selection,
