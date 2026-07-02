@@ -565,7 +565,7 @@ export function generateRunReport(
   push();
 
 
-  const cs = r.confidence_scores ?? {};
+  const cs = r.confidence_scores;
   push("CONFIDENCE");
   push(
     `Raw: ${na(
