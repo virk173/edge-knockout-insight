@@ -850,6 +850,26 @@ Start your response with { and end with }.`;
           >
             💰 ${bankroll}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !strictMode;
+              setStrictMode(next);
+              try {
+                localStorage.setItem("edge_strict_mode", String(next));
+              } catch {
+                /* ignore */
+              }
+            }}
+            className={`rounded-md border px-2.5 py-1 font-mono text-xs font-semibold ${
+              strictMode
+                ? "border-accent-amber/50 text-accent-amber"
+                : "border-border text-slate"
+            }`}
+            title="Real stakes only on FULL/PARTIAL data + aligned ensemble + confirmed lineups. Everything else logs as paper."
+          >
+            STRICT {strictMode ? "ON" : "OFF"}
+          </button>
           <span
             className={`rounded-md border border-border px-2.5 py-1 font-mono text-xs font-semibold ${apiColorClass}`}
             title="API-Football calls used today (resets at midnight UTC)"
