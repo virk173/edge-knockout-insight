@@ -2649,7 +2649,42 @@ export async function collectMatchData(
     blockOpts,
   );
 
-  // 4 step 1: home recent form
+  // FIX 3b — PAST MEETINGS fallback. When CALL 3 (API-Football headtohead) is
+  // EMPTY, reconstruct head-to-head from TheStatsAPI /football/matches (there is
+  // no dedicated H2H endpoint). The existing H2H gate (3+ competitive) still
+  // applies downstream; scorelines are formatted via scorelinesFrom on the
+  // API-Football-shaped rows we synthesise here.
+  if (callResults["3"]?.status === "EMPTY") {
+    const ref = await ensureStatsApiMatch();
+    if (ref?.homeTeamId) {
+      currentDebugCall = "3";
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const payload = await saGet(
+          `/football/matches?team_id=${ref.homeTeamId}&date_to=${today}&per_page=100`,
+        );
+        const fixtures = statsApiMatchesToFixtures(
+          payload,
+          ref.awayTeamName ?? match.away,
+        );
+        record(
+          "3",
+          "PAST MEETINGS (TheStatsAPI workaround — not a dedicated H2H endpoint)",
+          fixtures.length ? "SUCCESS" : "EMPTY",
+          fixtures.length ? fixtures : undefined,
+          fixtures.length
+            ? undefined
+            : "No past meetings found via TheStatsAPI fallback.",
+        );
+      } catch (e) {
+        // Keep the original EMPTY status on failure.
+        console.warn("[analyse] CALL 3 TheStatsAPI fallback failed", e);
+      } finally {
+        currentDebugCall = null;
+      }
+    }
+  }
+
   let homeFixtureIds: number[] = [];
   await runStep(
     "4-1",
