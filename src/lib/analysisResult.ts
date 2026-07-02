@@ -172,7 +172,8 @@ export interface Absence {
 }
 
 export interface PlayerIntelligence {
-  absences?: Absence[];
+  // Guaranteed by normalizeAnalysisResult() — always an array (may be empty).
+  absences: Absence[];
   players_confirmed_fit?: string[];
   suspension_served_eligible?: string[];
 }
