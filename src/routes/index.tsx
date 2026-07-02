@@ -1617,7 +1617,7 @@ function MatchView({
               <>
                 <BettingDashboard
                   result={state.analysisResult as AnalysisResult}
-                  onPlaceActionBet={handlePlaceActionBet}
+                  onPlaceActionBet={onPlaceActionBet}
                 />
 
                 <ValidationChecksView result={state.analysisResult as AnalysisResult} />
