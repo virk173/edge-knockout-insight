@@ -1096,6 +1096,17 @@ export function calculateResults(
       all_players_confirmed_fit: allFit,
     });
     result.dimension_weights_validation = validation;
+    // NORMALIZE the weights so they always sum to exactly 100 before anything
+    // downstream reads them. Validation above ran against the ORIGINAL values,
+    // so any mismatch warning text is preserved.
+    result.dimension_weights = normalizeDimensionWeights({
+      D1: num(result.dimension_weights.D1) ?? 0,
+      D2: num(result.dimension_weights.D2) ?? 0,
+      D3: num(result.dimension_weights.D3) ?? 0,
+      D4: num(result.dimension_weights.D4) ?? 0,
+      D5: num(result.dimension_weights.D5) ?? 0,
+      D6: num(result.dimension_weights.D6) ?? 0,
+    });
     if (validation.mismatch_flags.length > 0) {
       result.key_risk_flag =
         (result.key_risk_flag || "") +
