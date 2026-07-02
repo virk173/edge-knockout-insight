@@ -977,6 +977,41 @@ describe("FIX 1 — confidence no double-count", () => {
       ).length,
     ).toBe(1);
   });
+
+  it("CONFLICT: strips Claude's suffixed '_goals' type and injects app -5 exactly once", () => {
+    const conf = computeConfidence(
+      {
+        dimension_weighted_raw: 64,
+        adjustments: [{ type: "3_signal_conflict_goals", delta: -5 }],
+      },
+      // Three signals all >0.3 apart → CONFLICT (impact -5).
+      { signal_1_model: 1.5, signal_2_poisson: 2.1, signal_3_historical: 2.7 },
+    );
+    // Claude's suffixed conflict is dropped; the app injects ONE ensemble delta.
+    const ensembleDeltas = (conf?.adjustments ?? []).filter((a) =>
+      /ensemble|signal|conflict|aligned|poisson/i.test(a.type ?? ""),
+    );
+    expect(ensembleDeltas.length).toBe(1);
+    expect(ensembleDeltas[0]?.delta).toBe(-5);
+    // 64 + (-5) once = 59, not 54 (double-count) and not 64 (vanished conflict).
+    expect(conf?.post_adjustment).toBe(59);
+  });
+
+  it("CONFLICT: robust to arbitrary Claude wording like 'poisson_conflict_signal'", () => {
+    const conf = computeConfidence(
+      {
+        dimension_weighted_raw: 64,
+        adjustments: [{ type: "poisson_conflict_signal", delta: -5 }],
+      },
+      { signal_1_model: 1.5, signal_2_poisson: 2.1, signal_3_historical: 2.7 },
+    );
+    const ensembleDeltas = (conf?.adjustments ?? []).filter((a) =>
+      /ensemble|signal|conflict|aligned|poisson/i.test(a.type ?? ""),
+    );
+    expect(ensembleDeltas.length).toBe(1);
+    expect(ensembleDeltas[0]?.delta).toBe(-5);
+    expect(conf?.post_adjustment).toBe(59);
+  });
 });
 
 describe("FIX 3 — resolveMarketType progressive matching", () => {
