@@ -47,9 +47,14 @@ import {
   getLogEntries,
   setRecommendationOutcome,
   clearLog,
+  settleClvAll,
+  settleClv,
+  setManualClosingOdds,
+  getCalibrationSamples,
   type LogEntry,
   type Outcome,
 } from "@/lib/backtestLog";
+import { getCalibration, fitLambda } from "@/lib/calibration";
 import {
   getApiCallCount,
   budgetLevel,
