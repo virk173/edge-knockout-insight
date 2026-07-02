@@ -31,7 +31,7 @@ export interface ClaudeMessageResponse {
     // the model produced for the forced submit_analysis tool call.
     id?: string;
     name?: string;
-    input?: unknown;
+    input?: JsonValue;
   }>;
   usage?: {
     input_tokens?: number;
