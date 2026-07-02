@@ -32,6 +32,11 @@ import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
 import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import {
+  plainEnsembleAlignment,
+  plainModelProbabilities,
+  plainDimensionWeights,
+} from "@/lib/plainEnglish";
 import { getBankroll, setBankroll } from "@/lib/bankroll";
 import {
   generateRunReport,
