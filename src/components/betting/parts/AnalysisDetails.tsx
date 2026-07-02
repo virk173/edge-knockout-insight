@@ -7,6 +7,7 @@ import {
   normalizeDimensions,
 } from "@/lib/analysisResult";
 import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
+import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
