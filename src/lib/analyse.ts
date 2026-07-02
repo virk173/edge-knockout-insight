@@ -2776,6 +2776,7 @@ export async function collectMatchData(
     }
   }
 
+  // 9: odds (Stake via API-Football only)
   // FIX 5 — runs immediately after CALL 5 (injuries) and BEFORE the CALL 6
   // lineup retry loop, so odds are captured fresh rather than going stale while
   // CALL 6 blocks up to 5×60s inside the pre-kickoff window. Order preserved:
