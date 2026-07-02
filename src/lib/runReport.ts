@@ -565,7 +565,7 @@ const isReady = (s: string) => s === "SUCCESS" || s === "CACHED";
 function pipelineFromSaved(
   summary: PersistedCallSummaryRow[],
   keyExtracts: PersistedKeyExtracts | undefined,
-  dataQuality: string,
+  dataQuality: string | undefined,
 ): string[] {
   const af = summary.filter((r) => r.id.startsWith("C"));
   const sa = summary.filter((r) => r.id.startsWith("S"));
