@@ -1,5 +1,6 @@
 import {
   extractStakeMarkets,
+  buildCallPanelSummary,
   type CollectionResult,
   type CallResult,
   type LineupState,
@@ -9,6 +10,10 @@ import type {
   Absence,
   ConfidenceAdjustment,
 } from "@/lib/analysisResult";
+import type {
+  PersistedCallSummaryRow,
+  PersistedKeyExtracts,
+} from "@/lib/resultCache";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
