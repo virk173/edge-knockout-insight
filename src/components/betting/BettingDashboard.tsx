@@ -875,7 +875,13 @@ function BottomBar({ result }: { result: AnalysisResult }) {
 // ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
-export function BettingDashboard({ result }: { result: AnalysisResult }) {
+export function BettingDashboard({
+  result,
+  onPlaceActionBet,
+}: {
+  result: AnalysisResult;
+  onPlaceActionBet?: (draft: ActionBetDraft) => void;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <TopBets result={result} />
@@ -883,6 +889,8 @@ export function BettingDashboard({ result }: { result: AnalysisResult }) {
       <MatchHeader result={result} />
 
       <YourBets result={result} />
+
+      <CandidatesCard result={result} onPlaceActionBet={onPlaceActionBet} />
 
       <AnalystNote note={result.analyst_note} />
 
