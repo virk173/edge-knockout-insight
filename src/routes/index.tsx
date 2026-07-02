@@ -516,7 +516,11 @@ function Index() {
 
     try {
       const parsed = tryParse();
-      const enriched = calculateResults(parsed, { bankroll: getBankroll() });
+      const enriched = calculateResults(parsed, {
+        bankroll: getBankroll(),
+        strictMode: strictMode,
+        lambda: getCalibration().lambda,
+      });
       const savedAt = Date.now();
       patchState(match.id, {
         analysisRaw: cleaned,
