@@ -24,7 +24,15 @@ export interface ClaudeMessageResponse {
   model?: string;
   role?: string;
   stop_reason?: string;
-  content?: Array<{ type?: string; text?: string }>;
+  content?: Array<{
+    type?: string;
+    text?: string;
+    // Present on `tool_use` blocks: the structured, already-parsed JSON object
+    // the model produced for the forced submit_analysis tool call.
+    id?: string;
+    name?: string;
+    input?: unknown;
+  }>;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
