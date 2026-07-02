@@ -188,7 +188,145 @@ export function appendLogEntry(raw: RawLogEntry | null | undefined): LogEntry[] 
   return updated;
 }
 
-export function setRecommendationOutcome(
+/**
+ * Build a log entry from the APP-ENRICHED analysis result — never from Claude's
+ * raw `log_entry` (which can claim positive EV the app has already gated to
+ * inactive). Every value comes from app-computed fields:
+ *   - one recommendation per bet_1/bet_2/bet_3/bet_4 that is active OR paper.
+ *     Fully inactive bets are EXCLUDED.
+ *   - ev = app-computed ev / parlay_ev / jackpot_ev
+ *   - model_probability = the CALIBRATED value (bet.model_probability / p_joint)
+ *   - stake = the app-sized stake string
+ *   - confidence = app final_confidence
+ *   - ensemble_alignment = app ensemble_check.alignment
+ * Claude's log_entry.notes text is preserved, prefixed "Claude note: ".
+ * If zero bets qualify, an entry with recommendations: [] is still appended so
+ * every analysed match is on record.
+ */
+export function buildLogEntryFromEnriched(
+  result: AnalysisResult,
+  opts: { matchId?: number } = {},
+): LogEntry {
+  const alignment = sanitizeString(result.ensemble_check?.alignment);
+  const finalConfidence =
+    typeof result.confidence_scores?.final_confidence === "number"
+      ? result.confidence_scores.final_confidence
+      : undefined;
+
+  const legsSelection = (legs: TierLeg[] | undefined): string =>
+    (legs ?? [])
+      .map((l) => [l.market, l.selection].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join(" + ");
+
+  const recs: LogRecommendation[] = [];
+
+  const pushStraight = (bet: StraightBet | undefined, tier: number) => {
+    if (!bet) return;
+    // Exclude fully inactive bets: only active OR paper bets are logged.
+    if (bet.active !== true && bet.paper_bet !== true) return;
+    recs.push({
+      tier,
+      market: bet.market,
+      selection: bet.selection,
+      odds: typeof bet.odds === "number" ? bet.odds : undefined,
+      stake: bet.stake, // app-sized Kelly stake string
+      paper: bet.paper_bet === true,
+      // CALIBRATED probability (calculate.ts overwrites model_probability with
+      // the calibrated value; model_probability_raw keeps the pre-cal figure).
+      model_probability:
+        typeof bet.model_probability === "number"
+          ? bet.model_probability
+          : undefined,
+      ev: typeof bet.ev === "number" ? bet.ev : undefined, // APP-computed EV
+      confidence: finalConfidence,
+      ensemble_alignment: alignment,
+      sharp_signal: sanitizeString(bet.pinnacle_check_note),
+      outcome: "PENDING",
+    });
+  };
+
+  pushStraight(result.bet_1, 1);
+  pushStraight(result.bet_2, 2);
+
+  const sgp = result.bet_3;
+  if (sgp && (sgp.active === true || sgp.paper_bet === true)) {
+    recs.push({
+      tier: 3,
+      market: sgp.bet_type ?? "Same Game Parlay (3-Leg Accumulator)",
+      selection: legsSelection(sgp.legs),
+      odds:
+        typeof sgp.combined_odds_sgp === "number"
+          ? sgp.combined_odds_sgp
+          : undefined,
+      stake: sgp.stake,
+      paper: sgp.paper_bet === true,
+      model_probability: typeof sgp.p_joint === "number" ? sgp.p_joint : undefined,
+      ev: typeof sgp.parlay_ev === "number" ? sgp.parlay_ev : undefined,
+      confidence: finalConfidence,
+      ensemble_alignment: alignment,
+      sharp_signal: undefined,
+      outcome: "PENDING",
+    });
+  }
+
+  const jack = result.bet_4;
+  if (jack && (jack.active === true || jack.paper_bet === true)) {
+    recs.push({
+      tier: 4,
+      market: jack.bet_type ?? "Jackpot Accumulator (4-5 Leg Parlay)",
+      selection: legsSelection(jack.legs),
+      odds: typeof jack.combined_odds === "number" ? jack.combined_odds : undefined,
+      stake: jack.stake,
+      paper: jack.paper_bet === true,
+      model_probability: undefined,
+      ev: typeof jack.jackpot_ev === "number" ? jack.jackpot_ev : undefined,
+      confidence: finalConfidence,
+      ensemble_alignment: alignment,
+      sharp_signal: undefined,
+      outcome: "PENDING",
+    });
+  }
+
+  const claudeNote = sanitizeString(result.log_entry?.notes);
+  const notes =
+    recs.length === 0
+      ? "No qualifying bets — all EV negative or gated."
+      : claudeNote
+        ? `Claude note: ${claudeNote}`
+        : undefined;
+
+  return {
+    id: makeId(),
+    savedAt: new Date().toISOString(),
+    match: result.match,
+    matchId:
+      typeof opts.matchId === "number"
+        ? opts.matchId
+        : typeof result.log_entry?.matchId === "number"
+          ? result.log_entry.matchId
+          : undefined,
+    date: result.kickoff_UTC ?? result.log_entry?.date,
+    round: result.round ?? result.log_entry?.round,
+    notes,
+    recommendations: recs,
+  };
+}
+
+/**
+ * Append an app-built log entry (from buildLogEntryFromEnriched) to the log.
+ * Always appends — even a match with zero qualifying bets is recorded.
+ */
+export function appendEnrichedResult(
+  result: AnalysisResult,
+  opts: { matchId?: number } = {},
+): LogEntry[] {
+  const existing = getLogEntries();
+  const entry = buildLogEntryFromEnriched(result, opts);
+  const updated = [...existing, entry];
+  writeLogEntries(updated);
+  return updated;
+}
   entryId: string,
   recIndex: number,
   outcome: Outcome,
