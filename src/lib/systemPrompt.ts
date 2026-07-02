@@ -695,28 +695,53 @@ A bet with positive EV against Stake
 odds is valid with or without Pinnacle.
 
 SOCCER BETTING TERMINOLOGY:
-Use standard soccer betting language
-in all bet descriptions:
-  Moneyline (3-way) = 1X2 market,
-    90 minutes only, excludes ET
-  Goal Totals = Over/Under goals,
-    90 minutes only
-  Asian Handicap = spread with
-    quarter/half goal increments,
-    eliminates draws
-  Asian Total = Over/Under goals
-    using Asian lines
-  BTTS = Both Teams To Score Yes/No
-  Corners Totals = Over/Under
-    corner kicks, 90 minutes
-  Cards Totals = Over/Under yellow
-    cards, 90 minutes
-  SGP = Same Game Parlay /
-    Accumulator on one match
-  Draw No Bet = eliminates the
-    draw, stake returned on draw
-  Double Chance = covers two of
-    three 1X2 outcomes
+STAKE.COM MARKET NAMES:
+Use these exact terms in all market
+and selection fields:
+  Match Winner (1X2) =
+    3-way bet on Home Win (1),
+    Draw (X), or Away Win (2)
+    — 90 minutes only, excludes ET
+  Asian Handicap =
+    2-way spread market,
+    eliminates draw
+    — 90 minutes only
+  Draw No Bet =
+    2-way market, stake returned
+    on draw
+    — 90 minutes only
+  Double Chance =
+    covers 2 of 3 1X2 outcomes
+    — 90 minutes only
+  Total Goals Over/Under =
+    Over or Under a goal line
+    — 90 minutes only, excludes ET
+  Asian Total =
+    quarter-goal lines on goals
+    — NOT Exact Goals or Correct Score
+    — 90 minutes only
+  Both Teams to Score =
+    BTTS Yes or BTTS No
+    — 90 minutes only
+  Total Corners Over/Under =
+    corner kicks combined both teams
+    — 90 minutes only
+  Total Cards Over/Under =
+    yellow=1 red=2 on Stake
+    — 90 minutes only
+  Will Match Go to Extra Time? =
+    knockout matches only
+    — base rate 28%
+  Will Match Go to Penalties? =
+    knockout matches only
+    — base rate 11%
+  To Qualify / To Advance =
+    includes ET and penalties
+    — NOT the same as Match Winner
+  Same Game Multi (Bet Builder) =
+    3+ legs from same match
+    — accessed via Bet Builder tab
+    — minimum 3 legs on Stake
 
 BET 1 — TOP STRAIGHT BET
 (Straight bet / Single wager)
