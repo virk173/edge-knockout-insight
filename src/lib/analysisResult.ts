@@ -275,7 +275,7 @@ export interface JackpotBet {
   skip_reason?: string | null;
   bet_type?: string; // "Jackpot Accumulator (4-5 Leg Parlay)"
   stake?: string;
-  legs?: TierLeg[];
+  legs: TierLeg[]; // guaranteed by normalizeAnalysisResult() (may be empty)
   combined_odds?: number;
   returns?: TierReturns;
   // Raw variables from Claude (preferred source of truth for EV).
