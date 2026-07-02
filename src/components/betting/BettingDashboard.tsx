@@ -14,6 +14,7 @@ import {
   type MarketRejected,
 } from "@/lib/analysisResult";
 import { computeEv } from "@/lib/calculate";
+import { isCardsMarket, CARDS_UNAVAILABLE_SHORT } from "@/lib/dataGaps";
 import { CARD, fmtOdds, sgpCombinedOdds, SectionLabel } from "./parts/helpers";
 import { MatchHeader } from "./parts/MatchHeader";
 import { TopBets } from "./parts/TopBets";
