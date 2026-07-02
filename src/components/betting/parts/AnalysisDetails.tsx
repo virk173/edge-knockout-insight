@@ -175,6 +175,11 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
                     {(adj.delta ?? 0) >= 0 ? "+" : ""}
                     {adj.delta}
                   </span>
+                  {plain && (
+                    <span className="basis-full font-sans text-[11px] italic text-slate/80">
+                      {plainConfidenceAdjustment(adj.type)}
+                    </span>
+                  )}
                 </div>
               ))}
               {typeof result.confidence_scores.final_confidence === "number" && (
