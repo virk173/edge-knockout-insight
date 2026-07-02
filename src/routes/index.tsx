@@ -562,6 +562,10 @@ function Index() {
         usedFallbackModel: res.used_fallback_model === true,
         fallbackReason: res.used_fallback_model ? (res.fallback_reason ?? null) : null,
       });
+      // FIX 2 — persist a reload-safe call summary + key extracts so the Run
+      // Report can rebuild its PIPELINE/CALL DATA sections after a page reload
+      // (the live collection is wiped on reload).
+      const savedCollection = getState(match.id).collection;
       writeResultCache({
         matchId: match.id,
         match: `${match.home} vs ${match.away}`,
@@ -571,6 +575,12 @@ function Index() {
         tokenUsage,
         responseTimeMs,
         savedAt,
+        callSummary: savedCollection
+          ? buildPersistedCallSummary(savedCollection.callResults)
+          : undefined,
+        keyExtracts: savedCollection
+          ? buildKeyExtracts(savedCollection)
+          : undefined,
       });
       toast.success("Analysis complete");
 
