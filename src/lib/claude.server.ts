@@ -244,9 +244,28 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     const payload = await response.json().catch(() => null);
 
     if (response.ok) {
+      const data = (payload ?? {}) as ClaudeMessageResponse;
+
+      // A forced tool_use truncated by max_tokens leaves the JSON incomplete and
+      // unusable. Treat it exactly like a transient failure: retry / fall back
+      // rather than handing a half-built payload to the parser.
+      if (data.stop_reason === "max_tokens") {
+        console.error(
+          `callClaude: attempt ${i + 1}/${attempts.length} (${model}) hit max_tokens — tool payload truncated`,
+        );
+        lastError =
+          "Analysis exceeded the output token budget before completing. Please retry.";
+        if (!isFallback) primaryFailures += 1;
+        if (i < attempts.length - 1) {
+          await new Promise((r) => setTimeout(r, WAIT_BETWEEN_MS));
+          continue;
+        }
+        break;
+      }
+
       const result: ClaudeCallResult = {
         ok: true,
-        data: (payload ?? {}) as ClaudeMessageResponse,
+        data,
       };
       if (isFallback) {
         result.used_fallback_model = true;
