@@ -503,14 +503,28 @@ function Index() {
       return;
     }
 
-    const text: string = res.data?.content?.[0]?.text ?? "";
+    const content = res.data?.content ?? [];
+    // Prefer the structured tool_use payload from the forced submit_analysis
+    // tool call — it is already a parsed JSON object, no fence-stripping needed.
+    const toolInput = content.find(
+      (b) => b?.type === "tool_use" && b?.input && typeof b.input === "object",
+    )?.input;
+    const text: string =
+      content.find((b) => b?.type === "text")?.text ?? content[0]?.text ?? "";
     const usage = res.data?.usage;
     const tokenUsage = usage
       ? { input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 }
       : null;
     const cleaned = text.replace(/```json|```/g, "").trim();
+    // rawJson is what we persist/display: the structured payload when present,
+    // otherwise the cleaned text blob.
+    const rawJson =
+      toolInput && typeof toolInput === "object"
+        ? JSON.stringify(toolInput, null, 2)
+        : cleaned;
 
     const tryParse = (): unknown => {
+      if (toolInput && typeof toolInput === "object") return toolInput;
       try {
         return JSON.parse(cleaned);
       } catch {
