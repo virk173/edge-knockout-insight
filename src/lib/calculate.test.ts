@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   calculateEV,
   calculateSGPEV,
+  calculateKellyStake,
   validateModelProbabilities,
   calculateEnsembleAlignment,
   detectDeadRubber,
