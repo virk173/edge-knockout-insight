@@ -259,6 +259,14 @@ Label all values [C8-MODEL].
 CALL 9A — Stake live odds
 Use for all EV calculations.
 Show overround.
+NOTE: cards/bookings betting odds are
+NOT carried by the odds feed. Do not
+attempt to locate, infer, or estimate a
+cards market price from any other data
+(e.g. referee strictness, foul rates) —
+that would fabricate a price. Treat
+cards odds as unavailable and do not
+output a cards bet or a cards price.
 
 CALL 9B — TheStatsAPI Pinnacle odds
 Contains for each market (1X2,
