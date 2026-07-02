@@ -347,14 +347,16 @@ export interface AnalysisResult {
   // Raw variables from Claude (preferred source of truth for overround).
   overround_inputs?: OverroundInputs;
   overround_stake?: number;
-  ensemble_check?: EnsembleCheck;
-  confidence_scores?: ConfidenceScores;
+  // Guaranteed containers — normalizeAnalysisResult() always populates these,
+  // so display components can read them without optional chaining.
+  ensemble_check: EnsembleCheck;
+  confidence_scores: ConfidenceScores;
   tactical_analysis?: TacticalAnalysis;
-  player_intelligence?: PlayerIntelligence;
-  bet_1?: StraightBet;
-  bet_2?: StraightBet;
-  bet_3?: SgpBet;
-  bet_4?: JackpotBet;
+  player_intelligence: PlayerIntelligence;
+  bet_1: StraightBet;
+  bet_2: StraightBet;
+  bet_3: SgpBet;
+  bet_4: JackpotBet;
   total_staked?: string;
   unallocated_stake?: string;
   match_exposure_pct?: string;
