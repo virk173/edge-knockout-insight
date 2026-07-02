@@ -15,6 +15,22 @@ export interface EvInputs {
   decimal_odds?: number;
 }
 
+export interface KellyInputs {
+  ev?: number;
+  decimal_odds?: number;
+  bankroll?: number;
+  fraction?: number;
+  floor?: number;
+  ceiling?: number;
+}
+
+export interface KellyResult {
+  full_kelly_pct: number;
+  fractional_kelly_pct: number;
+  recommended_stake: number;
+  reasoning: string;
+}
+
 export interface ParlayEvInputs {
   // Correct inputs: parlay_ev = p_joint × stake_sgp − 1.
   p_joint?: number;
