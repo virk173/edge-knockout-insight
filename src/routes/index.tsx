@@ -316,13 +316,36 @@ function Index() {
 
 
 
+  function refitCalibration(entries: LogEntry[]) {
+    const prev = getCalibration().lambda;
+    const samples = getCalibrationSamples(entries);
+    const next = fitLambda(samples);
+    if (Math.abs(next - prev) >= 0.05) {
+      toast.success(
+        `Calibration updated: λ ${prev} → ${next} (n=${samples.length})`,
+      );
+    }
+  }
+
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
-    setLogEntries(setRecommendationOutcome(entryId, recIndex, next));
+    const updated = setRecommendationOutcome(entryId, recIndex, next);
+    setLogEntries(updated);
+    refitCalibration(updated);
+  }
+
+  function handleSetManualClosingOdds(
+    entryId: string,
+    recIndex: number,
+    odds: number,
+  ) {
+    setManualClosingOdds(entryId, recIndex, odds);
+    setLogEntries(settleClv(entryId));
   }
 
   function handleClearLog() {
     setLogEntries(clearLog());
   }
+
 
   // Cycle Claude loading messages + elapsed timer while the active match analyses.
   useEffect(() => {
