@@ -127,9 +127,19 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
           {/* Confidence breakdown */}
           {(dims.length > 0 || adjustments.length > 0) && (
             <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-slate">
-                Confidence Breakdown
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate">
+                  Confidence Breakdown
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPlain((v) => !v)}
+                  className="rounded border border-border px-2 py-0.5 text-[11px] text-slate hover:text-foreground"
+                >
+                  ⓘ What does this mean? {plain ? "(on)" : "(off)"}
+                </button>
+              </div>
+
               {dims.map((d, i) => (
                 <div
                   key={i}
