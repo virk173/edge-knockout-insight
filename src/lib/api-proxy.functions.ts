@@ -22,12 +22,17 @@ interface ApiFetchInput {
   url: string;
 }
 
-const ALLOWED_PREFIX: Record<Provider, string> = {
-  apifootball: "https://v3.football.api-sports.io",
-  statsapi: "https://api.thestatsapi.com/api",
+// Exact-origin allowlist. A naive prefix check (`url.startsWith(...)`) is
+// bypassable via hostnames like "v3.football.api-sports.io.evil.com" — the
+// server would then attach the API key header to an attacker-controlled host.
+// Parse the URL and compare origin exactly; statsapi additionally requires the
+// /api path prefix its base URL carries.
+const ALLOWED_ORIGIN: Record<Provider, { origin: string; pathPrefix: string }> = {
+  apifootball: { origin: "https://v3.football.api-sports.io", pathPrefix: "/" },
+  statsapi: { origin: "https://api.thestatsapi.com", pathPrefix: "/api" },
 };
 
-function validateInput(input: unknown): ApiFetchInput {
+export function validateInput(input: unknown): ApiFetchInput {
   if (typeof input !== "object" || input === null) {
     throw new Error("Request body must be an object.");
   }
@@ -35,7 +40,17 @@ function validateInput(input: unknown): ApiFetchInput {
   if (provider !== "apifootball" && provider !== "statsapi") {
     throw new Error("`provider` must be 'apifootball' or 'statsapi'.");
   }
-  if (typeof url !== "string" || !url.startsWith(ALLOWED_PREFIX[provider as Provider])) {
+  if (typeof url !== "string") {
+    throw new Error("`url` is missing or not an allowed endpoint.");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("`url` is missing or not an allowed endpoint.");
+  }
+  const allowed = ALLOWED_ORIGIN[provider as Provider];
+  if (parsed.origin !== allowed.origin || !parsed.pathname.startsWith(allowed.pathPrefix)) {
     throw new Error("`url` is missing or not an allowed endpoint.");
   }
   return { provider: provider as Provider, url };

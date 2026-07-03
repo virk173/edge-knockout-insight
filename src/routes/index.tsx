@@ -156,7 +156,7 @@ function friendlyError(raw: string): string {
     m.includes("not configured") ||
     (m.includes("missing") && m.includes("key"))
   ) {
-    return "API key not configured.\nAdd VITE_APIFOOTBALL_KEY to your environment variables.";
+    return "API key not configured.\nSet the server-side APIFOOTBALL_KEY secret (never a VITE_-prefixed variable — those ship to the browser).";
   }
   return raw;
 }
