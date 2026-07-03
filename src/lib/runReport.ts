@@ -723,8 +723,8 @@ export function generateRunReport(
     push();
   } else {
     push("PIPELINE");
-    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
-    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
+    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/9 succeeded`);
+    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/6 succeeded`);
     push(`Failed: ${statusList(cr, "FAILED")}`);
     push(`Empty: ${statusList(cr, "EMPTY")}`);
     push(
