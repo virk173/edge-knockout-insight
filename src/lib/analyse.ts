@@ -1462,12 +1462,21 @@ export function extractStakeMarkets(
 }
 
 
-// Step 4 — gap check: compare Stake odds vs Pinnacle current odds (1X2).
-// Higher decimal odds = better price for the bettor.
-function buildStakeGapCheck(
+// Step 4 — PINNACLE GAP CHECK: compare C9A retail price vs C9B Pinnacle current
+// price (1X2). Higher decimal odds = better price for the bettor. This needs
+// only a SINGLE price level on each side (not history), so it is unaffected by
+// the missing line-movement data. gap_pct = (stake/pinnacle - 1) * 100 (matches
+// adjustEVForPinnacleGap): positive = retail price beats Pinnacle.
+export function buildStakeGapCheck(
   stakeOdds: unknown,
   markets: PinnacleMarketSummary[],
-): Array<{ outcome: string; stake: number | null; pinnacle: number | null; verdict: string }> {
+): Array<{
+  outcome: string;
+  stake: number | null;
+  pinnacle: number | null;
+  gap_pct: number | null;
+  verdict: string;
+}> {
   const stake1X2 = extractStake1X2(stakeOdds);
   const pinnacle1X2 = markets.find((m) => m.market === "1X2 Full Time Result");
   if (!pinnacle1X2) return [];
@@ -1477,12 +1486,14 @@ function buildStakeGapCheck(
       const stakePrice = stake1X2[o.name] ?? null;
       const pinPrice = o.current;
       let verdict = "UNKNOWN";
-      if (stakePrice != null && pinPrice != null) {
+      let gap_pct: number | null = null;
+      if (stakePrice != null && pinPrice != null && pinPrice !== 0) {
+        gap_pct = Math.round((stakePrice / pinPrice - 1) * 1000) / 10;
         if (stakePrice > pinPrice) verdict = "STAKE OFFERS VALUE";
         else if (pinPrice > stakePrice) verdict = "STAKE WORSE";
         else verdict = "EQUAL";
       }
-      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, verdict };
+      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, gap_pct, verdict };
     });
 }
 
