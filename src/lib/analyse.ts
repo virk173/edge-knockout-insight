@@ -564,16 +564,14 @@ export function formatDataForClaude(
         : null;
     const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
-      // CALL 9B header reflects the ACTUAL odds source so Claude never treats a
-      // retail fallback (e.g. Bet365) as Pinnacle. When it is not Pinnacle the
-      // header instructs pinnacle_odds = null.
+      // CALL 9B is now Pinnacle-or-empty (sourced from API-Football bookmaker=4).
+      // The header states the real source so Claude treats these as genuine
+      // sharp Pinnacle price levels — and flags that no line-movement history
+      // exists for this competition (opening/movement are null, not zero).
       let header = endpoint;
       if (n === "9B" && validated && typeof validated === "object") {
-        const v = validated as { bookmaker?: string; is_pinnacle?: boolean };
-        const bk = v.bookmaker ?? "retail book";
-        header = v.is_pinnacle
-          ? "Pinnacle odds"
-          : `${bk} odds (Pinnacle unavailable — set pinnacle_odds null)`;
+        header =
+          "Pinnacle odds (API-Football bookmaker=4) — current price levels only, NO line-movement history (opening/movement null = no data, not zero)";
       }
       // Ship the COMPACT Claude-facing shape (raw stays in callResults/cache).
       const shipped = compactForClaude(n, validated);
