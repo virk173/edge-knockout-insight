@@ -68,9 +68,9 @@ export type ClaudeCallResult =
       status?: number;
     };
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
-const FALLBACK_MODEL = "claude-sonnet-4-5";
-const DEFAULT_MAX_TOKENS = 8000;
+const DEFAULT_MODEL = "claude-sonnet-5";
+const FALLBACK_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MAX_TOKENS = 6500;
 
 // Native Structured Outputs (Anthropic tool use). We force this single tool so
 // the model's response is a real JSON object on a `tool_use` block instead of a
@@ -109,22 +109,28 @@ const ANALYSIS_TOOL_INPUT_SCHEMA = {
   },
 } as const;
 
-// Per-attempt timeout. Generating up to 8k OUTPUT tokens is the bottleneck
-// (~60-90s), independent of Anthropic load, so 60s was too tight and every
-// attempt aborted mid-generation. 90s lets a normal response finish while still
-// failing cleanly far inside the 10-min job TTL (worst case 90+10+90+10+90 =
-// ~290s) — well before any worker-isolate restart can strand the in-memory job
-// (the real cause of the old "Job expired" reports on 3-minute calls).
-const TIMEOUT_MS = 90_000;
+// Per-attempt timeout. Measured directly (live diagnostic call): a real
+// request generated 6,057 output tokens in 54.1s (~112 tok/s), extrapolating
+// to ~71.5s for a full 8,000-token response — that only left ~19s of margin
+// under the old 90s timeout, too tight for normal variance (richer matches,
+// Anthropic-side load). 150s gives ~79s of margin above the measured worst
+// case. DEFAULT_MAX_TOKENS was also cut to 6500 (was the real timeout risk,
+// not a real content requirement — see that constant's own comment).
+//
+// NOTE: worst-case retry chain is now 150+10+150+10+150 = 470s. Verify hosting
+// platform function duration limit exceeds this before deploying. On Vercel
+// hobby plan the limit is 60s — this app requires a pro plan or equivalent
+// with at least 300s function timeout.
+const TIMEOUT_MS = 150_000;
 const WAIT_BETWEEN_MS = 10_000;
 const TIMEOUT_MESSAGE =
-  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 90s each). Please retry.";
+  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 150s each). Please retry.";
 
 // Retry plan: primary model twice, then the fallback model once.
-// Attempt 1: claude-sonnet-4-6  (60s)  -> wait 10s
-// Attempt 2: claude-sonnet-4-6  (60s)  -> wait 10s
-// Attempt 3: claude-sonnet-4-5  (60s)  [fallback]
-// Total maximum ~210s before a clean "failed".
+// Attempt 1: claude-sonnet-5     (150s) -> wait 10s
+// Attempt 2: claude-sonnet-5     (150s) -> wait 10s
+// Attempt 3: claude-sonnet-4-6   (150s) [fallback]
+// Total maximum 150+10+150+10+150 = 470s before a clean "failed".
 interface Attempt {
   model: string;
   isFallback: boolean;
