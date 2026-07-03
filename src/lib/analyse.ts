@@ -1077,6 +1077,153 @@ function buildPinnacleSummary(
     : null;
 }
 
+// API-Football Pinnacle bookmaker id (confirmed live: bookmaker=4 carries real
+// Pinnacle price levels for WC2026 — 1X2, Asian Handicap, O/U, corners).
+export const PINNACLE_BOOKMAKER_ID = 4;
+
+// Build a Pinnacle price-level summary from an API-Football /odds response that
+// was fetched filtered to bookmaker=4 (Pinnacle).
+//
+// WHY THIS EXISTS (separate from buildPinnacleSummary above, which parses the
+// TheStatsAPI odds shape): C9B was repointed away from TheStatsAPI, which for
+// WC2026 carries ONLY Bet365 (no Pinnacle) and has no `opening` field. This
+// parser reads API-Football's { response:[ { bookmakers:[ { id, name, bets:[
+// { name, values:[ { value, odd } ] } ] } ] } ] } shape — the SAME plumbing
+// C9A already uses — and extracts current Pinnacle prices.
+//
+// PRICE LEVELS ONLY — NO HISTORY. API-Football gives a single current snapshot
+// per value; there is no opening/last_seen for this competition from any source.
+// Therefore `opening` is ALWAYS left null (never defaulted to the current
+// value — that would fake a 0%-movement reading that does not exist) and
+// movement_pct stays null → downstream must treat null as "no movement data",
+// NEVER as "zero movement".
+export function buildPinnacleSummaryFromApiFootball(
+  oddsJson: unknown,
+): {
+  bookmaker: string;
+  is_pinnacle: boolean;
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
+  const responseArr = extractArray(oddsJson);
+  if (!responseArr.length) return null;
+
+  // The response is already filtered to bookmaker=4; take the first bookmaker.
+  let chosen: unknown = null;
+  let bookmakerName = "";
+  let bookmakerId: number | null = null;
+  for (const item of responseArr) {
+    const bookmakers = extractArray(getField(item, ["bookmakers"]));
+    if (bookmakers.length) {
+      chosen = bookmakers[0];
+      bookmakerId = toNum(getField(chosen, ["id"]));
+      const nm = getField(chosen, ["name"]);
+      bookmakerName = typeof nm === "string" ? nm : "";
+      break;
+    }
+  }
+  if (!chosen) return null;
+
+  // Only the genuine Pinnacle book counts as sharp. C9B is Pinnacle-or-empty:
+  // if the returned book is anything else, the caller records EMPTY (no retail
+  // fallback here — C9A already supplies the retail reference).
+  const is_pinnacle =
+    bookmakerId === PINNACLE_BOOKMAKER_ID ||
+    normalize(bookmakerName) === "pinnacle";
+
+  const bets = extractArray(getField(chosen, ["bets"]));
+  const markets: PinnacleMarketSummary[] = [];
+
+  // opening is intentionally null — API-Football has no history for this feed.
+  const priceOutcome = (name: string, odd: unknown) => {
+    const current = toNum(odd);
+    const mv = movementSignal(null, current); // → { movement_pct: null, signal: "UNKNOWN" }
+    return { name, opening: null as number | null, current, ...mv };
+  };
+  const has = (label: string) => markets.some((m) => m.market === label);
+
+  for (const bet of bets) {
+    const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+    const values = extractArray(getField(bet, ["values"]));
+    const oddOf = (v: unknown) => getField(v, ["odd", "odds", "price"]);
+    const findVal = (pred: (v: string) => boolean) =>
+      values.find((v) =>
+        pred(String(getField(v, ["value"]) ?? "").toLowerCase()),
+      );
+
+    // 1X2
+    if (/match winner|1x2|full time result|home\/away/.test(betName)) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      const h = findVal((s) => s.includes("home") || s === "1");
+      const d = findVal((s) => s.includes("draw") || s === "x");
+      const a = findVal((s) => s.includes("away") || s === "2");
+      if (h) outcomes.push(priceOutcome("Home", oddOf(h)));
+      if (d) outcomes.push(priceOutcome("Draw", oddOf(d)));
+      if (a) outcomes.push(priceOutcome("Away", oddOf(a)));
+      if (outcomes.length && !has("1X2 Full Time Result"))
+        markets.push({ market: "1X2 Full Time Result", outcomes });
+      continue;
+    }
+
+    // BTTS
+    if (/both teams|btts/.test(betName)) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      const y = findVal((s) => s.includes("yes"));
+      const n = findVal((s) => s.includes("no"));
+      if (y) outcomes.push(priceOutcome("Yes", oddOf(y)));
+      if (n) outcomes.push(priceOutcome("No", oddOf(n)));
+      if (outcomes.length && !has("BTTS"))
+        markets.push({ market: "BTTS", outcomes });
+      continue;
+    }
+
+    // Over/Under goals
+    if (
+      /goals over\/under|over\/under|total goals/.test(betName) &&
+      !betName.includes("corner") &&
+      !/card|booking/.test(betName)
+    ) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        if (/^(over|under)\s/i.test(label))
+          outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Over/Under Goals"))
+        markets.push({ market: "Over/Under Goals", outcomes });
+      continue;
+    }
+
+    // Corners
+    if (betName.includes("corner")) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Corners"))
+        markets.push({ market: "Corners", outcomes });
+      continue;
+    }
+
+    // Asian Handicap
+    if (betName.includes("asian handicap")) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Asian Handicap"))
+        markets.push({ market: "Asian Handicap", outcomes });
+      continue;
+    }
+  }
+
+  return markets.length
+    ? { bookmaker: bookmakerName || "Pinnacle", is_pinnacle, markets, raw: chosen }
+    : null;
+}
+
 // ============================================================================
 // CLV CLOSING-ODDS CAPTURE (PART 1B)
 // ----------------------------------------------------------------------------
