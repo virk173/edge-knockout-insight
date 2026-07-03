@@ -635,7 +635,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "S2B", api: "TheStatsAPI", endpoint: "/teams/{away}/stats", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
     { callLabel: "S3", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "S4", api: "TheStatsAPI", endpoint: "/players/{id}/stats (if absences)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
-    { callLabel: "S5", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle → first-bookmaker fallback)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    // (CALL 9B / Pinnacle odds is now sourced from API-Football bookmaker=4 —
+    // moved to the API-Football group below.)
     { callLabel: "S6", api: "TheStatsAPI", endpoint: "/standings (all groups, 3rd-place-aware dead-rubber check)", entryKey: "S6", extracted: cr["S6"]?.status === "SUCCESS", count: false },
     { callLabel: "S7", api: "TheStatsAPI", endpoint: "/matches/{id}/referee (career totals) + API-Football fouls/penalties enrichment", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     // ---- API-Football group ----
