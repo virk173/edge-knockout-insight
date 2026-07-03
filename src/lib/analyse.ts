@@ -4129,35 +4129,38 @@ export async function retrySingleCall(
       }
       case "9B": {
         try {
-          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
-          const matchId = ref?.id ?? null;
-          if (!matchId) {
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, "No TheStatsAPI match matched this fixture.");
+          // Pinnacle-or-empty via API-Football bookmaker=4 (see collectMatchData
+          // C9B). No TheStatsAPI, no retail fallback.
+          const c9aBookmakerId =
+            typeof window !== "undefined"
+              ? window.localStorage.getItem("stake_bookmaker_id")
+              : null;
+          if (c9aBookmakerId && String(c9aBookmakerId) === String(PINNACLE_BOOKMAKER_ID)) {
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", undefined, "C9A already resolved to Pinnacle (bookmaker=4); C9B would duplicate the same book.");
             break;
           }
-          const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
-          const summary = buildPinnacleSummary(oddsJson);
-          if (!summary) {
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", { matchId }, "No bookmaker markets returned.");
+          const oddsJson = await afGet(
+            `/odds?fixture=${match.id}&bookmaker=${PINNACLE_BOOKMAKER_ID}`,
+          );
+          const summary = buildPinnacleSummaryFromApiFootball(oddsJson);
+          if (!summary || !summary.is_pinnacle) {
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", { source: "API-Football bookmaker=4" }, "Pinnacle unavailable — no bookmaker=4 markets for this fixture.");
           } else {
             const stakeRoot = readCallCache(match.id, "9")?.data as { stakeOdds?: unknown } | undefined;
             const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
-              matchId,
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "SUCCESS", {
+              matchId: match.id,
               bookmaker: summary.bookmaker,
               is_pinnacle: summary.is_pinnacle,
+              source: "API-Football bookmaker=4",
               markets: summary.markets,
               gap_check: gapCheck,
               note:
-                `Odds source bookmaker: ${summary.bookmaker}. ` +
-                (summary.is_pinnacle
-                  ? "This IS Pinnacle (sharp). pinnacle_odds may be populated. "
-                  : `This is NOT Pinnacle — RETAIL book (${summary.bookmaker}). Set pinnacle_odds to null. `) +
-                "movement_pct = (last_seen - opening) / opening * 100.",
+                "Pinnacle PRICE LEVELS from API-Football bookmaker=4. opening null / movement UNKNOWN (no line-movement history from any source for this competition — treat as 'no data', not 'zero'). pinnacle_gap_check compares C9A retail vs Pinnacle (single snapshot each); gap_pct = (retail/pinnacle - 1) * 100.",
             });
           }
         } catch (e) {
-          rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, `Pinnacle data unavailable — ${msg(e)}`);
+          rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", undefined, `Pinnacle data unavailable — ${msg(e)}`);
         }
         break;
       }
