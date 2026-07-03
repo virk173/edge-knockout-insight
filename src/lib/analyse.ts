@@ -3761,13 +3761,15 @@ export const CALL_DISPLAY_SPECS: CallDisplaySpec[] = [
   { id: "C7", label: "Referee", api: "API-FOOTBALL", keys: ["7"], mandatory: false, retryKey: "7" },
   { id: "C8", label: "Predictions", api: "API-FOOTBALL", keys: ["8"], mandatory: false, retryKey: "8" },
   { id: "C9A", label: "Stake Odds", api: "API-FOOTBALL", keys: ["9"], mandatory: true, retryKey: "9" },
+  // C9B Pinnacle price levels now come from API-Football bookmaker=4 (repointed
+  // from TheStatsAPI, which carries no Pinnacle for WC2026).
+  { id: "C9B", label: "Pinnacle Odds (bm=4)", api: "API-FOOTBALL", keys: ["9B"], mandatory: false, retryKey: "9B" },
   { id: "C10", label: "Bracket", api: "API-FOOTBALL", keys: ["10"], mandatory: false, retryKey: "10" },
   // ---- THESTATSAPI ----
   { id: "S0", label: "Match Lookup", api: "THESTATSAPI", keys: ["S0"], mandatory: true, retryKey: "S0" },
   { id: "S2A", label: "Home Stats", api: "THESTATSAPI", keys: ["2A"], mandatory: true, retryKey: "2A" },
   { id: "S2B", label: "Away Stats", api: "THESTATSAPI", keys: ["2B"], mandatory: true, retryKey: "2B" },
   { id: "S3", label: "Lineups", api: "THESTATSAPI", keys: ["6"], mandatory: false, retryKey: "6" },
-  { id: "S5", label: "Pinnacle Odds", api: "THESTATSAPI", keys: ["9B"], mandatory: false, retryKey: "9B" },
   { id: "S6", label: "Standings", api: "THESTATSAPI", keys: ["S6"], mandatory: false, retryKey: "S6" },
   { id: "S7", label: "Referee Detail", api: "THESTATSAPI", keys: ["7"], mandatory: false, retryKey: "7" },
 ];
