@@ -44,9 +44,10 @@ const NA = "N/A";
 const RULE = "─────────────────────────────────";
 
 // Logical call keys grouped by upstream API. Mirrors the debug-report counting
-// in analyse.ts (API-Football = 8 counted calls, TheStatsAPI = 7).
-const AF_KEYS = ["3", "4-1", "4-2", "4-3", "5", "8", "9A", "10"];
-const SA_KEYS = ["S0", "2A", "2B", "6", "6B", "9B", "7"];
+// in analyse.ts. C9B (Pinnacle price levels) is now sourced from API-Football
+// bookmaker=4, so it counts toward API-Football (9), not TheStatsAPI (6).
+const AF_KEYS = ["3", "4-1", "4-2", "4-3", "5", "8", "9A", "9B", "10"];
+const SA_KEYS = ["S0", "2A", "2B", "6", "6B", "7"];
 
 function na(v: unknown): string {
   if (v === undefined || v === null) return NA;
