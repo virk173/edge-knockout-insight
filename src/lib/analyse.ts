@@ -287,28 +287,75 @@ function compactPlayer(p: unknown): { name: unknown; pos: unknown; num: unknown 
   };
 }
 
-function compactLineupSide(side: unknown): Record<string, unknown> {
+// OPT 5 — no existing convention in this codebase distinguishes "doubtful/
+// questionable" from confirmed-out in C5 injury data; this is a best-effort
+// keyword heuristic on the raw player.type string. Adjust these keyword lists
+// if real API-Football/TheStatsAPI `type` values don't match this assumption.
+function isDoubtfulInjuryType(type: unknown): boolean {
+  const t = String(type ?? "").toLowerCase();
+  return /doubt|question|knock|fitness test|day.to.day/.test(t);
+}
+
+// Names of players flagged as doubtful/questionable (not confirmed out) in the
+// raw C5 injuries data, for the given team. Team match is name-normalized
+// (same normalize() used for team-name matching elsewhere in this file).
+function extractDoubtfulPlayerNames(rawInjuries: unknown, teamName: string | null): string[] {
+  if (!teamName) return [];
+  const target = normalize(teamName);
+  const out: string[] = [];
+  for (const it of extractArray(rawInjuries)) {
+    const tn = String(getField(getField(it, ["team"]), ["name"]) ?? "");
+    if (normalize(tn) !== target) continue;
+    const player = getField(it, ["player"]);
+    if (!isDoubtfulInjuryType(getField(player, ["type"]))) continue;
+    const name = getField(player, ["name"]);
+    if (typeof name === "string") out.push(name);
+  }
+  return out;
+}
+
+// OPT 5 — bench list REMOVED (Claude never used bench names). Replaced with
+// notable_bench_changes: doubtful/questionable C5 players who did NOT make
+// today's confirmed starting XI — a real tactical/fitness signal instead of
+// bulk names. (A "previous match starting XI" comparison was also specified,
+// but C4 only ever carries scorelines — no historical lineup data exists in
+// this pipeline — so that half of the original spec is not implementable
+// without new data fetching; this covers the buildable half.)
+function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<string, unknown> {
+  const starting_xi = extractArray(
+    getField(side, ["starting_xi", "startXI", "startingXi", "startingXI"]),
+  ).map(compactPlayer);
+  const startingNamesNorm = new Set(
+    starting_xi.map((p) => normalize(String(p.name ?? ""))).filter(Boolean),
+  );
+  const notable_bench_changes = doubtfulNames.filter(
+    (name) => !startingNamesNorm.has(normalize(name)),
+  );
   return {
     team: getField(side, ["team_name", "name"]) ?? getField(getField(side, ["team"]), ["name"]) ?? null,
     formation: getField(side, ["formation"]) ?? null,
-    starting_xi: extractArray(getField(side, ["starting_xi", "startXI", "startingXi", "startingXI"])).map(compactPlayer),
-    substitutes: extractArray(getField(side, ["substitutes"])).map((p) => compactPlayer(p).name),
+    starting_xi,
+    notable_bench_changes,
   };
 }
 
-function compactLineup(data: unknown): Record<string, unknown> {
+function compactLineup(data: unknown, rawInjuries: unknown): Record<string, unknown> {
   const node = getField(data, ["data"]) ?? data;
   const home = getField(node, ["home"]);
   const away = getField(node, ["away"]);
+  const sideDoubtful = (side: unknown): string[] => {
+    const tn = getField(side, ["team_name", "name"]) ?? getField(getField(side, ["team"]), ["name"]);
+    return extractDoubtfulPlayerNames(rawInjuries, typeof tn === "string" ? tn : null);
+  };
   if (home || away) {
     return {
       confirmed: getField(node, ["confirmed"]) ?? null,
       source: getField(node, ["source"]) ?? null,
-      home: home ? compactLineupSide(home) : null,
-      away: away ? compactLineupSide(away) : null,
+      home: home ? compactLineupSide(home, sideDoubtful(home)) : null,
+      away: away ? compactLineupSide(away, sideDoubtful(away)) : null,
     };
   }
-  return { sides: extractArray(node).map(compactLineupSide) };
+  return { sides: extractArray(node).map((s) => compactLineupSide(s, sideDoubtful(s))) };
 }
 
 function compactPredictions(data: unknown): Record<string, unknown> {
@@ -353,6 +400,70 @@ function compactInjuries(data: unknown): Array<Record<string, unknown>> {
       reason: getField(player, ["reason"]) ?? null,
     };
   });
+}
+
+// OPT 4 — C7 had no compactor ("passed through unchanged" per prior comment).
+// Raw RefereeProfile responses can carry career_totals, seasons_used and other
+// bulk fields Claude never reads. Keep only the 8 fields below.
+const numOrNull = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+// Matches the system prompt's strictness formula:
+//   score = (avg_yellows_per_game * 10) + (avg_fouls_per_game * 2) + (penalties_per_game * 15)
+// A missing stat contributes 0 (not a failure) — but if ALL THREE inputs are
+// null, there is nothing to score, so the result is null rather than 0.
+function refereeStrictnessScore(
+  avgYellows: number | null,
+  avgFouls: number | null,
+  penaltiesPerGame: number | null,
+): number | null {
+  if (avgYellows == null && avgFouls == null && penaltiesPerGame == null) return null;
+  const y = avgYellows ?? 0;
+  const f = avgFouls ?? 0;
+  const p = penaltiesPerGame ?? 0;
+  return Math.round(y * 10 + f * 2 + p * 15);
+}
+function refereeStrictnessLabel(score: number | null): "HIGH" | "MEDIUM" | "LOW" | null {
+  if (score == null) return null;
+  if (score >= 50) return "HIGH";
+  if (score >= 30) return "MEDIUM";
+  return "LOW";
+}
+// profile.source is a free-form descriptive string (or entirely absent — the
+// pure API-Football fallback path in buildRefereeProfile never sets it).
+// Normalize to the 3-way enum Claude actually needs.
+function normalizeRefereeSource(source: unknown): "TheStatsAPI" | "API-Football" | "UNKNOWN" {
+  const s = typeof source === "string" ? source : "";
+  if (s.includes("TheStatsAPI")) return "TheStatsAPI";
+  if (s.includes("API-Football") || s === "") return "API-Football";
+  return "UNKNOWN";
+}
+
+function compactReferee(data: unknown): {
+  name: string | null;
+  career_games: number | null;
+  yellows_per_game: number | null;
+  fouls_per_game: number | null;
+  penalties_per_game: number | null;
+  strictness_score: number | null;
+  strictness_label: "HIGH" | "MEDIUM" | "LOW" | null;
+  source: "TheStatsAPI" | "API-Football" | "UNKNOWN";
+} {
+  const yellows = numOrNull(getField(data, ["avg_yellow_cards_per_game"]));
+  const fouls = numOrNull(getField(data, ["avg_fouls_per_game"]));
+  const penalties = numOrNull(getField(data, ["penalties_awarded"]));
+  const strictnessScore = refereeStrictnessScore(yellows, fouls, penalties);
+  const name = getField(data, ["referee"]);
+  return {
+    name: typeof name === "string" ? name : null,
+    career_games: numOrNull(getField(data, ["matches_officiated"])),
+    yellows_per_game: yellows,
+    fouls_per_game: fouls,
+    penalties_per_game: penalties,
+    strictness_score: strictnessScore,
+    strictness_label: refereeStrictnessLabel(strictnessScore),
+    source: normalizeRefereeSource(getField(data, ["source"])),
+  };
 }
 
 // FIX 3a — map a TheStatsAPI /football/teams/{id}/injuries-suspensions payload
@@ -445,8 +556,10 @@ function statsApiMatchesToFixtures(
 }
 
 // Maps a validated raw response to the compact Claude-facing shape. Calls not
-// listed here (7, 9A, 9B, 10) are already small and pass through unchanged.
-function compactForClaude(n: string, data: unknown): unknown {
+// listed here (9A, 10) are already small and pass through unchanged.
+// `rawInjuries` is the raw (uncompacted) C5 data — only used by case "6" to
+// derive notable_bench_changes (OPT 5); every other case ignores it.
+function compactForClaude(n: string, data: unknown, rawInjuries?: unknown): unknown {
   switch (n) {
     case "2A":
     case "2B": {
@@ -459,12 +572,40 @@ function compactForClaude(n: string, data: unknown): unknown {
     case "5":
       return compactInjuries(data);
     case "6":
-      return compactLineup(data);
+      return compactLineup(data, rawInjuries);
+    case "7":
+      return compactReferee(data);
     case "8":
       return compactPredictions(data);
+    case "9B":
+      return compactPinnacleMarkets(data);
     default:
       return data;
   }
+}
+
+// OPT 2 — C9B outcome shape trim. opening/movement_pct/signal are permanently
+// null/"UNKNOWN" for this competition (API-Football's bookmaker=4 feed carries
+// only a single current-price snapshot, never opening/history — see
+// buildPinnacleSummaryFromApiFootball above), so shipping them to Claude on
+// every outcome is pure boilerplate. Strip to {name, current} for the
+// Claude-facing block only; the full PinnacleMarketSummary shape (shared with
+// the TheStatsAPI-based buildPinnacleSummary, which DOES have real
+// opening/movement data) stays untouched in callResults/cache.
+function compactPinnacleMarkets(data: unknown): unknown {
+  const d = data as { markets?: unknown } | null;
+  if (!d || !Array.isArray(d.markets)) return data;
+  return {
+    ...d,
+    markets: d.markets.map((m: unknown) => {
+      const market = getField(m, ["market"]);
+      const outcomes = extractArray(getField(m, ["outcomes"])).map((o) => ({
+        name: getField(o, ["name"]) ?? null,
+        current: getField(o, ["current"]) ?? null,
+      }));
+      return { market, outcomes };
+    }),
+  };
 }
 
 /**
@@ -567,16 +708,25 @@ export function formatDataForClaude(
       // CALL 9B is now Pinnacle-or-empty (sourced from API-Football bookmaker=4).
       // The header states the real source so Claude treats these as genuine
       // sharp Pinnacle price levels — and flags that no line-movement history
-      // exists for this competition (opening/movement are null, not zero).
+      // exists for this competition (opening/movement fields are omitted
+      // entirely from each outcome — OPT 2 — rather than shipped as null).
       let header = endpoint;
       if (n === "9B" && validated && typeof validated === "object") {
         header =
-          "Pinnacle odds (API-Football bookmaker=4) — current price levels only, NO line-movement history (opening/movement null = no data, not zero)";
+          "Pinnacle odds (API-Football bookmaker=4) — current price levels only. Outcomes are {name, current}; no opening/movement history exists (absence = no data, never zero).";
       }
       // Ship the COMPACT Claude-facing shape (raw stays in callResults/cache).
-      const shipped = compactForClaude(n, validated);
+      // C6 (OPT 5) additionally needs C5's raw injuries to derive
+      // notable_bench_changes — safeResults["5"] regardless of validation
+      // outcome, since a partially-invalid C5 shouldn't block C6's own block.
+      const shipped = compactForClaude(n, validated, safeResults["5"]?.data);
+      // OPT 2: C9B has the most outcomes of any block (up to 14 uncapped-AH
+      // lines alone) and a hard ≤700-token target, so it skips the pretty-print
+      // indentation every other block uses — same data/shape, just no
+      // whitespace overhead. Every other call keeps the readable 2-space form.
+      const json = n === "9B" ? JSON.stringify(shipped) : JSON.stringify(shipped, null, 2);
       blocks.push(
-        `[CALL ${n} — ${header} — SUCCESS]\n${JSON.stringify(shipped, null, 2)}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${header} — SUCCESS]\n${json}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       blocks.push(
@@ -1177,16 +1327,24 @@ export function buildPinnacleSummaryFromApiFootball(
       continue;
     }
 
-    // Over/Under goals
+    // Over/Under goals — line-capped to 1.5/2.5/3.5 (OPT 1), same as C9A's
+    // WANTED_STAKE_MARKETS["Over/Under 2.5 Goals"].valueFilter (reused below,
+    // not duplicated) so C9B doesn't ship every line the bookmaker offers.
     if (
       /goals over\/under|over\/under|total goals/.test(betName) &&
       !betName.includes("corner") &&
       !/card|booking/.test(betName)
     ) {
+      const valueFilter = WANTED_STAKE_MARKETS.find(
+        (w) => w.label === "Over/Under 2.5 Goals",
+      )?.valueFilter;
       const outcomes: PinnacleMarketSummary["outcomes"] = [];
       for (const v of values) {
         const label = String(getField(v, ["value"]) ?? "");
-        if (/^(over|under)\s/i.test(label))
+        if (
+          /^(over|under)\s/i.test(label) &&
+          (!valueFilter || valueFilter(label.toLowerCase()))
+        )
           outcomes.push(priceOutcome(label, oddOf(v)));
       }
       if (outcomes.length && !has("Over/Under Goals"))
@@ -1194,24 +1352,34 @@ export function buildPinnacleSummaryFromApiFootball(
       continue;
     }
 
-    // Corners
+    // Corners — line-capped to 8.5/9.5/10.5, same as C9A's
+    // WANTED_STAKE_MARKETS["Corners Over/Under"].valueFilter (reused below).
     if (betName.includes("corner")) {
+      const valueFilter = WANTED_STAKE_MARKETS.find(
+        (w) => w.label === "Corners Over/Under",
+      )?.valueFilter;
       const outcomes: PinnacleMarketSummary["outcomes"] = [];
       for (const v of values) {
         const label = String(getField(v, ["value"]) ?? "");
-        outcomes.push(priceOutcome(label, oddOf(v)));
+        if (!valueFilter || valueFilter(label.toLowerCase()))
+          outcomes.push(priceOutcome(label, oddOf(v)));
       }
       if (outcomes.length && !has("Corners"))
         markets.push({ market: "Corners", outcomes });
       continue;
     }
 
-    // Asian Handicap
+    // Asian Handicap — line-capped to -1.5..+1.5 (OPT 2), same as C9A's
+    // WANTED_STAKE_MARKETS["Asian Handicap"].valueFilter (reused below).
     if (betName.includes("asian handicap")) {
+      const valueFilter = WANTED_STAKE_MARKETS.find(
+        (w) => w.label === "Asian Handicap",
+      )?.valueFilter;
       const outcomes: PinnacleMarketSummary["outcomes"] = [];
       for (const v of values) {
         const label = String(getField(v, ["value"]) ?? "");
-        outcomes.push(priceOutcome(label, oddOf(v)));
+        if (!valueFilter || valueFilter(label.toLowerCase()))
+          outcomes.push(priceOutcome(label, oddOf(v)));
       }
       if (outcomes.length && !has("Asian Handicap"))
         markets.push({ market: "Asian Handicap", outcomes });
@@ -1366,6 +1534,16 @@ function extractStake1X2(stakeOdds: unknown): Record<string, number | null> {
   return out;
 }
 
+// OPT 2 — Asian Handicap line cap. Real feeds label BOTH sides with a "-" sign
+// ("Home -1.5" and "Away -1.5" are two distinct, independently-priced lines,
+// not a mirrored +/- pair), so filtering must compare the line's absolute
+// magnitude rather than matching literal "+"/"-" substrings.
+const AH_KEEP_MAGNITUDES = new Set([0, 0.5, 1, 1.5]);
+function ahLineMagnitude(value: string): number {
+  const m = value.match(/(-?\d+(?:\.\d+)?)/);
+  return m ? Math.abs(parseFloat(m[1])) : NaN;
+}
+
 // Trim the RAW API-Football /odds response down to ONLY the markets the analysis
 // actually uses. The raw response for a single bookmaker still carries ~160 bet
 // markets (correct score, exact goals, halftime combos, etc.) with dozens of
@@ -1383,12 +1561,16 @@ const WANTED_STAKE_MARKETS: Array<{
     match: (n) => /match winner|1x2|full time result|home\/away/.test(n),
   },
   {
+    // OPT 1: valueFilter widened from 2.5-only to 1.5/2.5/3.5 so heavy-mismatch
+    // matches (near-certain Over 1.5, or Over 3.5 for a dominant scorer) are
+    // evaluable. Label kept as "Over/Under 2.5 Goals" (unchanged) — it's a
+    // string key read by runReport.ts and extractStakeMarkets.test.ts.
     label: "Over/Under 2.5 Goals",
     match: (n) =>
       /goals over\/under|over\/under|total goals/.test(n) &&
       !n.includes("corner") &&
       !/card|booking/.test(n),
-    valueFilter: (v) => v.includes("2.5"),
+    valueFilter: (v) => v.includes("1.5") || v.includes("2.5") || v.includes("3.5"),
   },
   {
     label: "Both Teams To Score",
@@ -1419,8 +1601,15 @@ const WANTED_STAKE_MARKETS: Array<{
     valueFilter: (v) => v.includes("2.5") || v.includes("3.5") || v.includes("4.5"),
   },
   {
+    // OPT 2: capped to the -1.5..+1.5 range (both sides of each line = 14
+    // outcomes max vs 18+ uncapped). Extreme handicaps (±2, ±2.5, ±3, and
+    // quarter-lines like ±1.25/±1.75) are noise beyond realistic knockout
+    // analysis at this level — the -1.5 line is already the ceiling. Matches
+    // by the line's absolute magnitude so it works regardless of which side
+    // ("Home -1.5" / "Away -1.5") carries the "-" sign in the raw feed.
     label: "Asian Handicap",
     match: (n) => n.includes("asian handicap"),
+    valueFilter: (v) => AH_KEEP_MAGNITUDES.has(ahLineMagnitude(v)),
   },
 ];
 
@@ -1463,38 +1652,81 @@ export function extractStakeMarkets(
 
 
 // Step 4 — PINNACLE GAP CHECK: compare C9A retail price vs C9B Pinnacle current
-// price (1X2). Higher decimal odds = better price for the bettor. This needs
-// only a SINGLE price level on each side (not history), so it is unaffected by
-// the missing line-movement data. gap_pct = (stake/pinnacle - 1) * 100 (matches
-// adjustEVForPinnacleGap): positive = retail price beats Pinnacle.
+// price across 1X2, Over/Under Goals, BTTS, Corners and Asian Handicap. Each
+// side needs only a SINGLE price level (not history). gap_pct = (stake/pinnacle
+// - 1) * 100 (matches adjustEVForPinnacleGap): positive = retail beats Pinnacle.
+//
+// 1X2 uses the dedicated extractStake1X2 (numeric-shorthand-safe: normalizes
+// "1"/"x"/"2" -> Home/Draw/Away); the other four markets reuse extractStakeMarkets
+// (already parses all of them) and match Pinnacle outcomes to retail entries by
+// exact value/name string equality. Lines present on only one side, or with a
+// null/zero/unparseable odds value, are silently skipped — never fabricated.
+const STAKE_GAP_MARKET_MAP: Array<{
+  pinnacleLabel: string; // PinnacleMarketSummary.market (C9B side)
+  retailLabel: string;   // key in extractStakeMarkets(...).markets (C9A side)
+  outMarket: string;     // value written to the output "market" field
+}> = [
+  { pinnacleLabel: "Over/Under Goals", retailLabel: "Over/Under 2.5 Goals", outMarket: "Over/Under Goals" },
+  { pinnacleLabel: "BTTS", retailLabel: "Both Teams To Score", outMarket: "BTTS" },
+  { pinnacleLabel: "Corners", retailLabel: "Corners Over/Under", outMarket: "Corners" },
+  { pinnacleLabel: "Asian Handicap", retailLabel: "Asian Handicap", outMarket: "Asian Handicap" },
+];
+
 export function buildStakeGapCheck(
   stakeOdds: unknown,
   markets: PinnacleMarketSummary[],
 ): Array<{
-  outcome: string;
-  stake: number | null;
-  pinnacle: number | null;
-  gap_pct: number | null;
+  market: string;
+  line: string;
+  stake_odds: number;
+  pinnacle_odds: number;
+  gap_pct: number;
   verdict: string;
 }> {
+  const results: Array<{
+    market: string; line: string; stake_odds: number; pinnacle_odds: number; gap_pct: number; verdict: string;
+  }> = [];
+
+  const gapEntry = (outMarket: string, line: string, stakePrice: number, pinPrice: number) => {
+    const gap_pct = Math.round((stakePrice / pinPrice - 1) * 1000) / 10;
+    const verdict =
+      stakePrice > pinPrice ? "STAKE OFFERS VALUE vs PINNACLE"
+      : pinPrice > stakePrice ? "STAKE WORSE THAN PINNACLE"
+      : "EQUAL";
+    return { market: outMarket, line, stake_odds: stakePrice, pinnacle_odds: pinPrice, gap_pct, verdict };
+  };
+
+  // --- 1X2 (dedicated numeric-shorthand-safe extractor) --------------------
   const stake1X2 = extractStake1X2(stakeOdds);
   const pinnacle1X2 = markets.find((m) => m.market === "1X2 Full Time Result");
-  if (!pinnacle1X2) return [];
-  return pinnacle1X2.outcomes
-    .filter((o) => ["Home", "Draw", "Away"].includes(o.name))
-    .map((o) => {
+  if (pinnacle1X2) {
+    for (const o of pinnacle1X2.outcomes) {
+      if (!["Home", "Draw", "Away"].includes(o.name)) continue;
       const stakePrice = stake1X2[o.name] ?? null;
       const pinPrice = o.current;
-      let verdict = "UNKNOWN";
-      let gap_pct: number | null = null;
-      if (stakePrice != null && pinPrice != null && pinPrice !== 0) {
-        gap_pct = Math.round((stakePrice / pinPrice - 1) * 1000) / 10;
-        if (stakePrice > pinPrice) verdict = "STAKE OFFERS VALUE";
-        else if (pinPrice > stakePrice) verdict = "STAKE WORSE";
-        else verdict = "EQUAL";
-      }
-      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, gap_pct, verdict };
-    });
+      if (stakePrice == null || pinPrice == null || stakePrice === 0 || pinPrice === 0) continue;
+      results.push(gapEntry("1X2", o.name, stakePrice, pinPrice));
+    }
+  }
+
+  // --- Over/Under Goals, BTTS, Corners, Asian Handicap (generic path) ------
+  const retail = extractStakeMarkets(stakeOdds);
+  for (const map of STAKE_GAP_MARKET_MAP) {
+    const pinMarket = markets.find((m) => m.market === map.pinnacleLabel);
+    if (!pinMarket) continue;
+    const retailEntries = retail?.markets[map.retailLabel];
+    if (!retailEntries || !retailEntries.length) continue;
+    for (const o of pinMarket.outcomes) {
+      const retailEntry = retailEntries.find((r) => r.value === o.name);
+      if (!retailEntry) continue;
+      const stakePrice = toNum(retailEntry.odd);
+      const pinPrice = o.current;
+      if (stakePrice == null || pinPrice == null || stakePrice === 0 || pinPrice === 0) continue;
+      results.push(gapEntry(map.outMarket, o.name, stakePrice, pinPrice));
+    }
+  }
+
+  return results;
 }
 
 
@@ -2162,6 +2394,11 @@ interface ParsedLast5Fixture {
 
 // Parse an API-Football last-5 fixtures list (CALL 4-1 / 4-2) into the minimal
 // shape the dead-rubber logic needs, from the perspective of `teamId`.
+//
+// KNOWN GAP: corners and shots averages unavailable from C4 endpoints
+// (/fixtures?team and /fixtures?ids carry no per-match stats). Would require
+// up to 10 additional /fixtures/statistics calls per match — deferred pending
+// API budget review.
 function parseLast5(list: unknown, teamId: number): ParsedLast5Fixture[] {
   return extractArray(list).map((item) => {
     const fixture = getField(item, ["fixture"]);
@@ -3056,10 +3293,8 @@ export async function collectMatchData(
             markets: summary.markets,
             gap_check: gapCheck,
             note:
-              "Pinnacle PRICE LEVELS from API-Football bookmaker=4 (genuine sharp reference). " +
-              "You MAY populate pinnacle_odds from these current prices. " +
-              "NO line-movement history exists for this competition from any source: opening is null on every outcome and movement_pct is null → treat as 'NO movement data', NEVER as 'zero movement'. Do NOT infer SHARP MOVE / DRIFT / STABLE from this. " +
-              "pinnacle_gap_check compares the C9A retail price vs this Pinnacle price per 1X2 outcome (single snapshot each — valid without history); gap_pct = (retail/pinnacle - 1) * 100.",
+              "Genuine sharp reference — may populate pinnacle_odds. No history — never infer movement. " +
+              "gap_check: (retail/pinnacle-1)*100 per market/line present on both sides.",
           });
         }
       }
@@ -4158,7 +4393,8 @@ export async function retrySingleCall(
               markets: summary.markets,
               gap_check: gapCheck,
               note:
-                "Pinnacle PRICE LEVELS from API-Football bookmaker=4. opening null / movement UNKNOWN (no line-movement history from any source for this competition — treat as 'no data', not 'zero'). pinnacle_gap_check compares C9A retail vs Pinnacle (single snapshot each); gap_pct = (retail/pinnacle - 1) * 100.",
+                "Genuine sharp reference — may populate pinnacle_odds. No history — never infer movement. " +
+                "gap_check: (retail/pinnacle-1)*100 per market/line present on both sides.",
             });
           }
         } catch (e) {
