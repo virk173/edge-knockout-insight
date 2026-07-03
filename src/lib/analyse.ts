@@ -189,7 +189,7 @@ const CLAUDE_CALL_ORDER: Array<{ key: string; n: string; endpoint: string }> = [
   { key: "7", n: "7", endpoint: "/fixtures (referee history)" },
   { key: "8", n: "8", endpoint: "/predictions" },
   { key: "9A", n: "9A", endpoint: "/odds (Stake)" },
-  { key: "9B", n: "9B", endpoint: "TheStatsAPI /odds (Pinnacle if available, else retail)" },
+  { key: "9B", n: "9B", endpoint: "/odds?bookmaker=4 (Pinnacle price levels, API-Football)" },
   { key: "10", n: "10", endpoint: "/fixtures (bracket)" },
 ];
 
@@ -564,16 +564,14 @@ export function formatDataForClaude(
         : null;
     const hasData = validated !== null && !isEmptyResponse(validated);
     if (hasData) {
-      // CALL 9B header reflects the ACTUAL odds source so Claude never treats a
-      // retail fallback (e.g. Bet365) as Pinnacle. When it is not Pinnacle the
-      // header instructs pinnacle_odds = null.
+      // CALL 9B is now Pinnacle-or-empty (sourced from API-Football bookmaker=4).
+      // The header states the real source so Claude treats these as genuine
+      // sharp Pinnacle price levels — and flags that no line-movement history
+      // exists for this competition (opening/movement are null, not zero).
       let header = endpoint;
       if (n === "9B" && validated && typeof validated === "object") {
-        const v = validated as { bookmaker?: string; is_pinnacle?: boolean };
-        const bk = v.bookmaker ?? "retail book";
-        header = v.is_pinnacle
-          ? "Pinnacle odds"
-          : `${bk} odds (Pinnacle unavailable — set pinnacle_odds null)`;
+        header =
+          "Pinnacle odds (API-Football bookmaker=4) — current price levels only, NO line-movement history (opening/movement null = no data, not zero)";
       }
       // Ship the COMPACT Claude-facing shape (raw stays in callResults/cache).
       const shipped = compactForClaude(n, validated);
@@ -637,7 +635,8 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "S2B", api: "TheStatsAPI", endpoint: "/teams/{away}/stats", entryKey: "2B", extracted: cr["2B"]?.status === "SUCCESS", count: true },
     { callLabel: "S3", api: "TheStatsAPI", endpoint: "/matches/{id}/lineups", entryKey: "6", extracted: cr["6"]?.status === "SUCCESS", count: true },
     { callLabel: "S4", api: "TheStatsAPI", endpoint: "/players/{id}/stats (if absences)", entryKey: "6B", extracted: cr["6B"]?.status === "SUCCESS", count: true },
-    { callLabel: "S5", api: "TheStatsAPI", endpoint: "/matches/{id}/odds (Pinnacle → first-bookmaker fallback)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
+    // (CALL 9B / Pinnacle odds is now sourced from API-Football bookmaker=4 —
+    // moved to the API-Football group below.)
     { callLabel: "S6", api: "TheStatsAPI", endpoint: "/standings (all groups, 3rd-place-aware dead-rubber check)", entryKey: "S6", extracted: cr["S6"]?.status === "SUCCESS", count: false },
     { callLabel: "S7", api: "TheStatsAPI", endpoint: "/matches/{id}/referee (career totals) + API-Football fouls/penalties enrichment", entryKey: "7", extracted: cr["7"]?.status === "SUCCESS", count: true },
     // ---- API-Football group ----
@@ -649,6 +648,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 9A", api: "API-Football", endpoint: "/odds (Stake)", entryKey: "9A", extracted: hasUsableData(odds?.stakeOdds), count: true },
+    { callLabel: "CALL 9B", api: "API-Football", endpoint: "/odds?bookmaker=4 (Pinnacle price levels)", entryKey: "9B", extracted: cr["9B"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 10", api: "API-Football", endpoint: "/fixtures (bracket context)", entryKey: "10", extracted: cr["10"]?.status === "SUCCESS", count: true },
   ];
 
@@ -1077,6 +1077,153 @@ function buildPinnacleSummary(
     : null;
 }
 
+// API-Football Pinnacle bookmaker id (confirmed live: bookmaker=4 carries real
+// Pinnacle price levels for WC2026 — 1X2, Asian Handicap, O/U, corners).
+export const PINNACLE_BOOKMAKER_ID = 4;
+
+// Build a Pinnacle price-level summary from an API-Football /odds response that
+// was fetched filtered to bookmaker=4 (Pinnacle).
+//
+// WHY THIS EXISTS (separate from buildPinnacleSummary above, which parses the
+// TheStatsAPI odds shape): C9B was repointed away from TheStatsAPI, which for
+// WC2026 carries ONLY Bet365 (no Pinnacle) and has no `opening` field. This
+// parser reads API-Football's { response:[ { bookmakers:[ { id, name, bets:[
+// { name, values:[ { value, odd } ] } ] } ] } ] } shape — the SAME plumbing
+// C9A already uses — and extracts current Pinnacle prices.
+//
+// PRICE LEVELS ONLY — NO HISTORY. API-Football gives a single current snapshot
+// per value; there is no opening/last_seen for this competition from any source.
+// Therefore `opening` is ALWAYS left null (never defaulted to the current
+// value — that would fake a 0%-movement reading that does not exist) and
+// movement_pct stays null → downstream must treat null as "no movement data",
+// NEVER as "zero movement".
+export function buildPinnacleSummaryFromApiFootball(
+  oddsJson: unknown,
+): {
+  bookmaker: string;
+  is_pinnacle: boolean;
+  markets: PinnacleMarketSummary[];
+  raw: unknown;
+} | null {
+  const responseArr = extractArray(oddsJson);
+  if (!responseArr.length) return null;
+
+  // The response is already filtered to bookmaker=4; take the first bookmaker.
+  let chosen: unknown = null;
+  let bookmakerName = "";
+  let bookmakerId: number | null = null;
+  for (const item of responseArr) {
+    const bookmakers = extractArray(getField(item, ["bookmakers"]));
+    if (bookmakers.length) {
+      chosen = bookmakers[0];
+      bookmakerId = toNum(getField(chosen, ["id"]));
+      const nm = getField(chosen, ["name"]);
+      bookmakerName = typeof nm === "string" ? nm : "";
+      break;
+    }
+  }
+  if (!chosen) return null;
+
+  // Only the genuine Pinnacle book counts as sharp. C9B is Pinnacle-or-empty:
+  // if the returned book is anything else, the caller records EMPTY (no retail
+  // fallback here — C9A already supplies the retail reference).
+  const is_pinnacle =
+    bookmakerId === PINNACLE_BOOKMAKER_ID ||
+    normalize(bookmakerName) === "pinnacle";
+
+  const bets = extractArray(getField(chosen, ["bets"]));
+  const markets: PinnacleMarketSummary[] = [];
+
+  // opening is intentionally null — API-Football has no history for this feed.
+  const priceOutcome = (name: string, odd: unknown) => {
+    const current = toNum(odd);
+    const mv = movementSignal(null, current); // → { movement_pct: null, signal: "UNKNOWN" }
+    return { name, opening: null as number | null, current, ...mv };
+  };
+  const has = (label: string) => markets.some((m) => m.market === label);
+
+  for (const bet of bets) {
+    const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+    const values = extractArray(getField(bet, ["values"]));
+    const oddOf = (v: unknown) => getField(v, ["odd", "odds", "price"]);
+    const findVal = (pred: (v: string) => boolean) =>
+      values.find((v) =>
+        pred(String(getField(v, ["value"]) ?? "").toLowerCase()),
+      );
+
+    // 1X2
+    if (/match winner|1x2|full time result|home\/away/.test(betName)) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      const h = findVal((s) => s.includes("home") || s === "1");
+      const d = findVal((s) => s.includes("draw") || s === "x");
+      const a = findVal((s) => s.includes("away") || s === "2");
+      if (h) outcomes.push(priceOutcome("Home", oddOf(h)));
+      if (d) outcomes.push(priceOutcome("Draw", oddOf(d)));
+      if (a) outcomes.push(priceOutcome("Away", oddOf(a)));
+      if (outcomes.length && !has("1X2 Full Time Result"))
+        markets.push({ market: "1X2 Full Time Result", outcomes });
+      continue;
+    }
+
+    // BTTS
+    if (/both teams|btts/.test(betName)) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      const y = findVal((s) => s.includes("yes"));
+      const n = findVal((s) => s.includes("no"));
+      if (y) outcomes.push(priceOutcome("Yes", oddOf(y)));
+      if (n) outcomes.push(priceOutcome("No", oddOf(n)));
+      if (outcomes.length && !has("BTTS"))
+        markets.push({ market: "BTTS", outcomes });
+      continue;
+    }
+
+    // Over/Under goals
+    if (
+      /goals over\/under|over\/under|total goals/.test(betName) &&
+      !betName.includes("corner") &&
+      !/card|booking/.test(betName)
+    ) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        if (/^(over|under)\s/i.test(label))
+          outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Over/Under Goals"))
+        markets.push({ market: "Over/Under Goals", outcomes });
+      continue;
+    }
+
+    // Corners
+    if (betName.includes("corner")) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Corners"))
+        markets.push({ market: "Corners", outcomes });
+      continue;
+    }
+
+    // Asian Handicap
+    if (betName.includes("asian handicap")) {
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Asian Handicap"))
+        markets.push({ market: "Asian Handicap", outcomes });
+      continue;
+    }
+  }
+
+  return markets.length
+    ? { bookmaker: bookmakerName || "Pinnacle", is_pinnacle, markets, raw: chosen }
+    : null;
+}
+
 // ============================================================================
 // CLV CLOSING-ODDS CAPTURE (PART 1B)
 // ----------------------------------------------------------------------------
@@ -1315,12 +1462,21 @@ export function extractStakeMarkets(
 }
 
 
-// Step 4 — gap check: compare Stake odds vs Pinnacle current odds (1X2).
-// Higher decimal odds = better price for the bettor.
-function buildStakeGapCheck(
+// Step 4 — PINNACLE GAP CHECK: compare C9A retail price vs C9B Pinnacle current
+// price (1X2). Higher decimal odds = better price for the bettor. This needs
+// only a SINGLE price level on each side (not history), so it is unaffected by
+// the missing line-movement data. gap_pct = (stake/pinnacle - 1) * 100 (matches
+// adjustEVForPinnacleGap): positive = retail price beats Pinnacle.
+export function buildStakeGapCheck(
   stakeOdds: unknown,
   markets: PinnacleMarketSummary[],
-): Array<{ outcome: string; stake: number | null; pinnacle: number | null; verdict: string }> {
+): Array<{
+  outcome: string;
+  stake: number | null;
+  pinnacle: number | null;
+  gap_pct: number | null;
+  verdict: string;
+}> {
   const stake1X2 = extractStake1X2(stakeOdds);
   const pinnacle1X2 = markets.find((m) => m.market === "1X2 Full Time Result");
   if (!pinnacle1X2) return [];
@@ -1330,12 +1486,14 @@ function buildStakeGapCheck(
       const stakePrice = stake1X2[o.name] ?? null;
       const pinPrice = o.current;
       let verdict = "UNKNOWN";
-      if (stakePrice != null && pinPrice != null) {
+      let gap_pct: number | null = null;
+      if (stakePrice != null && pinPrice != null && pinPrice !== 0) {
+        gap_pct = Math.round((stakePrice / pinPrice - 1) * 1000) / 10;
         if (stakePrice > pinPrice) verdict = "STAKE OFFERS VALUE";
         else if (pinPrice > stakePrice) verdict = "STAKE WORSE";
         else verdict = "EQUAL";
       }
-      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, verdict };
+      return { outcome: o.name, stake: stakePrice, pinnacle: pinPrice, gap_pct, verdict };
     });
 }
 
@@ -2830,75 +2988,85 @@ export async function collectMatchData(
     return { stakeOdds: afOdds };
   }, blockOpts);
 
-  // CALL 9B: TheStatsAPI Pinnacle odds + line movement.
-  // Reuses the TheStatsAPI match_id resolved for CALL 6. Fetches
-  // /football/matches/{match_id}/odds, filters for Pinnacle, and extracts
-  // opening + last_seen per market (1X2, over/under, BTTS, corners) with line
-  // movement. On any failure or no Pinnacle data -> EMPTY.
+  // CALL 9B: Pinnacle PRICE LEVELS via API-Football (bookmaker=4).
+  //
+  // Repointed from TheStatsAPI. Verified live: TheStatsAPI carries ONLY Bet365
+  // for WC2026 (no Pinnacle, no `opening` field), whereas API-Football's own
+  // /odds feed filtered to bookmaker=4 genuinely carries Pinnacle for this
+  // competition. This reuses the SAME API-Football odds plumbing C9A calls,
+  // just with a different bookmaker filter — not a new integration.
+  //
+  // PRICE LEVELS ONLY: API-Football returns a single current snapshot per value
+  // (no opening/last_seen history), so opening/movement stay null. C9B is now
+  // Pinnacle-or-empty — there is NO retail fallback (C9A already supplies the
+  // retail reference price). The old TheStatsAPI Bet365 "Pinnacle" fallback is
+  // removed entirely.
   {
     stepKeys.push("9B");
     onProgress({
       step: stepKeys.length,
       total: TOTAL_STEPS,
-      label: "Fetching Pinnacle odds (TheStatsAPI)...",
+      label: "Fetching Pinnacle odds (API-Football bookmaker=4)...",
     });
     if (!tryLoadCache("9B")) {
     currentDebugCall = "9B";
-    // Spacing between TheStatsAPI calls is handled centrally in saGet
-    // (STATSAPI_DELAY_MS); no extra burst cool-down needed here.
     try {
-      // Diagnostic: the real key lives server-side as the STATSAPI_KEY secret
-      // (used by the api-proxy). VITE_STATSAPI_KEY is optional documentation only.
-      console.log(
-        "TheStatsAPI key prefix (browser, optional):",
-        import.meta.env.VITE_STATSAPI_KEY?.slice(0, 4) ?? "(not set — using server STATSAPI_KEY)",
-      );
-      const matchId = await ensureStatsApiMatchId();
-
-      if (!matchId) {
+      // C9A/C9B collision guard: C9A resolves whichever bookmaker the API-Football
+      // feed returns first (historically labeled "Stake"). If that ever resolves
+      // to Pinnacle (id 4), C9B would duplicate C9A's book — record EMPTY so the
+      // two references never silently collapse into the same book.
+      const c9aBookmakerId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("stake_bookmaker_id")
+          : null;
+      if (c9aBookmakerId && String(c9aBookmakerId) === String(PINNACLE_BOOKMAKER_ID)) {
         record(
           "9B",
-          "Pinnacle odds (TheStatsAPI)",
+          "Pinnacle odds (API-Football bookmaker=4)",
           "EMPTY",
           undefined,
-          "Pinnacle data unavailable — no TheStatsAPI match matched this fixture.",
+          "C9A already resolved to Pinnacle (bookmaker=4); C9B would duplicate the same book. Pinnacle handled by C9A this run.",
         );
       } else {
-        const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
-        const summary = buildPinnacleSummary(oddsJson);
+        const oddsJson = await afGet(
+          `/odds?fixture=${match.id}&bookmaker=${PINNACLE_BOOKMAKER_ID}`,
+          afKey,
+        );
+        const summary = buildPinnacleSummaryFromApiFootball(oddsJson);
 
-        if (!summary) {
+        if (!summary || !summary.is_pinnacle) {
           record(
             "9B",
-            "Pinnacle odds (TheStatsAPI)",
+            "Pinnacle odds (API-Football bookmaker=4)",
             "EMPTY",
-            { matchId },
-            "Pinnacle/odds data unavailable — no bookmaker markets returned for this match.",
+            { source: "API-Football bookmaker=4" },
+            "Pinnacle unavailable — API-Football returned no bookmaker=4 markets for this fixture. is_pinnacle=false, overround_pinnacle=null, pinnacle_available=false.",
           );
         } else {
-          // Gap check vs Stake (best-effort on 1X2).
+          // PINNACLE GAP CHECK vs C9A retail 1X2 (single snapshot each side —
+          // valid without history).
           const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
           const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
 
-          record("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
-            matchId,
+          record("9B", "Pinnacle odds (API-Football bookmaker=4)", "SUCCESS", {
+            matchId: match.id,
             bookmaker: summary.bookmaker,
             is_pinnacle: summary.is_pinnacle,
+            source: "API-Football bookmaker=4",
             markets: summary.markets,
             gap_check: gapCheck,
             note:
-              `Odds source bookmaker: ${summary.bookmaker}. ` +
-              (summary.is_pinnacle
-                ? "This IS Pinnacle (sharp). You MAY populate pinnacle_odds from these prices. "
-                : `This is NOT Pinnacle — it is a RETAIL book (${summary.bookmaker}). Pinnacle was not offered for this match. Set pinnacle_odds to null for the anchor and every leg; do NOT use these prices as a sharp reference. They are provided only as a secondary retail cross-check and for line movement. `) +
-              "movement_pct = (last_seen - opening) / opening * 100. opening may be null (only last_seen captured) → movement UNKNOWN. SHARP MOVE = shortened >8% (confidence +5 if model agrees, -5 if model opposes). DRIFT = drifted >8% (confidence -3). STABLE = <5% either way (no impact). BORDERLINE = 5-8%.",
+              "Pinnacle PRICE LEVELS from API-Football bookmaker=4 (genuine sharp reference). " +
+              "You MAY populate pinnacle_odds from these current prices. " +
+              "NO line-movement history exists for this competition from any source: opening is null on every outcome and movement_pct is null → treat as 'NO movement data', NEVER as 'zero movement'. Do NOT infer SHARP MOVE / DRIFT / STABLE from this. " +
+              "pinnacle_gap_check compares the C9A retail price vs this Pinnacle price per 1X2 outcome (single snapshot each — valid without history); gap_pct = (retail/pinnacle - 1) * 100.",
           });
         }
       }
     } catch (e) {
       record(
         "9B",
-        "Pinnacle odds (TheStatsAPI)",
+        "Pinnacle odds (API-Football bookmaker=4)",
         "EMPTY",
         undefined,
         `Pinnacle data unavailable — ${e instanceof Error ? e.message : String(e)}`,
@@ -3593,13 +3761,15 @@ export const CALL_DISPLAY_SPECS: CallDisplaySpec[] = [
   { id: "C7", label: "Referee", api: "API-FOOTBALL", keys: ["7"], mandatory: false, retryKey: "7" },
   { id: "C8", label: "Predictions", api: "API-FOOTBALL", keys: ["8"], mandatory: false, retryKey: "8" },
   { id: "C9A", label: "Stake Odds", api: "API-FOOTBALL", keys: ["9"], mandatory: true, retryKey: "9" },
+  // C9B Pinnacle price levels now come from API-Football bookmaker=4 (repointed
+  // from TheStatsAPI, which carries no Pinnacle for WC2026).
+  { id: "C9B", label: "Pinnacle Odds (bm=4)", api: "API-FOOTBALL", keys: ["9B"], mandatory: false, retryKey: "9B" },
   { id: "C10", label: "Bracket", api: "API-FOOTBALL", keys: ["10"], mandatory: false, retryKey: "10" },
   // ---- THESTATSAPI ----
   { id: "S0", label: "Match Lookup", api: "THESTATSAPI", keys: ["S0"], mandatory: true, retryKey: "S0" },
   { id: "S2A", label: "Home Stats", api: "THESTATSAPI", keys: ["2A"], mandatory: true, retryKey: "2A" },
   { id: "S2B", label: "Away Stats", api: "THESTATSAPI", keys: ["2B"], mandatory: true, retryKey: "2B" },
   { id: "S3", label: "Lineups", api: "THESTATSAPI", keys: ["6"], mandatory: false, retryKey: "6" },
-  { id: "S5", label: "Pinnacle Odds", api: "THESTATSAPI", keys: ["9B"], mandatory: false, retryKey: "9B" },
   { id: "S6", label: "Standings", api: "THESTATSAPI", keys: ["S6"], mandatory: false, retryKey: "S6" },
   { id: "S7", label: "Referee Detail", api: "THESTATSAPI", keys: ["7"], mandatory: false, retryKey: "7" },
 ];
@@ -3961,35 +4131,38 @@ export async function retrySingleCall(
       }
       case "9B": {
         try {
-          const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
-          const matchId = ref?.id ?? null;
-          if (!matchId) {
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, "No TheStatsAPI match matched this fixture.");
+          // Pinnacle-or-empty via API-Football bookmaker=4 (see collectMatchData
+          // C9B). No TheStatsAPI, no retail fallback.
+          const c9aBookmakerId =
+            typeof window !== "undefined"
+              ? window.localStorage.getItem("stake_bookmaker_id")
+              : null;
+          if (c9aBookmakerId && String(c9aBookmakerId) === String(PINNACLE_BOOKMAKER_ID)) {
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", undefined, "C9A already resolved to Pinnacle (bookmaker=4); C9B would duplicate the same book.");
             break;
           }
-          const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
-          const summary = buildPinnacleSummary(oddsJson);
-          if (!summary) {
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", { matchId }, "No bookmaker markets returned.");
+          const oddsJson = await afGet(
+            `/odds?fixture=${match.id}&bookmaker=${PINNACLE_BOOKMAKER_ID}`,
+          );
+          const summary = buildPinnacleSummaryFromApiFootball(oddsJson);
+          if (!summary || !summary.is_pinnacle) {
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", { source: "API-Football bookmaker=4" }, "Pinnacle unavailable — no bookmaker=4 markets for this fixture.");
           } else {
             const stakeRoot = readCallCache(match.id, "9")?.data as { stakeOdds?: unknown } | undefined;
             const gapCheck = buildStakeGapCheck(stakeRoot?.stakeOdds, summary.markets);
-            rec("9B", "Pinnacle odds (TheStatsAPI)", "SUCCESS", {
-              matchId,
+            rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "SUCCESS", {
+              matchId: match.id,
               bookmaker: summary.bookmaker,
               is_pinnacle: summary.is_pinnacle,
+              source: "API-Football bookmaker=4",
               markets: summary.markets,
               gap_check: gapCheck,
               note:
-                `Odds source bookmaker: ${summary.bookmaker}. ` +
-                (summary.is_pinnacle
-                  ? "This IS Pinnacle (sharp). pinnacle_odds may be populated. "
-                  : `This is NOT Pinnacle — RETAIL book (${summary.bookmaker}). Set pinnacle_odds to null. `) +
-                "movement_pct = (last_seen - opening) / opening * 100.",
+                "Pinnacle PRICE LEVELS from API-Football bookmaker=4. opening null / movement UNKNOWN (no line-movement history from any source for this competition — treat as 'no data', not 'zero'). pinnacle_gap_check compares C9A retail vs Pinnacle (single snapshot each); gap_pct = (retail/pinnacle - 1) * 100.",
             });
           }
         } catch (e) {
-          rec("9B", "Pinnacle odds (TheStatsAPI)", "EMPTY", undefined, `Pinnacle data unavailable — ${msg(e)}`);
+          rec("9B", "Pinnacle odds (API-Football bookmaker=4)", "EMPTY", undefined, `Pinnacle data unavailable — ${msg(e)}`);
         }
         break;
       }

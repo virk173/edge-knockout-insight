@@ -44,9 +44,10 @@ const NA = "N/A";
 const RULE = "─────────────────────────────────";
 
 // Logical call keys grouped by upstream API. Mirrors the debug-report counting
-// in analyse.ts (API-Football = 8 counted calls, TheStatsAPI = 7).
-const AF_KEYS = ["3", "4-1", "4-2", "4-3", "5", "8", "9A", "10"];
-const SA_KEYS = ["S0", "2A", "2B", "6", "6B", "9B", "7"];
+// in analyse.ts. C9B (Pinnacle price levels) is now sourced from API-Football
+// bookmaker=4, so it counts toward API-Football (9), not TheStatsAPI (6).
+const AF_KEYS = ["3", "4-1", "4-2", "4-3", "5", "8", "9A", "9B", "10"];
+const SA_KEYS = ["S0", "2A", "2B", "6", "6B", "7"];
 
 function na(v: unknown): string {
   if (v === undefined || v === null) return NA;
@@ -414,24 +415,18 @@ function buildCallData(
   );
   p(`    Overround: ${stakeOverround(sm)}`);
 
-  // ── C9B — Pinnacle / retail odds + line movement ──────────
+  // ── C9B — Pinnacle price levels (API-Football bookmaker=4) ──
+  // Repointed from TheStatsAPI. C9B is now Pinnacle-or-empty (no retail
+  // fallback). Price levels only — no line-movement history exists for this
+  // competition from any source (opening/movement stay null).
   const pin = cr["9B"]?.data as
     | { bookmaker?: string; is_pinnacle?: boolean; markets?: PinMarket[] }
     | null
     | undefined;
   p("C9B Pinnacle odds:");
-  if (pin && cr["9B"]?.status === "SUCCESS") {
-    const source = pin.is_pinnacle
-      ? "PINNACLE"
-      : String(pin.bookmaker ?? "").toUpperCase() || "EMPTY";
-    p(`    Source: ${source}`);
-    if (!pin.is_pinnacle) {
-      p(
-        `    ⚠ NOTE: Pinnacle unavailable — ${
-          pin.bookmaker ?? "retail book"
-        } returned as fallback. adjustEVForPinnacleGap did not fire. ev_confidence set to MEDIUM.`,
-      );
-    }
+  if (pin && pin.is_pinnacle && cr["9B"]?.status === "SUCCESS") {
+    p("    Source: PINNACLE — API-Football bookmaker=4");
+    p("    Note: price levels only — no line-movement history for this competition (opening/movement = no data, not zero).");
     const markets = Array.isArray(pin.markets) ? pin.markets : [];
     const oneX2 = markets.find((m) =>
       /1x2/i.test(String(m?.market ?? "")),
@@ -451,7 +446,7 @@ function buildCallData(
       p("    No odds data returned");
     }
   } else {
-    p("    Source: EMPTY");
+    p("    Source: EMPTY — Pinnacle not carried by API-Football bookmaker=4 for this fixture");
     p("    No odds data returned");
   }
 
@@ -647,20 +642,11 @@ function callDataFromSaved(
 
   // C9B pinnacle source
   out.push("C9B Pinnacle odds:");
-  if (keyExtracts?.bookmaker9B || keyExtracts?.isPinnacle9B) {
-    const source = keyExtracts?.isPinnacle9B
-      ? "PINNACLE"
-      : String(keyExtracts?.bookmaker9B ?? "").toUpperCase() || "EMPTY";
-    out.push(`    Source: ${source}`);
-    if (!keyExtracts?.isPinnacle9B) {
-      out.push(
-        `    ⚠ NOTE: Pinnacle unavailable — ${
-          keyExtracts?.bookmaker9B ?? "retail book"
-        } returned as fallback.`,
-      );
-    }
+  if (keyExtracts?.isPinnacle9B) {
+    out.push("    Source: PINNACLE — API-Football bookmaker=4");
+    out.push("    Note: price levels only — no line-movement history (opening/movement = no data, not zero).");
   } else {
-    out.push("    Source: EMPTY");
+    out.push("    Source: EMPTY — Pinnacle not carried by API-Football bookmaker=4 for this fixture");
   }
 
   // Lineups (state only — full XI not persisted)
@@ -722,8 +708,8 @@ export function generateRunReport(
     push();
   } else {
     push("PIPELINE");
-    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/8 succeeded`);
-    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/7 succeeded`);
+    push(`API-Football: ${countSucceeded(cr, AF_KEYS)}/9 succeeded`);
+    push(`TheStatsAPI: ${countSucceeded(cr, SA_KEYS)}/6 succeeded`);
     push(`Failed: ${statusList(cr, "FAILED")}`);
     push(`Empty: ${statusList(cr, "EMPTY")}`);
     push(
