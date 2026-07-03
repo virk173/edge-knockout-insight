@@ -87,7 +87,7 @@ function retryHint(id: string, status: DisplayStatus): string | null {
       return "Odds not posted yet — retry closer to kickoff (T-80)";
     case "S3":
       return "Lineup not announced — retry after T-75";
-    case "S5":
+    case "C9B":
       return "Pinnacle odds not posted yet — retry closer to kickoff";
     default:
       return "No data found — retry to check again";
