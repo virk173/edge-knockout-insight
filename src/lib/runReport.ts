@@ -642,20 +642,11 @@ function callDataFromSaved(
 
   // C9B pinnacle source
   out.push("C9B Pinnacle odds:");
-  if (keyExtracts?.bookmaker9B || keyExtracts?.isPinnacle9B) {
-    const source = keyExtracts?.isPinnacle9B
-      ? "PINNACLE"
-      : String(keyExtracts?.bookmaker9B ?? "").toUpperCase() || "EMPTY";
-    out.push(`    Source: ${source}`);
-    if (!keyExtracts?.isPinnacle9B) {
-      out.push(
-        `    ⚠ NOTE: Pinnacle unavailable — ${
-          keyExtracts?.bookmaker9B ?? "retail book"
-        } returned as fallback.`,
-      );
-    }
+  if (keyExtracts?.isPinnacle9B) {
+    out.push("    Source: PINNACLE — API-Football bookmaker=4");
+    out.push("    Note: price levels only — no line-movement history (opening/movement = no data, not zero).");
   } else {
-    out.push("    Source: EMPTY");
+    out.push("    Source: EMPTY — Pinnacle not carried by API-Football bookmaker=4 for this fixture");
   }
 
   // Lineups (state only — full XI not persisted)
