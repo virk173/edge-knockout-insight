@@ -842,7 +842,14 @@ export const normalizeDimensionWeights = (
  */
 export function calculateResults(
   rawOutput: unknown,
-  opts?: { bankroll?: number; lambda?: number; strictMode?: boolean },
+  opts?: {
+    bankroll?: number;
+    lambda?: number;
+    strictMode?: boolean;
+    // Competitive H2H meetings from C3 (drives the D6 gate in the
+    // dimension-weight validation). null/undefined = unknown (cached runs).
+    h2hMeetings?: number | null;
+  },
 ): AnalysisResult {
   if (!rawOutput || typeof rawOutput !== "object") {
     return (rawOutput ?? {}) as AnalysisResult;
@@ -955,6 +962,13 @@ export function calculateResults(
         min_actionable: BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE,
       });
       bet.kelly_result = kelly;
+      // Record the inputs actually used so the UI shows the real sizing
+      // bankroll (the bet card previously fell back to a hardcoded $50).
+      bet.kelly_inputs = {
+        ...ki,
+        decimal_odds: num(ki.decimal_odds) ?? bet.odds,
+        bankroll,
+      };
 
       // ev_rating is NOT set here — gateTier (the EV gate, runs last) is the
       // single authority; nothing reads ev_rating between here and there.
@@ -996,37 +1010,46 @@ export function calculateResults(
     let pj = num(b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final);
     const sp =
       b3.parlay_ev_inputs.stake_sgp ?? b3.parlay_ev_inputs.effective_sgp_price;
-    // EDGE-FIX tier 5 — joint-probability invariant: P(all legs) can never
-    // exceed P(least likely leg), whatever the correlation. Claude's
-    // correlation factors only ever adjusted p_joint upward historically, so
-    // an inflated p_joint directly inflated parlay EV. Cap and flag.
-    const legProbs = (b3.legs ?? [])
+    // RULE 28 — the app does ALL arithmetic. p_independent/p_joint are pure
+    // arithmetic over the per-leg probabilities, so the model's product is
+    // never trusted: live run 2026-07-04 emitted p_independent 0.4455 for
+    // legs 0.45 × 0.55 × 0.60 = 0.1485 (3× too high). The old min-leg cap
+    // (tier 5) only clipped it to 0.45, publishing a phantom +185% parlay EV
+    // on a truly negative-EV bet. Recompute from the legs whenever every leg
+    // carries a probability; the min-leg invariant stays as the outer bound.
+    const b3Legs = b3.legs ?? [];
+    const legProbs = b3Legs
       .map((l) => num(l.model_probability))
       .filter((p): p is number => p !== undefined && p > 0);
-    if (pj !== undefined && legProbs.length > 0) {
+    if (legProbs.length > 0 && legProbs.length === b3Legs.length) {
+      const pIndependent = legProbs.reduce((a, b) => a * b, 1);
+      // Correlation factor clamped to the prompt's heuristic range 0.92-1.08.
+      const corr = Math.min(1.08, Math.max(0.92, num(b3.correlation_factor) ?? 1));
       const minLeg = Math.min(...legProbs);
-      if (pj > minLeg) {
+      const recomputed = Math.min(pIndependent * corr, minLeg);
+      if (pj !== undefined && Math.abs(pj - recomputed) > 0.01) {
         result.data_quality_flags = result.data_quality_flags || [];
         result.data_quality_flags.push(
-          `SGP p_joint ${pj} exceeded the least likely leg's probability ${minLeg} — capped (a joint probability can never exceed any single leg).`,
+          `SGP p_joint ${pj} diverged from the app-computed product of leg probabilities (${recomputed.toFixed(4)}) — recomputed value used (rule 28: the app does all arithmetic).`,
         );
-        pj = minLeg;
-        b3.parlay_ev_inputs.p_joint = minLeg;
-        if (typeof b3.p_joint === "number") b3.p_joint = minLeg;
       }
-    } else if (pj !== undefined && legProbs.length === 0) {
-      // AUDIT FIX — the invariant cap silently no-oped when legs were
-      // missing/empty, letting an unverifiable (possibly inflated) p_joint
-      // straight into EV. A 3-leg SGP without leg probabilities is
-      // structurally invalid, so withhold the bet rather than price it.
+      pj = recomputed;
+      b3.p_independent = pIndependent;
+      b3.correlation_factor = corr;
+      b3.parlay_ev_inputs.p_joint = recomputed;
+      b3.p_joint = recomputed;
+    } else if (pj !== undefined) {
+      // AUDIT FIX — a p_joint that cannot be verified against a full set of
+      // leg probabilities (legs missing entirely, or some legs without a
+      // probability) is unusable: withhold the bet rather than price it.
       result.data_quality_flags = result.data_quality_flags || [];
       result.data_quality_flags.push(
-        "SGP p_joint present but no leg probabilities — invariant unverifiable; bet_3 withheld.",
+        "SGP p_joint present but leg probabilities are missing or incomplete — joint probability unverifiable; bet_3 withheld.",
       );
       b3.active = false;
       b3.skip_reason =
         b3.skip_reason ??
-        "SGP legs missing — p_joint invariant unverifiable; bet withheld.";
+        "SGP leg probabilities missing — joint probability unverifiable; bet withheld.";
     }
     const ev = computeEv(pj, sp);
     if (ev !== undefined) b3.parlay_ev = ev;
@@ -1192,9 +1215,22 @@ export function calculateResults(
   // Surfaced as a flag only; weights are NOT auto-corrected.
   if (result.dimension_weights) {
     const call4Count = result.tactical_analysis?.call4_fixture_count ?? 5;
-    const h2hPassed = !result.markets_rejected?.some((m) =>
-      (m?.market ?? "").includes("H2H"),
-    );
+    // H2H gate = 3+ competitive meetings in C3, passed in from the pipeline
+    // via opts.h2hMeetings. (The old heuristic scanned markets_rejected for
+    // "H2H", but that array holds betting markets and never contains "H2H",
+    // so the gate always read as passed and a correctly applied D6=0/D1=40
+    // adjustment was falsely flagged as a mismatch.) When the count is
+    // unavailable (older cached runs), fall back to Claude's own
+    // H2H-gate-failed confidence adjustment rather than assuming passed.
+    const h2hPassed =
+      typeof opts?.h2hMeetings === "number"
+        ? opts.h2hMeetings >= 3
+        : !(result.confidence_scores?.confidence_inputs?.adjustments ?? []).some(
+            (a) => {
+              const t = String(a?.type ?? "");
+              return /h2h/i.test(t) && /gate|fail|insufficient/i.test(t);
+            },
+          );
     const criticalAbsence = !!result.player_intelligence?.absences?.some(
       (a) => a?.classification === "CRITICAL",
     );

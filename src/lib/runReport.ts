@@ -1,6 +1,8 @@
 import {
   extractStakeMarkets,
   buildCallPanelSummary,
+  refereeStrictnessScore,
+  refereeStrictnessLabel,
   type CollectionResult,
   type CallResult,
   type LineupState,
@@ -141,6 +143,19 @@ function asArray(payload: unknown): unknown[] {
 function callData(cr: Record<string, CallResult>, key: string): unknown {
   const c = cr[key];
   return c && c.status === "SUCCESS" ? (c.data ?? null) : null;
+}
+
+/**
+ * Competitive H2H meetings recorded by CALL 3 — the count the report's own
+ * "C3 H2H: n meetings" line uses. Exported so calculateResults can validate
+ * the D6 H2H gate against real pipeline data. Returns null when the C3
+ * result is absent entirely (unknown), 0 when it ran but found nothing.
+ */
+export function countH2hMeetings(
+  cr: Record<string, CallResult> | undefined,
+): number | null {
+  if (!cr || !cr["3"]) return null;
+  return asArray(callData(cr, "3")).length;
 }
 
 /** Value like "1.85" from an outcome name inside an extractStakeMarkets market. */
@@ -302,6 +317,8 @@ function buildCallData(
         referee?: string;
         matches_officiated?: number;
         avg_yellow_cards_per_game?: number | string;
+        avg_fouls_per_game?: number | string;
+        penalties_awarded?: number | string;
         source?: string;
         career_totals?: {
           games?: number | null;
@@ -312,23 +329,24 @@ function buildCallData(
     | undefined;
   if (ref && cr["7"]?.status === "SUCCESS") {
     const avgY = ref.avg_yellow_cards_per_game;
-    const avgYNum = typeof avgY === "number" ? avgY : NaN;
     p(`C7  Referee: ${na(ref.referee)}`);
     p(
       `    avg yellows: ${na(avgY)} over ${na(ref.matches_officiated)} games`,
     );
-    p(`    strictness score: ${num(avgYNum, 2)}`);
-    p(
-      `    ${
-        Number.isFinite(avgYNum)
-          ? avgYNum >= 4
-            ? "HIGH"
-            : avgYNum >= 3
-              ? "MEDIUM"
-              : "LOW"
-          : NA
-      }`,
+    // Same formula and thresholds as compactReferee ships to Claude
+    // (yellows×10 + fouls×2 + pens×15; 50+ HIGH / 30-49 MEDIUM / <30 LOW).
+    // The report previously printed avg yellows AS the strictness score with
+    // ad-hoc ≥4/≥3 thresholds, so it showed e.g. "3.49 MEDIUM" while Claude
+    // correctly reasoned from 76 HIGH for the same referee.
+    const asNum = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) ? v : null;
+    const sScore = refereeStrictnessScore(
+      asNum(avgY),
+      asNum(ref.avg_fouls_per_game),
+      asNum(ref.penalties_awarded),
     );
+    p(`    strictness score: ${sScore !== null ? num(sScore, 2) : NA}`);
+    p(`    ${na(refereeStrictnessLabel(sScore))}`);
     const src = String(ref.source ?? "");
     p(
       `    Source: ${

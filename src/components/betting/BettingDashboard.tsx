@@ -79,9 +79,14 @@ function evTextClass(ev?: number): string {
 function kellyText(bet: StraightBet): string | null {
   const k = bet.kelly_result;
   if (!k) return null;
+  // Omit the bankroll suffix when the sizing bankroll wasn't recorded (older
+  // cached results) — the previous hardcoded $50 fallback displayed a wrong
+  // figure whenever the real bankroll differed.
   const bankroll =
-    typeof bet.kelly_inputs?.bankroll === "number" ? bet.kelly_inputs.bankroll : 50;
-  return `Kelly: ${k.fractional_kelly_pct}% of $${bankroll}`;
+    typeof bet.kelly_inputs?.bankroll === "number" ? bet.kelly_inputs.bankroll : null;
+  return bankroll !== null
+    ? `Kelly: ${k.fractional_kelly_pct}% of $${bankroll}`
+    : `Kelly: ${k.fractional_kelly_pct}%`;
 }
 
 // ─────────────────────────────────────────────────────────────

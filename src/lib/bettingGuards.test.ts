@@ -21,26 +21,60 @@ describe("p_joint invariant clamp — joint prob can never exceed the least like
     },
   });
 
-  it("caps an inflated p_joint to min(leg prob) and flags it", () => {
-    // min leg = 0.55, Claude claimed joint 0.62 (impossible).
+  it("recomputes an inflated p_joint from the leg product and flags it", () => {
+    // Claude claimed joint 0.62; true product = 0.68 × 0.62 × 0.55 = 0.23188.
     const out = calculateResults(sgp(0.62, [0.68, 0.62, 0.55]), { bankroll: 500 });
-    expect(out.bet_3?.parlay_ev_inputs?.p_joint).toBe(0.55);
-    // parlay_ev computed on the CAPPED value: 0.55*4.96-1 = 1.728
-    expect(out.bet_3?.parlay_ev).toBeCloseTo(0.55 * 4.96 - 1, 3);
+    const product = 0.68 * 0.62 * 0.55;
+    expect(out.bet_3?.parlay_ev_inputs?.p_joint).toBeCloseTo(product, 4);
+    // parlay_ev computed on the RECOMPUTED value.
+    expect(out.bet_3?.parlay_ev).toBeCloseTo(product * 4.96 - 1, 3);
     expect(
       (out.data_quality_flags ?? []).some((f) => f.includes("p_joint")),
     ).toBe(true);
   });
 
-  it("leaves a valid p_joint untouched", () => {
+  it("accepts a p_joint consistent with the leg product without flagging", () => {
+    // product = 0.68 × 0.618 × 0.58 = 0.24374 — Claude's 0.249 is within 0.01.
     const out = calculateResults(sgp(0.249, [0.68, 0.618, 0.58]), { bankroll: 500 });
-    expect(out.bet_3?.parlay_ev_inputs?.p_joint).toBe(0.249);
+    expect(out.bet_3?.parlay_ev_inputs?.p_joint).toBeCloseTo(0.68 * 0.618 * 0.58, 4);
     expect(out.data_quality_flags ?? []).toEqual(
       (out.data_quality_flags ?? []).filter((f) => !f.includes("p_joint")),
     );
   });
 
-  // AUDIT FIX — the clamp silently no-oped when legs were missing/empty,
+  // Live run 2026-07-04 (Canada vs Morocco): Claude emitted p_independent
+  // 0.4455 for legs 0.45 × 0.55 × 0.60 = 0.1485 (3× too high). The old
+  // min-leg cap only clipped p_joint to 0.45, publishing +185% parlay EV on
+  // a truly negative-EV bet. The recompute must gate the bet inactive.
+  it("regression: 3×-inflated p_joint → EV goes negative and the bet is gated", () => {
+    const out = calculateResults(
+      {
+        match: "Canada vs Morocco",
+        bet_3: {
+          active: true,
+          legs: [
+            { leg_number: 1, market: "Moneyline (3-way)", selection: "Morocco Win", odds: 1.79, model_probability: 0.45 },
+            { leg_number: 2, market: "Both Teams To Score", selection: "BTTS Yes", odds: 2.0, model_probability: 0.55 },
+            { leg_number: 3, market: "Total Corners Over/Under", selection: "Over 8.5 Corners", odds: 1.77, model_probability: 0.6 },
+          ],
+          p_independent: 0.4455,
+          correlation_factor: 1.02,
+          p_joint: 0.4544,
+          parlay_ev_inputs: { p_joint: 0.4544, stake_sgp: 6.34 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    const trueJoint = 0.45 * 0.55 * 0.6 * 1.02; // 0.15147
+    expect(out.bet_3?.parlay_ev_inputs?.p_joint).toBeCloseTo(trueJoint, 4);
+    expect(out.bet_3?.parlay_ev).toBeCloseTo(trueJoint * 6.34 - 1, 3); // ≈ -0.04
+    expect(out.bet_3?.active).toBe(false);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("p_joint")),
+    ).toBe(true);
+  });
+
+  // AUDIT FIX — the guard silently no-oped when legs were missing/empty,
   // letting an unverifiable p_joint straight into EV. Now the bet is withheld.
   it("p_joint with NO legs → bet_3 withheld (inactive, flagged), never priced as active", () => {
     const out = calculateResults(
@@ -59,7 +93,7 @@ describe("p_joint invariant clamp — joint prob can never exceed the least like
     expect(out.bet_3?.skip_reason).toContain("unverifiable");
     expect(
       (out.data_quality_flags ?? []).some((f) =>
-        f.includes("no leg probabilities"),
+        f.includes("missing or incomplete"),
       ),
     ).toBe(true);
   });

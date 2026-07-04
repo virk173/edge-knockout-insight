@@ -439,7 +439,7 @@ const numOrNull = (v: unknown): number | null =>
 //   score = (avg_yellows_per_game * 10) + (avg_fouls_per_game * 2) + (penalties_per_game * 15)
 // A missing stat contributes 0 (not a failure) — but if ALL THREE inputs are
 // null, there is nothing to score, so the result is null rather than 0.
-function refereeStrictnessScore(
+export function refereeStrictnessScore(
   avgYellows: number | null,
   avgFouls: number | null,
   penaltiesPerGame: number | null,
@@ -450,7 +450,7 @@ function refereeStrictnessScore(
   const p = penaltiesPerGame ?? 0;
   return Math.round(y * 10 + f * 2 + p * 15);
 }
-function refereeStrictnessLabel(score: number | null): "HIGH" | "MEDIUM" | "LOW" | null {
+export function refereeStrictnessLabel(score: number | null): "HIGH" | "MEDIUM" | "LOW" | null {
   if (score == null) return null;
   if (score >= 50) return "HIGH";
   if (score >= 30) return "MEDIUM";

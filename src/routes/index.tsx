@@ -47,6 +47,7 @@ import {
   generateRunReport,
   buildPersistedCallSummary,
   buildKeyExtracts,
+  countH2hMeetings,
 } from "@/lib/runReport";
 import { normalizeAnalysisResult } from "@/lib/normalizeAnalysisResult";
 import {
@@ -623,10 +624,12 @@ function Index() {
 
     try {
       const parsed = tryParse();
+      const liveCollection = getState(match.id).collection;
       const enriched = calculateResults(parsed, {
         bankroll: getBankroll(),
         strictMode: strictMode,
         lambda: getCalibration().lambda,
+        h2hMeetings: countH2hMeetings(liveCollection?.callResults),
       });
       // Guarantee a consistent structure before the result reaches the UI or
       // the cache. Every display component can then read containers directly.
