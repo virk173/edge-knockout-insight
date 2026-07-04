@@ -136,6 +136,16 @@ fouls, yellows, reds.
 If fewer than 3 fixtures: D2 weight
 to 15 percent, D1 to 45 percent.
 
+RECENT-5 CORNERS (when the CALL 4
+block carries an APP-COMPUTED
+"RECENT-5 CORNERS" section): anchor
+expected_corners_range and every
+corners-market evaluation to those
+for/against averages — recent-5
+beats season averages. If the
+section is absent, fall back to the
+C2A/C2B season corners averages.
+
 CALL 5 — injuries and suspensions
 
 YELLOW CARD AMNESTY RULES WC2026:

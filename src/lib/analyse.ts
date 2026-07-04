@@ -678,6 +678,18 @@ export function formatDataForClaude(
     );
   };
 
+  // CALL 4C (tier 8.2) — compact recent-5 corners summary appended to the
+  // CALL 4 block when the conditional /fixtures/statistics fetch ran.
+  const cornersInjection =
+    safeResults["4C"]?.status === "SUCCESS" ? safeResults["4C"]?.data : null;
+  const recentCornersSuffix = (n: string): string => {
+    if (n !== "4" || !cornersInjection) return "";
+    return (
+      `\n\nRECENT-5 CORNERS (from /fixtures/statistics — anchor expected_corners_range and corners-market evaluation to these, they beat season averages):\n` +
+      `${JSON.stringify(cornersInjection, null, 2)}`
+    );
+  };
+
   const blocks: string[] = [];
   for (const { key, n, endpoint } of CLAUDE_CALL_ORDER) {
     const r = resolved[key];
@@ -692,11 +704,11 @@ export function formatDataForClaude(
           `[CALL 4 — recent form (last 5) — SUCCESS]\n` +
             `HOME last 5 (most recent first):\n${homeLines.join("\n") || "none"}\n\n` +
             `AWAY last 5 (most recent first):\n${awayLines.join("\n") || "none"}` +
-            `${deadRubberSuffix("4")}\n[END CALL 4]`,
+            `${deadRubberSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
         );
       } else {
         blocks.push(
-          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}\n[END CALL 4]`,
+          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
         );
       }
       continue;
@@ -798,6 +810,7 @@ export function buildDebugReport(result: CollectionResult): DebugReport {
     { callLabel: "CALL 4-1", api: "API-Football", endpoint: "/fixtures (home last 5)", entryKey: "4-1", extracted: cr["4-1"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4-2", api: "API-Football", endpoint: "/fixtures (away last 5)", entryKey: "4-2", extracted: cr["4-2"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 4-3", api: "API-Football", endpoint: "/fixtures (last-5 ids batch)", entryKey: "4-3", extracted: cr["4-3"]?.status === "SUCCESS", count: true },
+    { callLabel: "CALL 4C", api: "API-Football", endpoint: "/fixtures/statistics (recent-5 corners, conditional)", entryKey: "4C", extracted: cr["4C"]?.status === "SUCCESS", count: true },
     { callLabel: "CALL 5", api: "API-Football", endpoint: "/injuries", entryKey: "5", extracted: cr["5"]?.status === "SUCCESS", count: true },
     
     { callLabel: "CALL 8", api: "API-Football", endpoint: "/predictions", entryKey: "8", extracted: cr["8"]?.status === "SUCCESS", count: true },
@@ -2352,10 +2365,12 @@ interface ParsedLast5Fixture {
 // Parse an API-Football last-5 fixtures list (CALL 4-1 / 4-2) into the minimal
 // shape the dead-rubber logic needs, from the perspective of `teamId`.
 //
-// KNOWN GAP: corners and shots averages unavailable from C4 endpoints
-// (/fixtures?team and /fixtures?ids carry no per-match stats). Would require
-// up to 10 additional /fixtures/statistics calls per match — deferred pending
-// API budget review.
+// (Corners note: /fixtures?team and /fixtures?ids carry no per-match stats.
+// Since EDGE-FIX tier 8.2 the pipeline conditionally fetches
+// /fixtures/statistics for the last-5 ids — see the CALL 4C block in
+// collectMatchData — so recent-5 corners reach Claude when a corners market
+// is actually evaluable. Shots per match remain unfetched here; the
+// dead-rubber adjustment already distils shots from other sources.)
 function parseLast5(list: unknown, teamId: number): ParsedLast5Fixture[] {
   return extractArray(list).map((item) => {
     const fixture = getField(item, ["fixture"]);
@@ -2386,6 +2401,80 @@ function parseLast5(list: unknown, teamId: number): ParsedLast5Fixture[] {
       is_dead_rubber: false,
     };
   });
+}
+
+// ---- EDGE-FIX tier 8.2: recent-5 corners via /fixtures/statistics ----
+//
+// Recent-5 corners genuinely beat season averages for knockout corners
+// markets, but the C4 fixture endpoints carry no per-match stats. The CALL 4C
+// block fetches /fixtures/statistics for the (up to 10 unique) last-5 fixture
+// ids ONLY when a corners market is actually evaluable this run (a corners
+// price exists in C9A or C9B) and the daily API budget is not near its limit.
+
+// One team's corners for/against in a single /fixtures/statistics response
+// (array of two { team, statistics:[{type,value}] } blocks). Returns null when
+// the fixture has no usable corner stat for that team.
+export function extractTeamCornersFromStats(
+  statsResponse: unknown,
+  teamId: number,
+): { corners_for: number; corners_against: number | null } | null {
+  const blocks = extractArray(statsResponse);
+  if (blocks.length < 2) return null;
+  const cornersOf = (block: unknown): number | null => {
+    for (const s of extractArray(getField(block, ["statistics"]))) {
+      const t = getField(s, ["type"]);
+      if (typeof t === "string" && normalize(t) === normalize("Corner Kicks")) {
+        const v = getField(s, ["value"]);
+        const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
+        return Number.isFinite(n) ? n : null;
+      }
+    }
+    return null;
+  };
+  const own = blocks.find(
+    (b) => Number(getField(getField(b, ["team"]), ["id"])) === teamId,
+  );
+  if (!own) return null;
+  const other = blocks.find((b) => b !== own);
+  const forC = cornersOf(own);
+  if (forC === null) return null;
+  return { corners_for: forC, corners_against: other ? cornersOf(other) : null };
+}
+
+// Average a team's recent corners across the per-fixture statistics responses
+// it appears in. Null when no fixture carried a usable corner stat.
+export function summariseRecentCorners(
+  statsByFixture: Array<{ fixtureId: number; stats: unknown }>,
+  teamId: number,
+  teamFixtureIds: number[],
+): {
+  corners_for_avg: number;
+  corners_against_avg: number | null;
+  fixtures_counted: number;
+} | null {
+  const wanted = new Set(teamFixtureIds);
+  let forSum = 0;
+  let againstSum = 0;
+  let againstSeen = 0;
+  let counted = 0;
+  for (const { fixtureId, stats } of statsByFixture) {
+    if (!wanted.has(fixtureId)) continue;
+    const c = extractTeamCornersFromStats(stats, teamId);
+    if (!c) continue;
+    forSum += c.corners_for;
+    counted++;
+    if (c.corners_against !== null) {
+      againstSum += c.corners_against;
+      againstSeen++;
+    }
+  }
+  if (!counted) return null;
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  return {
+    corners_for_avg: r1(forSum / counted),
+    corners_against_avg: againstSeen ? r1(againstSum / againstSeen) : null,
+    fixtures_counted: counted,
+  };
 }
 
 // Normalize a TheStatsAPI all-groups standings payload into typed rows.
@@ -3700,6 +3789,105 @@ export async function collectMatchData(
     }
   }
 
+
+  // CALL 4C (EDGE-FIX tier 8.2): recent-5 corners via /fixtures/statistics.
+  // CONDITIONAL — runs only when a corners market is actually evaluable this
+  // run (a corners price exists in C9A or C9B, both already fetched) and the
+  // daily API-Football budget is not near its limit. Costs up to 10 calls
+  // (unique last-5 fixture ids across both teams; each response carries BOTH
+  // teams' stats, so shared fixtures are fetched once). Results are averaged
+  // into a compact per-team summary appended to the CALL 4 block
+  // (formatDataForClaude), never shipped raw (~85k tokens raw — the original
+  // reason 4-3 stopped shipping statistics). Cached 60 min like other static
+  // calls; completed-fixture stats are immutable so a cache hit is always safe.
+  {
+    currentDebugCall = "4C";
+    onProgress({
+      step: stepKeys.length,
+      total: TOTAL_STEPS,
+      label: "Fetching recent-5 corners statistics (conditional)...",
+    });
+    const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
+    const retailCorners = !!extractStakeMarkets(stakeRoot?.stakeOdds ?? null)
+      ?.markets["Corners Over/Under"];
+    const c9b = callResults["9B"]?.data as
+      | { markets?: PinnacleMarketSummary[] }
+      | undefined;
+    const pinnacleCorners =
+      callResults["9B"]?.status === "SUCCESS" &&
+      !!c9b?.markets?.some((m) => m.market === "Corners");
+    const cornersEvaluable = retailCorners || pinnacleCorners;
+
+    const uniqueIds = Array.from(
+      new Set([...homeFixtureIds, ...awayFixtureIds]),
+    ).slice(0, 10);
+
+    if (!cornersEvaluable) {
+      record(
+        "4C",
+        "Recent-5 corners (/fixtures/statistics)",
+        "SKIPPED",
+        undefined,
+        "NOT TRIGGERED — no corners price in C9A or C9B this run; corners market not evaluable, statistics fetch saved.",
+      );
+    } else if (counterWarning) {
+      record(
+        "4C",
+        "Recent-5 corners (/fixtures/statistics)",
+        "SKIPPED",
+        undefined,
+        "Skipped — daily API budget near limit (>=85); corners bets fall back to season averages.",
+      );
+    } else if (uniqueIds.length === 0) {
+      record(
+        "4C",
+        "Recent-5 corners (/fixtures/statistics)",
+        "EMPTY",
+        undefined,
+        "Corners market evaluable but no last-5 fixture ids available from CALL 4.",
+      );
+    } else if (!tryLoadCache("4C")) {
+      try {
+        const statsByFixture: Array<{ fixtureId: number; stats: unknown }> = [];
+        for (const id of uniqueIds) {
+          try {
+            const r = await afGet(`/fixtures/statistics?fixture=${id}`, afKey);
+            if (!isEmptyResponse(r)) statsByFixture.push({ fixtureId: id, stats: r });
+          } catch (e) {
+            // Best-effort per fixture: keep what we have, log and continue.
+            console.warn(`[analyse] 4C statistics failed for fixture=${id}`, e);
+          }
+        }
+        const home = summariseRecentCorners(statsByFixture, match.homeId, homeFixtureIds);
+        const away = summariseRecentCorners(statsByFixture, match.awayId, awayFixtureIds);
+        if (home || away) {
+          record("4C", "Recent-5 corners (/fixtures/statistics)", "SUCCESS", {
+            home: home ? { team: match.home, ...home } : null,
+            away: away ? { team: match.away, ...away } : null,
+            note:
+              "APP-COMPUTED recent-5 corners (for/against per game). Anchor expected_corners_range and corners-market evaluation to these over season averages.",
+          });
+        } else {
+          record(
+            "4C",
+            "Recent-5 corners (/fixtures/statistics)",
+            "EMPTY",
+            undefined,
+            "No usable corner stats in the last-5 statistics responses.",
+          );
+        }
+      } catch (e) {
+        record(
+          "4C",
+          "Recent-5 corners (/fixtures/statistics)",
+          "FAILED",
+          undefined,
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+    currentDebugCall = null;
+  }
 
   // CALL 6B (S4): player stats for absences (TheStatsAPI). Runs AFTER S5 so the
   // mandatory Pinnacle call gets rate-limit budget first. Triggers ONLY when

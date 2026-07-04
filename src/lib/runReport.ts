@@ -441,6 +441,13 @@ function buildCallData(
       /over 2\.5/i.test(String(o?.name ?? "")),
     );
     if (over25) lines.push(over25);
+    // Cards (tier 8.3): Pinnacle is the only source carrying cards prices —
+    // surface the primary 3.5 line when offered.
+    const cards = markets.find((m) => /card/i.test(String(m?.market ?? "")));
+    const cardsOver35 = (cards?.outcomes ?? []).find((o) =>
+      /over 3\.5/i.test(String(o?.name ?? "")),
+    );
+    if (cardsOver35) lines.push(cardsOver35);
     if (lines.length) {
       for (const o of lines) p(fmtPinLine(o));
     } else {
