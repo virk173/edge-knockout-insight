@@ -150,4 +150,17 @@ describe("PUSH/VOID settlement semantics", () => {
     expect(s.winRate).toBe(50); // PUSH not in the denominator
     expect(s.pendingCount).toBe(0); // PUSH is settled, not pending
   });
+
+  it("computeSummary ROI: PENDING stakes excluded from the denominator (settled-only ROI)", () => {
+    const entries = [
+      entryWith([
+        { tier: 1, stake: "$10", odds: 2.0, outcome: "WON" }, // +10 on $10 settled
+        { tier: 1, stake: "$90", odds: 2.0, outcome: "PENDING" }, // must not dilute
+      ]),
+    ];
+    const s = computeSummary(entries);
+    // Settled: staked 10, returned 20 → ROI +100% (NOT +10% over all 100 staked).
+    expect(s.roi).toBe(100);
+    expect(s.totalStaked).toBe(100); // display total unchanged
+  });
 });

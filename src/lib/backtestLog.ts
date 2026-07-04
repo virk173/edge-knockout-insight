@@ -675,18 +675,25 @@ export function computeSummary(entries: LogEntry[]): LogSummary {
   let confSum = 0;
   let confCount = 0;
 
+  // ROI is computed over SETTLED stakes only (EDGE-FIX tier 6). Including
+  // PENDING stakes in the denominator dragged ROI down purely because bets
+  // hadn't been decided yet.
+  let settledStaked = 0;
   for (const r of recs) {
     const stake = parseStake(r.stake);
     totalStaked += stake;
     if (r.outcome === "WON") {
       wonCount += 1;
+      settledStaked += stake;
       const odds = typeof r.odds === "number" ? r.odds : 0;
       totalReturned += stake * odds;
     } else if (r.outcome === "LOST") {
       lostCount += 1;
+      settledStaked += stake;
     } else if (r.outcome === "PUSH" || r.outcome === "VOID") {
       // Settled-neutral: stake returned, excluded from win-rate numerator and
       // denominator (decided = won + lost only).
+      settledStaked += stake;
       totalReturned += stake;
     } else {
       pendingCount += 1;
@@ -727,7 +734,7 @@ export function computeSummary(entries: LogEntry[]): LogSummary {
     totalRecommendations: recs.length,
     totalStaked,
     totalReturned,
-    roi: totalStaked > 0 ? ((totalReturned - totalStaked) / totalStaked) * 100 : null,
+    roi: settledStaked > 0 ? ((totalReturned - settledStaked) / settledStaked) * 100 : null,
     winRate: decided > 0 ? (wonCount / decided) * 100 : null,
     wonCount,
     lostCount,

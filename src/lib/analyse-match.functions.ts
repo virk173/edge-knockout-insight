@@ -5,10 +5,12 @@ import type { ClaudeCallResult } from "./claude.server";
  * analyse-match
  *
  * Synchronous server-side proxy to the Anthropic Messages API. This is the
- * ONLY analysis path: the formatted prompt is small (~13k input tokens after
- * per-block trimming in formatDataForClaude), so Claude responds in ~15-25s and
- * a direct synchronous call is simpler and more reliable than a background job
- * store (which was only warranted when the prompt approached the 200k limit).
+ * ONLY analysis path: measured real input is ~27k tokens (live diagnostic,
+ * 2026-07-03 — note chars/4 estimates undercount this content ~2×) and
+ * responses take ~50-125s dominated by output generation, all well inside the
+ * 150s-per-attempt retry budget in claude.server.ts. A direct synchronous call
+ * is simpler and more reliable than a background job store (which was only
+ * warranted when the prompt approached the 200k limit).
  *
  * The actual Claude request lives in callClaude() (claude.server.ts) so its
  * config — model, max_tokens, prompt caching, timeout, retry — stays in one

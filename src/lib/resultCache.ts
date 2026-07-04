@@ -61,6 +61,10 @@ export interface PersistedResult {
   keyExtracts?: PersistedKeyExtracts;
 }
 
+// NOTE: LOCAL date, unlike clv.ts's closingKey which uses the UTC date. The
+// mismatch is tolerated deliberately: readClosingCapture scans 7 days back, so
+// a capture keyed one day off is still found. Do not "align" this mid-tournament
+// — changing the key format orphans same-day cached results.
 function todayStr(): string {
   const d = new Date();
   const y = d.getFullYear();

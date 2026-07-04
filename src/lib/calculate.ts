@@ -39,13 +39,13 @@ import { calibrateProbability, DEFAULT_LAMBDA } from "@/lib/calibration";
  *
  * GAP 3 (continued): Opponent-strength normalization is absent from
  * computeGapScore(). The function uses raw tournament goals/assists without
- * weighting by opponent quality. Intentional — no data source available to
- * fix this.
+ * weighting by opponent quality. A standings-bucketed weighting is feasible
+ * with already-cached data (see EDGE-FIX tier 8.1) — pending sign-off.
  *
- * GAP 2 (continued): adjustEVForPinnacleGap() is correctly implemented and
- * will fire correctly when pinnacle_odds is not null. As of WC2026 Round of
- * 32, all tested matches returned Bet365 from TheStatsAPI. This path is
- * unverified with real Pinnacle data but structurally correct.
+ * GAP 2 (RESOLVED): C9B was repointed to API-Football bookmaker=4, which
+ * carries genuine Pinnacle price levels for WC2026 (verified live 2026-07-03,
+ * fixture 1565179). adjustEVForPinnacleGap() now fires with real Pinnacle
+ * data; E2E coverage lives in the pinnacle-gap tests.
  */
 
 
@@ -921,14 +921,8 @@ export function calculateResults(
       });
       bet.kelly_result = kelly;
 
-      bet.ev_rating =
-        bet.ev < 0
-          ? "NEGATIVE"
-          : bet.ev < defaults.minEv
-            ? "SKIP"
-            : bet.ev < 0.08
-              ? "MARGINAL"
-              : "STRONG";
+      // ev_rating is NOT set here — gateTier (the EV gate, runs last) is the
+      // single authority; nothing reads ev_rating between here and there.
 
       // If Kelly says the edge is too small, mark it — but never overwrite a
       // skip_reason Claude already set.

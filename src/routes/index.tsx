@@ -97,7 +97,8 @@ const CLAUDE_LOADING_MESSAGES = [
   "Building recommendations...",
 ];
 
-const CLAUDE_MAX_SECONDS = 180;
+// Mirrors claude.server.ts's worst-case retry chain: 150+10+150+10+150 = 470s.
+const CLAUDE_MAX_SECONDS = 470;
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -550,10 +551,11 @@ function Index() {
   }
 
   // ── Synchronous Claude analysis ────────────────────────────
-  // The formatted prompt is small (~13k input tokens after per-block trimming),
-  // so Claude responds in ~15-25s. A direct synchronous server-function call is
-  // simpler and more reliable than the old background job store, which was only
-  // justified when the prompt approached the 200k context limit.
+  // Measured real input is ~27k tokens and responses take ~50-125s (output
+  // generation dominates) — well inside the 150s-per-attempt retry budget in
+  // claude.server.ts. A direct synchronous server-function call is simpler and
+  // more reliable than the old background job store, which was only justified
+  // when the prompt approached the 200k context limit.
   // Process the completed Claude response. calculateResults() runs client-side
   // on the returned raw response.
   function processClaudeResponse(
@@ -1569,8 +1571,8 @@ function MatchView({
                   Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </p>
                 <p className="mt-1 font-mono text-[11px] text-slate/80">
-                  Typically completes in 15-25s. Keep this tab open until it
-                  finishes.
+                  Typically completes in 1-2 minutes. Keep this tab open until
+                  it finishes.
                 </p>
               </div>
             )}
