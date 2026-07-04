@@ -419,12 +419,19 @@ export function computeConfidence(
     // conflict/alignment/poisson adjustment (e.g. {"type":"3_signal_conflict",
     // "delta":-5}). The app then injects its OWN app-computed ensemble delta —
     // counting the same phenomenon twice. Drop ANY Claude adjustment that names
-    // this dimension, then inject the single app-computed value below. The
-    // regex is intentionally broad (matches any suffix, e.g. the run where
-    // Claude emitted "3_signal_conflict_goals" and "poisson_conflict_signal").
+    // this dimension, then inject the single app-computed value below.
+    //
+    // EDGE-FIX tier 5: the regex is anchored to ensemble-dimension phrasings
+    // (still catching the observed real cases "3_signal_conflict",
+    // "3_signal_conflict_goals", "poisson_conflict_signal", "ensemble_*",
+    // "triple_aligned") WITHOUT matching unrelated names that merely contain
+    // "signal"/"conflict" (e.g. a hypothetical "sharp_money_signal" or
+    // "style_conflict_cards" adjustment must survive).
     adjustments = adjustments.filter(
       (a) =>
-        !/ensemble|signal|conflict|aligned|poisson/i.test(a?.type ?? ""),
+        !/ensemble|poisson|(?:\d+.?)?signal.?(?:conflict|align)|conflict.?signal|(?:triple|majority).?align|align(?:ed|ment)?.?(?:signal|check)/i.test(
+          a?.type ?? "",
+        ),
     );
     adjustments.push({ type: "ensemble_alignment", delta: ensembleImpact });
   }
@@ -957,9 +964,28 @@ export function calculateResults(
   // it would add noise without changing sizing. It stays Claude-derived.
   const b3 = result.bet_3;
   if (b3?.parlay_ev_inputs) {
-    const pj = b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final;
+    let pj = num(b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final);
     const sp =
       b3.parlay_ev_inputs.stake_sgp ?? b3.parlay_ev_inputs.effective_sgp_price;
+    // EDGE-FIX tier 5 — joint-probability invariant: P(all legs) can never
+    // exceed P(least likely leg), whatever the correlation. Claude's
+    // correlation factors only ever adjusted p_joint upward historically, so
+    // an inflated p_joint directly inflated parlay EV. Cap and flag.
+    const legProbs = (b3.legs ?? [])
+      .map((l) => num(l.model_probability))
+      .filter((p): p is number => p !== undefined && p > 0);
+    if (pj !== undefined && legProbs.length > 0) {
+      const minLeg = Math.min(...legProbs);
+      if (pj > minLeg) {
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          `SGP p_joint ${pj} exceeded the least likely leg's probability ${minLeg} — capped (a joint probability can never exceed any single leg).`,
+        );
+        pj = minLeg;
+        b3.parlay_ev_inputs.p_joint = minLeg;
+        if (typeof b3.p_joint === "number") b3.p_joint = minLeg;
+      }
+    }
     const ev = computeEv(pj, sp);
     if (ev !== undefined) b3.parlay_ev = ev;
   }
@@ -1043,7 +1069,32 @@ export function calculateResults(
 
   // GAP 2 — ensemble alignment is recomputed from the three signals and
   // OVERWRITES whatever Claude stated (single source of truth).
-  if (result.ensemble_check) {
+  //
+  // EDGE-FIX tier 5 — mixed-scale guard: the ±0.3 alignment threshold assumes
+  // all three signals share one unit (expected goals for goals markets). If
+  // Claude mixed a probability (≤1.0) with a goals figure (≥1.5), any computed
+  // alignment is meaningless — a CONFLICT/-5 would fire purely from the unit
+  // mismatch. Detect that, zero the impact, and flag it.
+  const ensembleScalesMixed = (() => {
+    if (!result.ensemble_check) return false;
+    const sigs = [
+      num(result.ensemble_check.signal_1_model),
+      num(result.ensemble_check.signal_2_poisson),
+      num(result.ensemble_check.signal_3_historical),
+    ].filter((s): s is number => s !== undefined);
+    if (sigs.length < 3) return false;
+    return sigs.some((s) => s <= 1.0) && sigs.some((s) => s >= 1.5);
+  })();
+  if (result.ensemble_check && ensembleScalesMixed) {
+    result.ensemble_check.alignment = "CONFLICT";
+    result.ensemble_check.confidence_impact = "0";
+    result.ensemble_check.note =
+      "Signals are on MIXED SCALES (probability vs goals) — alignment unreliable, confidence impact suppressed. Fix the ensemble units.";
+    result.data_quality_flags = result.data_quality_flags || [];
+    result.data_quality_flags.push(
+      "Ensemble signals on mixed scales — alignment computed as unreliable, ±5 impact suppressed.",
+    );
+  } else if (result.ensemble_check) {
     const computed = calculateEnsembleAlignment({
       signal_1_model: num(result.ensemble_check.signal_1_model) ?? 0,
       signal_2_poisson: num(result.ensemble_check.signal_2_poisson) ?? 0,
@@ -1063,15 +1114,18 @@ export function calculateResults(
 
   // 4 — Confidence score. Pass the ensemble signals so computeConfidence
   // uses the SAME calculateEnsembleAlignment() impact — no divergence.
+  // Mixed-scale signals are withheld so no ±5 impact can be injected from them.
   const cs = result.confidence_scores;
   if (cs?.confidence_inputs) {
     const conf = computeConfidence(
       cs.confidence_inputs,
-      result.ensemble_check && {
-        signal_1_model: num(result.ensemble_check.signal_1_model),
-        signal_2_poisson: num(result.ensemble_check.signal_2_poisson),
-        signal_3_historical: num(result.ensemble_check.signal_3_historical),
-      },
+      result.ensemble_check && !ensembleScalesMixed
+        ? {
+            signal_1_model: num(result.ensemble_check.signal_1_model),
+            signal_2_poisson: num(result.ensemble_check.signal_2_poisson),
+            signal_3_historical: num(result.ensemble_check.signal_3_historical),
+          }
+        : undefined,
     );
     if (conf !== undefined) {
       cs.dimension_weighted_raw =
