@@ -34,13 +34,16 @@ import { resolveMarketType } from "./bettingGlossary";
  * has never been exercised with real Pinnacle data. ev_confidence is correctly
  * set to MEDIUM when Pinnacle is absent.
  *
- * GAP 3: Opponent-strength normalization
- * Gap Score in calculate.ts weights a player's actual_goals and actual_assists
- * from tournament stats without adjusting for opponent quality. A goal scored
- * against a weak group-stage opponent receives the same weight as one scored
- * against an elite side. This is a known bias (Bias #1) that was deliberately
- * not fixed due to data availability constraints — opponent quality index is
- * not available from either API.
+ * GAP 3 (RESOLVED — EDGE-FIX tier 8.1): Opponent-strength normalization
+ * The CALL 6B block now injects an app-computed team-level
+ * opponent_strength_multiplier (computeOpponentStrengthMultiplier below):
+ * the team's goals in each completed fixture are bucketed by the opponent's
+ * FINAL group position (top-2 ×1.0, 3rd ×0.8, 4th ×0.6) and the goal-weighted
+ * average is applied to the goals/assists terms in computeGapScore
+ * (calculate.ts, clamped [0.6, 1.0]). Built entirely from the forever-cached
+ * all-groups standings + the day-cached completed-fixtures list — zero new
+ * API calls. Per-goal bucketing is still impossible (player stats are
+ * tournament aggregates); the team's goal distribution is the documented proxy.
  */
 
 
@@ -2671,6 +2674,125 @@ function resolveOpponentStandingRow(
   return hit ?? null;
 }
 
+// ---- EDGE-FIX tier 8.1: opponent-strength weighting for the Gap Score ----
+//
+// TheStatsAPI player stats are tournament AGGREGATES (no per-match goal
+// breakdown), so a player's individual goals cannot be bucketed by opponent.
+// The auditable app-side proxy: bucket the TEAM's goals in each completed
+// WC2026 fixture by the opponent's FINAL group position and take the
+// goal-weighted average as a team-level multiplier. Claude copies it verbatim
+// into gap_score_inputs.opponent_strength_multiplier; computeGapScore
+// (calculate.ts) clamps to [0.6, 1.0] and applies it to the goals/assists
+// terms. Built from the day-cached completed-fixtures list + forever-cached
+// all-groups standings — zero new API calls.
+const OPP_STRENGTH_WEIGHTS = { top2: 1.0, third: 0.8, fourth: 0.6 } as const;
+
+function oppStrengthWeight(position: number | null): number {
+  if (position === null || position <= 0) return 1.0; // unresolvable → neutral
+  if (position <= 2) return OPP_STRENGTH_WEIGHTS.top2;
+  if (position === 3) return OPP_STRENGTH_WEIGHTS.third;
+  return OPP_STRENGTH_WEIGHTS.fourth;
+}
+
+export interface OpponentStrengthSummary {
+  multiplier: number;
+  raw_goals: number;
+  weighted_goals: number;
+  fixtures_counted: number;
+  breakdown: Array<{
+    opponent: string;
+    goals: number;
+    opponent_final_group_position: number | null;
+    weight: number;
+  }>;
+}
+
+export function computeOpponentStrengthMultiplier(
+  completedFixtures: unknown[],
+  teamId: number,
+  groupRows: StandingRow[],
+): OpponentStrengthSummary | null {
+  if (!groupRows.length) return null;
+  const breakdown: OpponentStrengthSummary["breakdown"] = [];
+  let rawGoals = 0;
+  let weightedGoals = 0;
+
+  for (const item of completedFixtures) {
+    const teams = getField(item, ["teams"]);
+    const home = getField(teams, ["home"]);
+    const away = getField(teams, ["away"]);
+    const homeId = Number(getField(home, ["id"]));
+    const awayId = Number(getField(away, ["id"]));
+    if (homeId !== teamId && awayId !== teamId) continue;
+    const isHome = homeId === teamId;
+    const goalsNode = getField(item, ["goals"]);
+    const goals =
+      Number(getField(goalsNode, [isHome ? "home" : "away"]) ?? 0) || 0;
+    const opponentName = String(
+      getField(isHome ? away : home, ["name"]) ?? "",
+    );
+    const oppRow = resolveOpponentStandingRow(opponentName, groupRows);
+    // Only rows from an actual group (position 1-4 within the group) count;
+    // the cross-group third-place table rows carry group_label null.
+    const position =
+      oppRow && oppRow.group_label !== null ? oppRow.position : null;
+    const weight = oppStrengthWeight(position);
+    rawGoals += goals;
+    weightedGoals += goals * weight;
+    breakdown.push({
+      opponent: opponentName,
+      goals,
+      opponent_final_group_position: position,
+      weight,
+    });
+  }
+
+  if (!breakdown.length) return null;
+  // A team that has not scored yet has nothing to weight — neutral 1.0.
+  const multiplier =
+    rawGoals === 0
+      ? 1.0
+      : Math.min(
+          1,
+          Math.max(
+            OPP_STRENGTH_WEIGHTS.fourth,
+            Math.round((weightedGoals / rawGoals) * 1000) / 1000,
+          ),
+        );
+  return {
+    multiplier,
+    raw_goals: rawGoals,
+    weighted_goals: Math.round(weightedGoals * 1000) / 1000,
+    fixtures_counted: breakdown.length,
+    breakdown,
+  };
+}
+
+// Pull starting_xi player ids out of a lineups response, PER SIDE (the
+// all-sides variant above loses the home/away attribution the tier 8.1
+// opponent-strength injection needs). Handles the same `{data:{home,away}}`,
+// bare `{home,away}` and array shapes as lineupsArePopulated.
+function extractLineupPlayerIdsBySide(lineup: unknown): {
+  home: Set<string>;
+  away: Set<string>;
+} {
+  const node = getField(lineup, ["data"]) ?? lineup;
+  const collect = (side: unknown): Set<string> => {
+    const ids = new Set<string>();
+    const xi = getField(side, ["starting_xi", "startingXi", "startingXI", "lineup"]);
+    for (const p of extractArray(xi)) {
+      const id =
+        getField(p, ["player_id", "id"]) ?? getField(getField(p, ["player"]), ["id"]);
+      if (id != null) ids.add(String(id));
+    }
+    return ids;
+  };
+  return {
+    home: collect(getField(node, ["home"])),
+    away: collect(getField(node, ["away"])),
+  };
+}
+
 // Per-team dead-rubber adjustment: parse last-5, flag dead rubbers using the
 // cached all-groups standings, and produce recency-weighted adjusted averages.
 interface TeamDeadRubberResult {
@@ -3623,6 +3745,42 @@ export async function collectMatchData(
       // tight burst rate limit, so we keep this optional player-stat burst small
       // (it runs LAST, after the mandatory S5/S6 calls have taken their budget).
       const ids = playerIds.slice(0, 4);
+
+      // EDGE-FIX tier 8.1 — team-level opponent-strength multipliers (GAP-3).
+      // Both inputs are already cached (completed fixtures day-cached, all-
+      // groups standings cached forever), so this is zero new API calls in the
+      // normal case. Best-effort: on any failure the field is simply omitted
+      // and computeGapScore degrades to the historical ×1.0 behaviour.
+      let oppStrength: {
+        home: OpponentStrengthSummary | null;
+        away: OpponentStrengthSummary | null;
+      } | null = null;
+      try {
+        const completed = await getCompletedFixtures(2026);
+        const all = await getStatsApiAllStandings();
+        oppStrength = {
+          home: computeOpponentStrengthMultiplier(
+            completed,
+            match.homeId,
+            all.groupRows,
+          ),
+          away: computeOpponentStrengthMultiplier(
+            completed,
+            match.awayId,
+            all.groupRows,
+          ),
+        };
+      } catch (e) {
+        console.warn(
+          "[analyse] 6B opponent-strength multiplier unavailable — gap scores fall back to ×1.0",
+          e,
+        );
+      }
+      const sideIds =
+        lineupResult?.status === "SUCCESS"
+          ? extractLineupPlayerIdsBySide(lineupResult.data)
+          : { home: new Set<string>(), away: new Set<string>() };
+
       const perPlayer: Record<string, unknown> = {};
       let lastError: string | undefined;
       // Each player call is spaced by STATSAPI_DELAY_MS inside saGet, so the
@@ -3633,7 +3791,16 @@ export async function collectMatchData(
             `/football/players/${pid}/stats?season_id=${STATSAPI_SEASON_ID}&competition_id=${STATSAPI_COMPETITION_ID}`,
           );
           if (!isEmptyResponse(raw)) {
-            perPlayer[pid] = extractPlayerStats(raw);
+            const stats = extractPlayerStats(raw);
+            const side = sideIds.home.has(pid)
+              ? "home"
+              : sideIds.away.has(pid)
+                ? "away"
+                : null;
+            const os = side ? oppStrength?.[side] : null;
+            perPlayer[pid] = os
+              ? { ...stats, opponent_strength_multiplier: os.multiplier }
+              : stats;
           }
         } catch (e) {
           lastError = e instanceof Error ? e.message : String(e);
@@ -3646,7 +3813,20 @@ export async function collectMatchData(
         "Player stats (TheStatsAPI)",
         anyData ? "SUCCESS" : "EMPTY",
         anyData
-          ? { playerCount: Object.keys(perPlayer).length, playerStatistics: perPlayer }
+          ? {
+              playerCount: Object.keys(perPlayer).length,
+              playerStatistics: perPlayer,
+              // Team-level values so Claude can still weight an absent player
+              // whose per-player stats call failed — map by the player's team.
+              opponent_strength: oppStrength
+                ? {
+                    home: oppStrength.home,
+                    away: oppStrength.away,
+                    note:
+                      "APP-COMPUTED (tier 8.1): team goals weighted by opponent FINAL group position (top-2 ×1.0, 3rd ×0.8, 4th ×0.6). Copy the player's team multiplier VERBATIM into gap_score_inputs.opponent_strength_multiplier; if absent use 1.0. NEVER estimate it.",
+                  }
+                : null,
+            }
           : undefined,
         anyData
           ? undefined

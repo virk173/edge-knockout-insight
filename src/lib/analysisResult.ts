@@ -55,6 +55,11 @@ export interface GapScoreInputs {
   shots_pg_delta?: number;
   keypasses_pg_delta?: number;
   set_piece_weight?: number;
+  // EDGE-FIX tier 8.1 (GAP-3): app-computed team-level weight for opponent
+  // strength — Claude copies it verbatim from the C6B injection (1.0 when
+  // absent). calculate.ts clamps it to [0.6, 1.0] before applying it to the
+  // goals/assists terms.
+  opponent_strength_multiplier?: number;
 }
 
 export interface MultiplierInputs {

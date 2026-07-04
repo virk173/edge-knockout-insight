@@ -37,10 +37,15 @@ import { calibrateProbability, DEFAULT_LAMBDA } from "@/lib/calibration";
 /*
  * KNOWN GAPS — see also analyse.ts
  *
- * GAP 3 (continued): Opponent-strength normalization is absent from
- * computeGapScore(). The function uses raw tournament goals/assists without
- * weighting by opponent quality. A standings-bucketed weighting is feasible
- * with already-cached data (see EDGE-FIX tier 8.1) — pending sign-off.
+ * GAP 3 (RESOLVED — EDGE-FIX tier 8.1): computeGapScore() weights the
+ * goals/assists terms by gap_score_inputs.opponent_strength_multiplier, an
+ * app-computed team-level factor (team goals bucketed by opponent FINAL group
+ * position — top-2 ×1.0, 3rd ×0.8, 4th ×0.6) injected via the C6B block
+ * (computeOpponentStrengthMultiplier in analyse.ts). Clamped to [0.6, 1.0]
+ * here so a missing/hallucinated value degrades to the historical ×1.0 and
+ * can never inflate a gap score. Per-goal opponent bucketing remains
+ * impossible (player stats are tournament aggregates); the team's goal
+ * distribution across completed fixtures is the documented proxy.
  *
  * GAP 2 (RESOLVED): C9B was repointed to API-Football bookmaker=4, which
  * carries genuine Pinnacle price levels for WC2026 (verified live 2026-07-03,
@@ -273,15 +278,30 @@ export const adjustEVForPinnacleGap = (inputs: {
 
 // ─────────────────────────────────────────────────────────────
 // 3 — Gap score
-//   gap = (goals × 8) + (assists × 5) + (shots_delta × 7)
-//       + (keypasses_delta × 5) + set_piece_weight
+//   gap = ((goals × 8) + (assists × 5)) × opponent_strength_multiplier
+//       + (shots_delta × 7) + (keypasses_delta × 5) + set_piece_weight
+//
+//   opponent_strength_multiplier (tier 8.1, GAP-3) discounts tournament
+//   goals/assists piled up against weak group-stage opposition. It is
+//   app-computed in analyse.ts and merely copied through by Claude, so it
+//   is clamped to [0.6, 1.0] here: a missing/hallucinated value degrades to
+//   the historical behaviour (×1.0) and can never inflate a gap score.
 // ─────────────────────────────────────────────────────────────
+export const OPPONENT_STRENGTH_MULT_MIN = 0.6;
+
+export function clampOpponentStrengthMultiplier(v?: number): number {
+  const n = num(v);
+  if (n === undefined) return 1;
+  return Math.min(1, Math.max(OPPONENT_STRENGTH_MULT_MIN, n));
+}
+
 export function computeGapScore(inputs?: {
   actual_goals?: number;
   actual_assists?: number;
   shots_pg_delta?: number;
   keypasses_pg_delta?: number;
   set_piece_weight?: number;
+  opponent_strength_multiplier?: number;
 }): number | undefined {
   if (!inputs) return undefined;
   const goals = num(inputs.actual_goals) ?? 0;
@@ -289,8 +309,11 @@ export function computeGapScore(inputs?: {
   const shots = num(inputs.shots_pg_delta) ?? 0;
   const kp = num(inputs.keypasses_pg_delta) ?? 0;
   const setPiece = num(inputs.set_piece_weight) ?? 0;
+  const oppMult = clampOpponentStrengthMultiplier(
+    inputs.opponent_strength_multiplier,
+  );
   return round(
-    goals * 8 + assists * 5 + shots * 7 + kp * 5 + setPiece,
+    (goals * 8 + assists * 5) * oppMult + shots * 7 + kp * 5 + setPiece,
     1,
   );
 }
@@ -1035,8 +1058,12 @@ export function calculateResults(
       if (gap !== undefined) {
         a.gap_score = gap;
         const inputs = a.gap_score_inputs!;
+        const oppMult = clampOpponentStrengthMultiplier(
+          inputs.opponent_strength_multiplier,
+        );
         a.gap_calculation =
-          `(${inputs.actual_goals ?? 0}×8) + (${inputs.actual_assists ?? 0}×5) ` +
+          `((${inputs.actual_goals ?? 0}×8) + (${inputs.actual_assists ?? 0}×5))` +
+          `${oppMult !== 1 ? ` × ${oppMult} [opp-strength]` : ""} ` +
           `+ (${inputs.shots_pg_delta ?? 0}×7) + (${inputs.keypasses_pg_delta ?? 0}×5) ` +
           `+ ${inputs.set_piece_weight ?? 0} = ${gap}`;
       }

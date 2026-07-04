@@ -194,13 +194,25 @@ absent player output gap_score_inputs:
   gap_score_inputs: {
     actual_goals, actual_assists,
     shots_pg_delta, keypasses_pg_delta,
-    set_piece_weight }
+    set_piece_weight,
+    opponent_strength_multiplier }
 The app computes:
-  gap = (actual_goals x 8)
-      + (actual_assists x 5)
+  gap = ((actual_goals x 8)
+      + (actual_assists x 5))
+      x opponent_strength_multiplier
       + (shots_pg_delta x 7)
       + (keypasses_pg_delta x 5)
       + set_piece_weight
+
+opponent_strength_multiplier is
+APP-COMPUTED and injected in the C6B
+block (per player, and per team under
+opponent_strength.home/away). COPY it
+VERBATIM for the absent player's team.
+If the C6B block does not carry it,
+output 1.0. NEVER estimate or derive
+it yourself — the app clamps it to
+0.6-1.0 and recomputes the gap.
 
 set_piece_weight by role:
   penalty_taker lost: +15
@@ -1035,7 +1047,10 @@ player_intelligence:
     gap_score_inputs with:
       actual_goals, actual_assists,
       shots_pg_delta, keypasses_pg_delta,
-      set_piece_weight
+      set_piece_weight,
+      opponent_strength_multiplier
+      (copied VERBATIM from C6B;
+       1.0 when C6B has none)
     multiplier_inputs with:
       gap_multiplier, depth_multiplier
     (app computes gap_score,
@@ -1443,10 +1458,16 @@ Confirmed absent. Dia starting.
 Mane: actual_goals 2, actual_assists 1,
 shots_pg 2.8, keypasses_pg 1.9,
 set_piece_roles: free_kick_specialist,
-minutes 270, appearances 3.
+minutes 270, appearances 3,
+opponent_strength_multiplier 0.85.
 Dia: actual_goals 0, actual_assists 0,
 shots_pg 0.9, keypasses_pg 0.6,
-minutes 90, appearances 2.
+minutes 90, appearances 2,
+opponent_strength_multiplier 0.85.
+opponent_strength (APP-COMPUTED):
+home 0.94, away 0.85 — copy the
+player's team value VERBATIM into
+gap_score_inputs; 1.0 if absent.
 [END CALL 6B]
 
 [CALL 7 — referee profile — SUCCESS]
@@ -1636,7 +1657,8 @@ EXAMPLE OUTPUT:
           "actual_assists": 1,
           "shots_pg_delta": 1.9,
           "keypasses_pg_delta": 1.3,
-          "set_piece_weight": 10
+          "set_piece_weight": 10,
+          "opponent_strength_multiplier": 0.85
         },
         "multiplier_inputs": {
           "gap_multiplier": 0.72,
