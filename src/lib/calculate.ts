@@ -1682,9 +1682,14 @@ export const detectDeadRubber = (
   const maxPossibleRivalPoints = baseComparison.own_group_rivals.map(
     (s) => s.max_possible_points,
   );
+  // EDGE-FIX tier 4: count rivals who can finish AT-OR-ABOVE the opponent's
+  // points (>=, not >). A rival who can only EQUAL the points can still
+  // overtake on goal difference, so equality does NOT prove a clinch. This is
+  // deliberately conservative per the FIX-6 doctrine: a missed discount is
+  // cheap; a false 0.2x weight corrupts form.
   const clinchedTop2 =
     opponent.position <= 2 &&
-    maxPossibleRivalPoints.filter((p) => p > opponent.points).length <= 1;
+    maxPossibleRivalPoints.filter((p) => p >= opponent.points).length <= 1;
   baseComparison.clinched_top2 = clinchedTop2;
 
   if (clinchedTop2) {

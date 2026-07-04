@@ -989,7 +989,21 @@ export function verifyFixture(
 //   - After EVERY call we wait STATSAPI_DELAY_MS (600ms) so the next sequential
 //     TheStatsAPI call is spaced out. Callers must never run saGet in parallel.
 //   - On 404 we return null (used for lineups "not announced yet").
-async function saGet(path: string): Promise<unknown> {
+// EDGE-FIX tier 4: all TheStatsAPI calls are serialized through one promise
+// queue (mirroring apiFootballGet's) so a UI per-call Retry can never
+// interleave with a running pipeline — the STATSAPI_DELAY_MS spacing contract
+// below assumed strictly sequential callers but nothing enforced it.
+let saQueue: Promise<void> = Promise.resolve();
+function saGet(path: string): Promise<unknown> {
+  const run = saQueue.then(() => saGetUnqueued(path));
+  saQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function saGetUnqueued(path: string): Promise<unknown> {
   const url = `${SA_BASE}${path}`;
   const label = currentDebugCall ?? "?";
 
@@ -1981,9 +1995,43 @@ function idOrNull(v: unknown): string | null {
 }
 
 // Resolve the TheStatsAPI match (id + team ids) for a fixture by team name on
-// its kickoff date. Case-insensitive "contains" check in both directions, since
-// API-Football and TheStatsAPI name teams slightly differently. Returns null
-// when no match is found.
+// its kickoff date. EDGE-FIX tier 4: matching requires BOTH sides to agree
+// (straight or swapped pair), with an exact-equality pass tried before the
+// looser bidirectional-contains pass. The old any-one-of-four-conditions OR
+// resolved the WRONG match on substring nations ("Niger" matched a Nigeria
+// fixture) and on one-sided hits (target away name appearing in an unrelated
+// same-day fixture) — silently feeding the wrong team's stats into
+// S2A/S2B/C6/C6B/S7. Returns null when no match is found.
+//
+// Exported for tests (pure list-matching logic, no network).
+export function findStatsApiMatchInList(
+  list: unknown[],
+  home: string,
+  away: string,
+): unknown | undefined {
+  const h = normalize(home);
+  const a = normalize(away);
+  if (!h || !a) return undefined;
+  const names = (mt: unknown): [string, string] => [
+    normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? "")),
+    normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? "")),
+  ];
+  // Pass 1 — exact pair (straight or swapped).
+  const exact = list.find((mt) => {
+    const [hn, an] = names(mt);
+    if (!hn || !an) return false;
+    return (hn === h && an === a) || (hn === a && an === h);
+  });
+  if (exact) return exact;
+  // Pass 2 — contains pair (both sides must match, straight or swapped).
+  const side = (n: string, t: string) => !!n && !!t && (n.includes(t) || t.includes(n));
+  return list.find((mt) => {
+    const [hn, an] = names(mt);
+    if (!hn || !an) return false;
+    return (side(hn, h) && side(an, a)) || (side(hn, a) && side(an, h));
+  });
+}
+
 async function resolveStatsApiMatch(
   home: string,
   away: string,
@@ -1992,21 +2040,7 @@ async function resolveStatsApiMatch(
   const date = (kickoffUtc || "").slice(0, 10);
   if (!date) return null;
   const list = await getStatsApiMatches(date);
-  const h = normalize(home);
-  const a = normalize(away);
-  const found = list.find((mt) => {
-    const hn = normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? ""));
-    const an = normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? ""));
-    if (!hn && !an) return false;
-    return (
-      hn.includes(h) ||
-      an.includes(h) ||
-      hn.includes(a) ||
-      an.includes(a) ||
-      h.includes(hn) ||
-      a.includes(an)
-    );
-  });
+  const found = findStatsApiMatchInList(list, home, away);
   if (!found) return null;
   const id = getField(found, ["id", "match_id"]);
   if (id == null) return null;
