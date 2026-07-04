@@ -5,10 +5,10 @@ import {
   CARDS_MARKET_SOURCE_AVAILABLE,
 } from "@/lib/dataGaps";
 
-// The odds source (API-Football) does not carry cards markets at all — this is
-// a permanent data gap, verified live. The Run Report must render an explicit
-// UNAVAILABLE label for cards, NOT a bare "N/A" (which means a transient
-// per-run failure). See src/lib/dataGaps.ts.
+// The RETAIL odds feed (API-Football default) does not carry cards markets —
+// only the Pinnacle bookmaker=4 feed does (tier 8.3). When no retail cards
+// price exists the Run Report must render an explicit UNAVAILABLE label, NOT
+// a bare "N/A" (which means a transient per-run failure). See src/lib/dataGaps.ts.
 
 describe("runReport — cards data gap labeling", () => {
   // A minimal live collection with a C9 odds payload that carries 1X2 but no
@@ -54,7 +54,7 @@ describe("runReport — cards data gap labeling", () => {
   );
 
   it("renders the explicit UNAVAILABLE cards label, not N/A", () => {
-    expect(CARDS_MARKET_SOURCE_AVAILABLE).toBe(false);
+    expect(CARDS_MARKET_SOURCE_AVAILABLE).toBe(true);
     expect(report).toContain(`Cards 3.5 over: ${CARDS_UNAVAILABLE_LABEL}`);
     // Guard against a silent regression back to a bare N/A for cards.
     expect(report).not.toContain("Cards 3.5 over: N/A");

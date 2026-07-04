@@ -14,18 +14,21 @@
 // checked in the DEFAULT (retail) feed.
 // 2026-07-03 UPDATE (EDGE-FIX tier 6): the bookmaker=4 (Pinnacle) feed DOES
 // carry "Cards Over/Under" and "Cards Asian Handicap" (verified on fixture
-// 1565179). The C9B extractor (buildPinnacleSummaryFromApiFootball) has no
-// cards branch yet, so no cards price reaches Claude either way. Flipping this
-// flag is gated on EDGE-FIX tier 8.3 (extractor branch + verification across
-// 3+ fixtures + prompt update) — pending sign-off.
-export const CARDS_MARKET_SOURCE_AVAILABLE = false;
+// 1565179).
+// 2026-07-04 (EDGE-FIX tier 8.3): the C9B extractor
+// (buildPinnacleSummaryFromApiFootball) now has a cards branch, so a real
+// Pinnacle cards price reaches Claude whenever bookmaker=4 offers the market
+// — flag flipped to true. The RETAIL (Stake/C9A) feed still carries no cards,
+// so a cards recommendation is priced off the Pinnacle reference and the
+// executable Stake price must be checked at bet time.
+export const CARDS_MARKET_SOURCE_AVAILABLE: boolean = true;
 
-/** Label for a market the current odds source does not carry at all. */
+/** Label for a cards price the odds sources did not carry for this match. */
 export const CARDS_UNAVAILABLE_LABEL =
-  "UNAVAILABLE — not carried by current odds source (verified across 33 bookmakers, July 2026)";
+  "UNAVAILABLE — no cards price this match (retail feed carries none; Pinnacle C9B offered no cards market this run)";
 
 /** Short pill variant of the above for tight UI contexts. */
-export const CARDS_UNAVAILABLE_SHORT = "UNAVAILABLE — data gap";
+export const CARDS_UNAVAILABLE_SHORT = "UNAVAILABLE — no cards price this run";
 
 /** True when a market name refers to cards / bookings. */
 export function isCardsMarket(name: string | null | undefined): boolean {

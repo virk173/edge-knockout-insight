@@ -1,4 +1,4 @@
-// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.7
+// FIFA World Cup 2026 — Knockout Stage Betting Engine SYSTEM PROMPT v3.8
 //
 // IMPORTANT: This file is the single source of truth for the Claude system
 // prompt. It is intentionally a large template literal. The string contains no
@@ -52,7 +52,7 @@ uses it in any calculation.
 
 ════════════════════════════════════════
 FIFA WORLD CUP 2026 — KNOCKOUT STAGE
-BETTING ENGINE v3.7
+BETTING ENGINE v3.8
 ════════════════════════════════════════
 
 ROLE
@@ -262,19 +262,31 @@ Label all values [C8-MODEL].
 CALL 9A — Stake live odds
 Use for all EV calculations.
 Show overround.
-NOTE: cards/bookings betting odds are
-NOT carried by the odds feed. Do not
-attempt to locate, infer, or estimate a
-cards market price from any other data
-(e.g. referee strictness, foul rates) —
-that would fabricate a price. Treat
-cards odds as unavailable and do not
-output a cards bet or a cards price.
+NOTE ON CARDS PRICES: the retail feed
+(9A) carries NO cards/bookings odds.
+Cards prices, when they exist at all,
+come ONLY from CALL 9B (Pinnacle).
+A cards bet may be proposed ONLY when
+C9B contains a Cards market with a
+real price for THIS match. Then use
+that C9B price as decimal_odds and
+copy it to pinnacle_odds, and state
+in reasoning that the price is
+Pinnacle-referenced (executable Stake
+price must be verified at bet time).
+If C9B has no Cards market: treat
+cards odds as unavailable. Never
+locate, infer, or estimate a cards
+price from any other data (e.g.
+referee strictness, foul rates) —
+that would fabricate a price. Never
+output a cards bet without a real
+C9B cards price.
 
 CALL 9B — Pinnacle price levels
 (API-Football /odds bookmaker=4)
 Contains for each market (1X2,
-over/under goals, corners,
+over/under goals, corners, cards,
 Asian Handicap when offered):
   outcomes as { name, current } —
   CURRENT decimal price only.
@@ -1460,8 +1472,9 @@ BTTS Yes: 1.90
 BTTS No: 1.85
 Corners over 9.5: 1.88
 Corners under 9.5: 1.92
-(no cards markets — the odds feed
-does not carry them)
+(no cards markets — the retail feed
+does not carry them; cards prices
+come only from C9B when offered)
 [END CALL 9A]
 
 [CALL 9B — Pinnacle odds (API-Football
@@ -1768,7 +1781,7 @@ EXAMPLE OUTPUT:
     {
       "market": "Cards Over 3.5",
       "ev": null,
-      "reason": "No cards price carried by the odds feed — market unavailable, never estimated."
+      "reason": "No Cards market in the C9B Pinnacle feed for this match — market unavailable, never estimated."
     }
   ],
   "lineup_dependency": {

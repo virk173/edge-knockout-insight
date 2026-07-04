@@ -400,18 +400,19 @@ function buildCallData(
     )}`,
   );
   p(
-    // PERMANENT data gap, not a transient N/A — see src/lib/dataGaps.ts.
-    // If a future odds source begins carrying cards, flip
-    // CARDS_MARKET_SOURCE_AVAILABLE to true and this reverts to a live price.
-    `    Cards 3.5 over: ${
-      CARDS_MARKET_SOURCE_AVAILABLE
-        ? stakePrice(
-            sm,
-            "Cards Over/Under",
-            (v) => v.includes("over") && v.includes("3.5"),
-          )
-        : CARDS_UNAVAILABLE_LABEL
-    }`,
+    // Cards (tier 8.3): the retail feed still carries no cards, so a live
+    // retail price is the exception; a miss renders the explicit UNAVAILABLE
+    // label, never a bare "N/A" (which reads as a transient per-run failure).
+    // The Pinnacle cards price, when offered, appears in the C9B section.
+    `    Cards 3.5 over: ${(() => {
+      if (!CARDS_MARKET_SOURCE_AVAILABLE) return CARDS_UNAVAILABLE_LABEL;
+      const live = stakePrice(
+        sm,
+        "Cards Over/Under",
+        (v) => v.includes("over") && v.includes("3.5"),
+      );
+      return live === "N/A" ? CARDS_UNAVAILABLE_LABEL : live;
+    })()}`,
   );
   p(`    Overround: ${stakeOverround(sm)}`);
 

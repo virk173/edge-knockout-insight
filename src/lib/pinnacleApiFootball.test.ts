@@ -819,3 +819,115 @@ describe("C9A pinning (Bet365 primary) is unaffected by the C9B repoint", () => 
     expect(parsed!.markets["1X2 (Match Winner)"]).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// EDGE-FIX tier 8.3 — cards market rollout
+// The Pinnacle bookmaker=4 feed verifiably carries "Cards Over/Under" (and
+// "Cards Asian Handicap") for WC2026 even though the retail feed carries no
+// cards at all. The C9B extractor now ships a "Cards" market so a REAL cards
+// price reaches Claude; cards-AH must never be misfiled into the goals
+// Asian Handicap market.
+// ─────────────────────────────────────────────────────────────
+describe("tier 8.3 — C9B cards extraction (Pinnacle bookmaker=4)", () => {
+  const cardsResponse = [
+    {
+      fixture: { id: 1565179 },
+      bookmakers: [
+        {
+          id: 4,
+          name: "Pinnacle",
+          bets: [
+            {
+              // Cards AH listed FIRST deliberately: it must not be captured
+              // as the goals "Asian Handicap" market (misfiling guard).
+              name: "Cards Asian Handicap",
+              values: [
+                { value: "Home -1.5", odd: "1.88" },
+                { value: "Away -1.5", odd: "1.92" },
+              ],
+            },
+            {
+              name: "Cards Over/Under",
+              values: [
+                { value: "Over 2.5", odd: "1.60" },
+                { value: "Under 2.5", odd: "2.30" },
+                { value: "Over 3.5", odd: "2.10" },
+                { value: "Under 3.5", odd: "1.70" },
+                { value: "Over 5.5", odd: "4.50" }, // outside 2.5/3.5/4.5 cap → dropped
+              ],
+            },
+            {
+              name: "Asian Handicap",
+              values: [
+                { value: "Home -0.5", odd: "1.90" },
+                { value: "Away +0.5", odd: "1.90" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("ships a Cards market with real prices, line-capped to 2.5/3.5/4.5", () => {
+    const summary = buildPinnacleSummaryFromApiFootball(cardsResponse);
+    expect(summary).not.toBeNull();
+    const cards = summary!.markets.find((m) => m.market === "Cards");
+    expect(cards).toBeDefined();
+    const names = cards!.outcomes.map((o) => o.name);
+    expect(names).toEqual(["Over 2.5", "Under 2.5", "Over 3.5", "Under 3.5"]);
+    const over35 = cards!.outcomes.find((o) => o.name === "Over 3.5");
+    expect(over35!.current).toBe(2.1);
+    // Same no-history contract as every other C9B market.
+    for (const o of cards!.outcomes) {
+      expect(o.opening).toBeNull();
+      expect(o.movement_pct).toBeNull();
+    }
+  });
+
+  it("never misfiles 'Cards Asian Handicap' into the goals Asian Handicap market", () => {
+    const summary = buildPinnacleSummaryFromApiFootball(cardsResponse);
+    const ah = summary!.markets.find((m) => m.market === "Asian Handicap");
+    expect(ah).toBeDefined();
+    // Only the genuine goals-AH values survive — the cards-AH values (1.88 /
+    // 1.92 on the -1.5 line) must not appear.
+    expect(ah!.outcomes.map((o) => o.name)).toEqual(["Home -0.5", "Away +0.5"]);
+    // Cards-AH is intentionally not shipped as its own market either.
+    expect(summary!.markets.map((m) => m.market)).not.toContain("Cards Asian Handicap");
+  });
+
+  it("gap check pairs Cards when the retail feed ever carries a cards price", () => {
+    const retailWithCards = [
+      {
+        bookmakers: [
+          {
+            id: 22,
+            name: "Stake",
+            bets: [
+              {
+                name: "Cards Over/Under",
+                values: [
+                  { value: "Over 3.5", odd: "2.20" },
+                  { value: "Under 3.5", odd: "1.65" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const summary = buildPinnacleSummaryFromApiFootball(cardsResponse);
+    const gap = buildStakeGapCheck(retailWithCards, summary!.markets);
+    const cardsGap = gap.filter((g) => g.market === "Cards");
+    expect(cardsGap.length).toBe(2);
+    const over = cardsGap.find((g) => g.line === "Over 3.5");
+    // (2.20 / 2.10 - 1) * 100 = 4.8 (1dp)
+    expect(over!.gap_pct).toBeCloseTo(4.8, 1);
+    expect(over!.verdict).toBe("STAKE OFFERS VALUE vs PINNACLE");
+  });
+
+  it("no cards bet in the feed → no Cards market (absence is data, never zero)", () => {
+    const summary = buildPinnacleSummaryFromApiFootball(pinnacleResponse);
+    expect(summary!.markets.map((m) => m.market)).not.toContain("Cards");
+  });
+});

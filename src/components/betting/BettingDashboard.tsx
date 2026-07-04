@@ -14,7 +14,11 @@ import {
   type MarketRejected,
 } from "@/lib/analysisResult";
 import { computeEv } from "@/lib/calculate";
-import { isCardsMarket, CARDS_UNAVAILABLE_SHORT } from "@/lib/dataGaps";
+import {
+  isCardsMarket,
+  CARDS_MARKET_SOURCE_AVAILABLE,
+  CARDS_UNAVAILABLE_SHORT,
+} from "@/lib/dataGaps";
 import { CARD, fmtOdds, sgpCombinedOdds, SectionLabel } from "./parts/helpers";
 import { MatchHeader } from "./parts/MatchHeader";
 import { TopBets } from "./parts/TopBets";
@@ -753,9 +757,15 @@ function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
       {open && (
         <div className="mt-2 flex flex-col gap-1.5">
           {markets.map((m, i) => {
-            // Cards is a permanent source gap, not an analysis rejection —
-            // render it as a neutral data-gap note, never a red "rejected" row.
-            if (isCardsMarket(m.market)) {
+            // A cards rejection is a neutral data-gap note (not a red
+            // "rejected" row) only while no source carries cards at all, or
+            // when this particular run had no cards price to evaluate. Since
+            // tier 8.3 the Pinnacle C9B feed can price cards, so a cards
+            // rejection WITH ev inputs is a genuine model rejection.
+            if (
+              isCardsMarket(m.market) &&
+              (!CARDS_MARKET_SOURCE_AVAILABLE || (m.ev == null && !m.ev_inputs))
+            ) {
               return (
                 <div
                   key={i}
@@ -766,8 +776,9 @@ function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
                   </span>
                   <span className="text-slate">{CARDS_UNAVAILABLE_SHORT}</span>
                   <span className="w-full text-slate/80">
-                    Not carried by current odds source (verified across 33
-                    bookmakers, July 2026) — data gap, not a model judgment.
+                    No cards price this run (retail feed carries none; Pinnacle
+                    C9B offered no cards market) — data gap, not a model
+                    judgment.
                   </span>
                 </div>
               );

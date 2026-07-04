@@ -1218,6 +1218,29 @@ export function buildPinnacleSummaryFromApiFootball(
       continue;
     }
 
+    // Cards / bookings — EDGE-FIX tier 8.3: the bookmaker=4 (Pinnacle) feed
+    // verifiably carries "Cards Over/Under" for WC2026 (see src/lib/dataGaps.ts).
+    // Line-capped to 2.5/3.5/4.5 via C9A's WANTED_STAKE_MARKETS["Cards
+    // Over/Under"].valueFilter (reused, not duplicated). Checked BEFORE the
+    // Asian Handicap branch so "Cards Asian Handicap" is never misfiled into
+    // the goals Asian Handicap market; cards-AH itself is intentionally not
+    // extracted (no market group consumes it — GROUP E is cards TOTALS only).
+    if (/card|booking/.test(betName)) {
+      if (betName.includes("asian handicap")) continue;
+      const valueFilter = WANTED_STAKE_MARKETS.find(
+        (w) => w.label === "Cards Over/Under",
+      )?.valueFilter;
+      const outcomes: PinnacleMarketSummary["outcomes"] = [];
+      for (const v of values) {
+        const label = String(getField(v, ["value"]) ?? "");
+        if (!valueFilter || valueFilter(label.toLowerCase()))
+          outcomes.push(priceOutcome(label, oddOf(v)));
+      }
+      if (outcomes.length && !has("Cards"))
+        markets.push({ market: "Cards", outcomes });
+      continue;
+    }
+
     // Over/Under goals — line-capped to 1.5/2.5/3.5 (OPT 1), same as C9A's
     // WANTED_STAKE_MARKETS["Over/Under 2.5 Goals"].valueFilter (reused below,
     // not duplicated) so C9B doesn't ship every line the bookmaker offers.
@@ -1495,13 +1518,13 @@ const WANTED_STAKE_MARKETS: Array<{
     // names ("Cards Over/Under", "Total Cards", "Bookings Over/Under",
     // "Total Bookings"), so we match broadly on card|booking.
     //
-    // INTENTIONALLY KEPT — DO NOT "FIX". Verified live on 2026-07-02 across 3
-    // WC2026 fixtures: API-Football's /odds feed carries ZERO cards markets
-    // across all 33 bookmakers, even though the bet-type ID exists in the
-    // catalog. This matcher is correct and harmless (it simply never matches
-    // today); it stays in place so cards extraction works automatically the
-    // day a bookmaker/feed populates the market. See src/lib/dataGaps.ts
-    // (CARDS_MARKET_SOURCE_AVAILABLE) for the display-side gate.
+    // Retail feed status (2026-07-02, 3 fixtures): the DEFAULT /odds feed
+    // carries ZERO cards markets across all 33 bookmakers, so this C9A matcher
+    // never fires today — it stays in place so retail cards extraction works
+    // automatically the day the feed populates the market. Since EDGE-FIX tier
+    // 8.3, cards prices DO reach Claude via C9B (Pinnacle bookmaker=4, which
+    // verifiably carries "Cards Over/Under"); its extractor branch reuses this
+    // entry's valueFilter. See src/lib/dataGaps.ts (CARDS_MARKET_SOURCE_AVAILABLE).
     // Lines 2.5 / 3.5 / 4.5 kept (3.5 is the primary line the report shows).
     label: "Cards Over/Under",
     match: (n) => /card|booking/.test(n),
@@ -1576,6 +1599,10 @@ const STAKE_GAP_MARKET_MAP: Array<{
   { pinnacleLabel: "Over/Under Goals", retailLabel: "Over/Under 2.5 Goals", outMarket: "Over/Under Goals" },
   { pinnacleLabel: "BTTS", retailLabel: "Both Teams To Score", outMarket: "BTTS" },
   { pinnacleLabel: "Corners", retailLabel: "Corners Over/Under", outMarket: "Corners" },
+  // Cards (tier 8.3): today only C9B (Pinnacle bm=4) carries cards, so this
+  // pair stays inert until the retail feed populates the market — then the
+  // gap check starts covering cards with zero further changes.
+  { pinnacleLabel: "Cards", retailLabel: "Cards Over/Under", outMarket: "Cards" },
   { pinnacleLabel: "Asian Handicap", retailLabel: "Asian Handicap", outMarket: "Asian Handicap" },
 ];
 

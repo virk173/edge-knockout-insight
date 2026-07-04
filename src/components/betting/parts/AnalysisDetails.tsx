@@ -8,7 +8,11 @@ import {
 } from "@/lib/analysisResult";
 import { CARD, Pill, SectionLabel, goalsDirectionStyle } from "./helpers";
 import { plainConfidenceAdjustment } from "@/lib/plainEnglish";
-import { isCardsMarket, CARDS_UNAVAILABLE_SHORT } from "@/lib/dataGaps";
+import {
+  isCardsMarket,
+  CARDS_MARKET_SOURCE_AVAILABLE,
+  CARDS_UNAVAILABLE_SHORT,
+} from "@/lib/dataGaps";
 
 // ─────────────────────────────────────────────────────────────
 // Analysis details (collapsible)
@@ -205,7 +209,9 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
               {evaluated.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {evaluated.map((m, i) =>
-                    isCardsMarket(m) ? (
+                    // Neutral data-gap pill only while no source carries
+                    // cards; since tier 8.3 Pinnacle C9B can price them.
+                    !CARDS_MARKET_SOURCE_AVAILABLE && isCardsMarket(m) ? (
                       <span
                         key={i}
                         title={CARDS_UNAVAILABLE_SHORT}
@@ -227,7 +233,10 @@ export function AnalysisDetails({ result }: { result: AnalysisResult }) {
               {rejected.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {rejected.map((m, i) =>
-                    isCardsMarket(m.market) ? (
+                    // Data-gap pill only when the run genuinely had no cards
+                    // price (no ev) — a priced cards rejection is a real one.
+                    isCardsMarket(m.market) &&
+                    (!CARDS_MARKET_SOURCE_AVAILABLE || m.ev == null) ? (
                       <span
                         key={i}
                         title={CARDS_UNAVAILABLE_SHORT}
