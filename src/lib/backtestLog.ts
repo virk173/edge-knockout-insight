@@ -22,7 +22,7 @@ import type {
 
 export const LOG_STORAGE_KEY = "edge_wc2026_log";
 
-export type Outcome = "PENDING" | "WON" | "LOST";
+export type Outcome = "PENDING" | "WON" | "LOST" | "PUSH" | "VOID";
 
 export interface LogRecommendation {
   tier?: number | string;
@@ -31,6 +31,10 @@ export interface LogRecommendation {
   odds?: number;
   stake?: string;
   model_probability?: number;
+  // PRE-calibration model probability. REQUIRED for the λ fit: fitting on the
+  // calibrated value creates a feedback loop (λ fit on λ-shrunk inputs but
+  // applied to raw inputs → drifts toward 1.0 and disables calibration).
+  model_probability_raw?: number;
   ev?: number;
   confidence?: number;
   ensemble_alignment?: string;
@@ -82,20 +86,24 @@ export function parseStake(stake?: string | number): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** EV realised: WON -> odds - 1, LOST -> -1, PENDING -> null. */
+/** EV realised: WON -> odds - 1, LOST -> -1, PUSH/VOID -> 0, PENDING -> null. */
 export function computeEvRealised(rec: LogRecommendation): number | null {
   if (rec.outcome === "WON") {
     const odds = typeof rec.odds === "number" ? rec.odds : 0;
     return odds - 1;
   }
   if (rec.outcome === "LOST") return -1;
+  if (rec.outcome === "PUSH" || rec.outcome === "VOID") return 0;
   return null;
 }
 
-/** Cycle a badge outcome PENDING -> WON -> LOST -> PENDING. */
+/** Cycle a badge outcome PENDING -> WON -> LOST -> PUSH -> PENDING. (VOID is
+ * settable programmatically but not part of the click cycle — pushes are the
+ * common case: AH stake-returned, DNB draws.) */
 export function cycleOutcome(outcome: Outcome): Outcome {
   if (outcome === "PENDING") return "WON";
   if (outcome === "WON") return "LOST";
+  if (outcome === "LOST") return "PUSH";
   return "PENDING";
 }
 
@@ -163,6 +171,10 @@ export function appendLogEntry(raw: RawLogEntry | null | undefined): LogEntry[] 
         stake: r?.stake,
         model_probability:
           typeof r?.model_probability === "number" ? r.model_probability : undefined,
+        model_probability_raw:
+          typeof r?.model_probability_raw === "number"
+            ? r.model_probability_raw
+            : undefined,
         // ev/confidence: only a real computed number is ever stored; the literal
         // "PENDING_APP_COMPUTE" string is a non-number and becomes undefined.
         ev: typeof r?.ev === "number" ? r.ev : undefined,
@@ -180,7 +192,12 @@ export function appendLogEntry(raw: RawLogEntry | null | undefined): LogEntry[] 
         clv_pct: typeof r?.clv_pct === "number" ? r.clv_pct : undefined,
         // Honour an explicit outcome from the raw entry; default PENDING.
         outcome:
-          r?.outcome === "WON" || r?.outcome === "LOST" ? r.outcome : "PENDING",
+          r?.outcome === "WON" ||
+          r?.outcome === "LOST" ||
+          r?.outcome === "PUSH" ||
+          r?.outcome === "VOID"
+            ? r.outcome
+            : "PENDING",
       }))
     : [];
 
@@ -249,6 +266,11 @@ export function buildLogEntryFromEnriched(
       model_probability:
         typeof bet.model_probability === "number"
           ? bet.model_probability
+          : undefined,
+      // RAW (pre-calibration) probability — this is what the λ fit consumes.
+      model_probability_raw:
+        typeof bet.model_probability_raw === "number"
+          ? bet.model_probability_raw
           : undefined,
       ev: typeof bet.ev === "number" ? bet.ev : undefined, // APP-computed EV
       confidence: finalConfidence,
@@ -320,6 +342,10 @@ export function buildLogEntryFromEnriched(
         model_probability:
           typeof bet.model_probability === "number"
             ? bet.model_probability
+            : undefined,
+        model_probability_raw:
+          typeof bet.model_probability_raw === "number"
+            ? bet.model_probability_raw
             : undefined,
         ev: shadowEv,
         confidence: finalConfidence,
@@ -658,6 +684,10 @@ export function computeSummary(entries: LogEntry[]): LogSummary {
       totalReturned += stake * odds;
     } else if (r.outcome === "LOST") {
       lostCount += 1;
+    } else if (r.outcome === "PUSH" || r.outcome === "VOID") {
+      // Settled-neutral: stake returned, excluded from win-rate numerator and
+      // denominator (decided = won + lost only).
+      totalReturned += stake;
     } else {
       pendingCount += 1;
     }
@@ -888,7 +918,20 @@ export function computeClvSummary(entries: LogEntry[]): ClvSummary {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Calibration samples — ALL settled recs (real AND paper), excl PUSH/VOID.
+// Calibration samples — settled straight-bet recs (real AND paper), excl
+// PUSH/VOID.
+//
+// CRITICAL INVARIANT (EDGE-FIX tier 1): samples must carry the RAW
+// (pre-calibration) model probability. λ is applied to raw probabilities in
+// calculate.ts, so it must be FIT against raw probabilities too. Fitting on
+// the calibrated value creates a feedback loop: each refit sees already-shrunk
+// inputs, finds a λ closer to 1.0, and calibration silently disables itself.
+// Old entries that predate model_probability_raw fall back to the calibrated
+// value (imperfect but better than discarding the sample volume).
+//
+// Tier 3/4 (SGP/jackpot) recs are EXCLUDED: p_joint is a correlation-adjusted
+// parlay product that is never calibrated — a different estimator class that
+// would distort a λ meant for single-market probabilities.
 // ─────────────────────────────────────────────────────────────
 export function getCalibrationSamples(entries: LogEntry[]): CalibrationSample[] {
   const out: CalibrationSample[] = [];
@@ -897,10 +940,13 @@ export function getCalibrationSamples(entries: LogEntry[]): CalibrationSample[] 
     // pick). Discretionary action bets do NOT — their odds are user-edited.
     if (r.action_bet === true) continue;
     if (r.outcome !== "WON" && r.outcome !== "LOST") continue; // excludes PENDING/PUSH/VOID
-    if (typeof r.model_probability !== "number") continue;
+    const tierNum = Number(r.tier);
+    if (tierNum === 3 || tierNum === 4) continue; // parlay probs never enter the fit
+    const modelP = r.model_probability_raw ?? r.model_probability;
+    if (typeof modelP !== "number") continue;
     if (typeof r.odds !== "number" || r.odds <= 0) continue;
     out.push({
-      model_p: r.model_probability,
+      model_p: modelP,
       decimal_odds: r.odds,
       won: r.outcome === "WON",
     });

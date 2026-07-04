@@ -358,7 +358,9 @@ function Index() {
   function handleCycleOutcome(entryId: string, recIndex: number, next: Outcome) {
     // Capture the rec BEFORE mutating so we can settle action bets against the
     // bankroll. Action bets are real money: WON/LOST create a ledger entry;
-    // cycling away reverses the prior settlement idempotently.
+    // cycling away reverses the prior settlement idempotently. PUSH/VOID land
+    // in the else-branch deliberately: prior settlement reversed, no new ledger
+    // entry (profit 0), bankroll unchanged.
     const priorEntry = logEntries.find((e) => e.id === entryId);
     const rec = priorEntry?.recommendations[recIndex];
 

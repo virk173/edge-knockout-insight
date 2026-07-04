@@ -27,6 +27,9 @@ const OUTCOME_BADGE: Record<Outcome, string> = {
   PENDING: "border-slate/40 bg-slate/10 text-slate",
   WON: "border-signal-green/50 bg-signal-green/10 text-signal-green",
   LOST: "border-signal-red/50 bg-signal-red/10 text-signal-red",
+  // Settled-neutral: stake returned (AH push, DNB draw, voided market).
+  PUSH: "border-signal-orange/50 bg-signal-orange/10 text-signal-orange",
+  VOID: "border-slate/40 bg-slate/10 text-slate line-through",
 };
 
 function clvNode(rec: { clv_pct?: number; closing_source?: string }): React.ReactNode {
