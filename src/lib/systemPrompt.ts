@@ -195,8 +195,28 @@ All player props remain PENDING.
 Extract: confirmed 11 starters,
 formation, bench list, captain.
 
+Each C6 side carries two app-computed
+lists — treat them differently:
+  notable_bench_changes: C5 doubtful
+    players CONFIRMED ON THE BENCH.
+    They made the squad and are
+    AVAILABLE. NEVER put them in the
+    absences array, never gap-score
+    them. At most a tactical note.
+  doubtful_absent_from_xi: C5 doubtful
+    players in NEITHER the starting XI
+    NOR the bench. These are the real
+    absence candidates for C6B.
+
 CALL 6B — player intelligence
 Trigger only if Call 5 has absences.
+The absences array contains ONLY
+players genuinely out: confirmed-out
+C5 entries (injury/suspension) and
+doubtful_absent_from_xi players.
+NEVER a player from
+notable_bench_changes — being on the
+bench is availability, not absence.
 
 GAP SCORE — RAW VARIABLES ONLY:
 Do NOT compute the gap score. For each
@@ -981,8 +1001,9 @@ pinnacle_gap_check: array
   pinnacle_odds, gap_pct, verdict
 model_probabilities:
   home, draw, away — the STEP 1 model
-  percentages; MUST sum to 100. Never
-  omit this field.
+  percentages; MUST sum to 100 (within
+  1 rounding). MANDATORY — never omit;
+  output missing without it is invalid.
 probability_derivation:
   brief object/string showing how the
   headline probability was built (the
@@ -1013,6 +1034,7 @@ confidence_scores:
   (app computes post_adjustment,
    bayesian_applied and final_confidence)
 dimension_weights:
+  MANDATORY — never omit.
   D1: number
   D2: number
   D3: number
@@ -1361,6 +1383,11 @@ SECTION 10 — ABSOLUTE RULES
     ALWAYS sum to exactly 100. Sum your
     six numbers before output; if not 100,
     fix D1.
+    This field is MANDATORY. If it is
+    absent from your output the entire
+    analysis is invalid. Output it even
+    if all weights are the default
+    35/25/20/10/5/5.
 
 35. STATUS VOCABULARY DISCIPLINE.
     Only use status values that actually

@@ -325,6 +325,17 @@ function extractDoubtfulPlayerNames(rawInjuries: unknown, teamName: string | nul
 // but C4 only ever carries scorelines — no historical lineup data exists in
 // this pipeline — so that half of the original spec is not implementable
 // without new data fetching; this covers the buildable half.)
+//
+// LIVE-RUN FIX (2026-07-04): "not in the starting XI" conflated two very
+// different states — ON THE BENCH (made the squad, available — NOT an
+// absence) and ABSENT FROM THE SQUAD ENTIRELY (genuine absence candidate).
+// A day-to-day Ghana player on the bench was pushed through the absence
+// pipeline because the old single list couldn't tell them apart. The
+// substitutes array (present in both TheStatsAPI and API-Football-fallback
+// shapes) is now cross-referenced:
+//   notable_bench_changes  = doubtful ∩ substitutes   (available, never an absence)
+//   doubtful_absent_from_xi = doubtful − XI − substitutes (absence candidates)
+// A doubtful player IN the starting XI appears in neither (cleared to play).
 function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<string, unknown> {
   const starting_xi = extractArray(
     getField(side, ["starting_xi", "startXI", "startingXi", "startingXI"]),
@@ -332,14 +343,26 @@ function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<strin
   const startingNamesNorm = new Set(
     starting_xi.map((p) => normalize(String(p.name ?? ""))).filter(Boolean),
   );
-  const notable_bench_changes = doubtfulNames.filter(
+  const subsNamesNorm = new Set(
+    extractArray(getField(side, ["substitutes", "subs", "bench"]))
+      .map((p) => normalize(String(compactPlayer(p).name ?? "")))
+      .filter(Boolean),
+  );
+  const notInXI = doubtfulNames.filter(
     (name) => !startingNamesNorm.has(normalize(name)),
+  );
+  const notable_bench_changes = notInXI.filter((name) =>
+    subsNamesNorm.has(normalize(name)),
+  );
+  const doubtful_absent_from_xi = notInXI.filter(
+    (name) => !subsNamesNorm.has(normalize(name)),
   );
   return {
     team: getField(side, ["team_name", "name"]) ?? getField(getField(side, ["team"]), ["name"]) ?? null,
     formation: getField(side, ["formation"]) ?? null,
     starting_xi,
     notable_bench_changes,
+    doubtful_absent_from_xi,
   };
 }
 

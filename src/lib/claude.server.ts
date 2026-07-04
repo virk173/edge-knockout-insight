@@ -97,6 +97,40 @@ const ANALYSIS_TOOL_INPUT_SCHEMA = {
     confidence_scores: loose,
     tactical_analysis: loose,
     player_intelligence: loose,
+    // model_probabilities and dimension_weights were REQUIRED by the system
+    // prompt (Section 9, rule 34) but absent from this property list — with
+    // structured outputs the model emits essentially only the enumerated
+    // properties, so both fields silently vanished from every live run and
+    // validateModelProbabilities / dimension-weights validation never ran.
+    // Enumerating them here (and listing them in `required` below) is what
+    // actually makes them appear; the prompt text alone could not.
+    // Shape matches the app contract: home/draw/away PERCENTAGES summing to
+    // 100 (validateModelProbabilities in calculate.ts), D1–D6 summing to 100.
+    model_probabilities: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        home: { type: "number" },
+        draw: { type: "number" },
+        away: { type: "number" },
+      },
+      required: ["home", "draw", "away"],
+    },
+    probability_derivation: {},
+    dimension_weights: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        D1: { type: "number" },
+        D2: { type: "number" },
+        D3: { type: "number" },
+        D4: { type: "number" },
+        D5: { type: "number" },
+        D6: { type: "number" },
+        adjustment_reason: {},
+      },
+      required: ["D1", "D2", "D3", "D4", "D5", "D6"],
+    },
     bet_1: loose,
     bet_2: loose,
     bet_3: loose,
@@ -107,6 +141,7 @@ const ANALYSIS_TOOL_INPUT_SCHEMA = {
     analyst_note: { type: "string" },
     log_entry: loose,
   },
+  required: ["model_probabilities", "dimension_weights"],
 } as const;
 
 // Per-attempt timeout. Measured directly (live diagnostic call): a real

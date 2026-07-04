@@ -47,7 +47,7 @@ describe("OPT 5 — C6 bench list removed, notable_bench_changes added", () => {
     expect(out.home).toHaveProperty("notable_bench_changes");
   });
 
-  it("a C5 doubtful player absent from the starting XI appears in notable_bench_changes", () => {
+  it("a C5 doubtful player ON THE BENCH appears in notable_bench_changes, NOT doubtful_absent_from_xi (they made the squad)", () => {
     const rawInjuries = [
       {
         player: { name: "Coman", type: "Questionable" },
@@ -59,10 +59,23 @@ describe("OPT 5 — C6 bench list removed, notable_bench_changes added", () => {
       "5": { status: "SUCCESS", data: rawInjuries },
     });
     expect(out.home.notable_bench_changes).toEqual(["Coman"]);
+    expect(out.home.doubtful_absent_from_xi).toEqual([]);
     expect(out.away.notable_bench_changes).toEqual([]);
   });
 
-  it("a C5 doubtful player who DID start is not flagged (no false positive)", () => {
+  it("a C5 doubtful player in NEITHER the XI NOR the bench goes to doubtful_absent_from_xi (real absence candidate)", () => {
+    const rawInjuries = [
+      { player: { name: "Kante", type: "Doubtful" }, team: { name: "France" } },
+    ];
+    const out = c6Block({
+      "6": { status: "SUCCESS", data: rawLineup },
+      "5": { status: "SUCCESS", data: rawInjuries },
+    });
+    expect(out.home.doubtful_absent_from_xi).toEqual(["Kante"]);
+    expect(out.home.notable_bench_changes).toEqual([]);
+  });
+
+  it("a C5 doubtful player who DID start appears in neither list (cleared to play)", () => {
     const rawInjuries = [
       { player: { name: "Mbappe", type: "Doubtful" }, team: { name: "France" } },
     ];
@@ -71,6 +84,7 @@ describe("OPT 5 — C6 bench list removed, notable_bench_changes added", () => {
       "5": { status: "SUCCESS", data: rawInjuries },
     });
     expect(out.home.notable_bench_changes).toEqual([]);
+    expect(out.home.doubtful_absent_from_xi).toEqual([]);
   });
 
   it("a confirmed-out (non-doubtful) C5 entry is not treated as a bench change", () => {
