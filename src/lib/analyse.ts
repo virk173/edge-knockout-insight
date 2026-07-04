@@ -1405,18 +1405,28 @@ export async function captureClosingOdds(
           window.localStorage.setItem("stake_bookmaker_id", stakeId);
       }
     }
-    const afOdds = await afGet(
-      `/odds?fixture=${match.id}${stakeId ? `&bookmaker=${stakeId}` : ""}`,
-    );
-    const trimmed = extractStakeMarkets(afOdds);
-    if (trimmed) {
-      for (const [mkLabel, values] of Object.entries(trimmed.markets)) {
-        const outs = values
-          .map((v) => ({ selection: label(v.value), odds: Number(v.odd) }))
-          .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
-        if (outs.length) prices[mkLabel] = outs;
+    // AUDIT FIX — collision guard (mirrors the main-pipeline C9B guard): if
+    // the resolved "Stake" id IS Pinnacle (bookmaker=4), the two passes below
+    // would fetch the same book twice and the retail reference would silently
+    // be Pinnacle data. Skip the retail pass; the Pinnacle pass covers it.
+    if (stakeId && String(stakeId) === String(PINNACLE_BOOKMAKER_ID)) {
+      console.warn(
+        "[clv] stake_bookmaker_id resolved to Pinnacle (4) — skipping the retail pass to avoid a duplicate-book capture.",
+      );
+    } else {
+      const afOdds = await afGet(
+        `/odds?fixture=${match.id}${stakeId ? `&bookmaker=${stakeId}` : ""}`,
+      );
+      const trimmed = extractStakeMarkets(afOdds);
+      if (trimmed) {
+        for (const [mkLabel, values] of Object.entries(trimmed.markets)) {
+          const outs = values
+            .map((v) => ({ selection: label(v.value), odds: Number(v.odd) }))
+            .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
+          if (outs.length) prices[mkLabel] = outs;
+        }
+        stakeOk = Object.keys(prices).length > 0;
       }
-      stakeOk = Object.keys(prices).length > 0;
     }
   } catch (e) {
     console.warn("[clv] Stake odds capture failed", e);
@@ -2069,20 +2079,43 @@ function idOrNull(v: unknown): string | null {
 // same-day fixture) — silently feeding the wrong team's stats into
 // S2A/S2B/C6/C6B/S7. Returns null when no match is found.
 //
+// AUDIT FIX — country-name alias table. The two APIs use different
+// conventions for the same nation ("USA" vs "United States", FIFA's "Korea
+// Republic" vs "South Korea", "Côte d'Ivoire" vs "Ivory Coast"); after the
+// tier-4 strict two-sided matching those legitimate variants failed BOTH
+// passes and S0 returned null (cascading S2A/S2B/S3/S4/S5 to FAILED for the
+// fixture). Aliases map each known variant to ONE canonical normalized form,
+// applied in the EXACT pass only — the strict pair-matching design is
+// unchanged, we just teach it that these spellings are the same country.
+const TEAM_NAME_ALIASES: Record<string, string> = {
+  usa: "united states",
+  "united states of america": "united states",
+  "korea republic": "south korea",
+  "korea dpr": "north korea",
+  "cote d'ivoire": "ivory coast", // normalize() strips the accent first
+  "ir iran": "iran",
+  "congo dr": "dr congo",
+};
+
+function canonicalTeamName(name: string): string {
+  const n = normalize(name);
+  return TEAM_NAME_ALIASES[n] ?? n;
+}
+
 // Exported for tests (pure list-matching logic, no network).
 export function findStatsApiMatchInList(
   list: unknown[],
   home: string,
   away: string,
 ): unknown | undefined {
-  const h = normalize(home);
-  const a = normalize(away);
+  const h = canonicalTeamName(home);
+  const a = canonicalTeamName(away);
   if (!h || !a) return undefined;
   const names = (mt: unknown): [string, string] => [
-    normalize(String(getField(getField(mt, ["home_team"]), ["name"]) ?? "")),
-    normalize(String(getField(getField(mt, ["away_team"]), ["name"]) ?? "")),
+    canonicalTeamName(String(getField(getField(mt, ["home_team"]), ["name"]) ?? "")),
+    canonicalTeamName(String(getField(getField(mt, ["away_team"]), ["name"]) ?? "")),
   ];
-  // Pass 1 — exact pair (straight or swapped).
+  // Pass 1 — exact pair (straight or swapped), alias-canonicalized.
   const exact = list.find((mt) => {
     const [hn, an] = names(mt);
     if (!hn || !an) return false;

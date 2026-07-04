@@ -19,6 +19,7 @@ import {
   CARDS_MARKET_SOURCE_AVAILABLE,
   CARDS_UNAVAILABLE_LABEL,
 } from "@/lib/dataGaps";
+import { BANKROLL_DEFAULTS } from "@/lib/bankroll";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
@@ -806,17 +807,25 @@ export function generateRunReport(
   } else {
     push("  none");
   }
-  const onNotice = r.player_intelligence?.suspension_served_eligible;
+  // suspension_served_eligible = players whose ban is SERVED and are now
+  // available — the opposite of "on notice" (that concept lives in
+  // amnesty_status.players_on_notice). Label matches the field.
+  const servedEligible = r.player_intelligence?.suspension_served_eligible;
   push(
-    `On notice: ${
-      Array.isArray(onNotice) && onNotice.length ? onNotice.join(", ") : "none"
+    `Suspension served — eligible: ${
+      Array.isArray(servedEligible) && servedEligible.length
+        ? servedEligible.join(", ")
+        : "none"
     }`,
   );
   push();
 
   // ── Bet 1 — straight bet ────────────────────────────────
   const pctOf = (v: unknown, bankroll: unknown): string => {
-    const kb = typeof bankroll === "number" && Number.isFinite(bankroll) ? bankroll : 50;
+    const kb =
+      typeof bankroll === "number" && Number.isFinite(bankroll)
+        ? bankroll
+        : BANKROLL_DEFAULTS.STARTING_BANKROLL;
     return `${na(v)}% of $${kb}`;
   };
   const evPct = (v: unknown): string => {

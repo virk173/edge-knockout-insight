@@ -295,6 +295,15 @@ export function clampOpponentStrengthMultiplier(v?: number): number {
   return Math.min(1, Math.max(OPPONENT_STRENGTH_MULT_MIN, n));
 }
 
+// AUDIT FIX — the prompt's TOURNAMENT FLOOR RULE ("if actual_goals >= 3: gap
+// floor 38") previously had no app backstop: it relied entirely on Claude
+// bumping its own numbers, unlike every other formula the app recomputes.
+// Enforced here on the final gap so a 3+-goal scorer can never be scored
+// below SIGNIFICANT-range impact by low deltas (or the opponent-strength
+// discount alone).
+export const GAP_TOURNAMENT_FLOOR = 38;
+export const GAP_FLOOR_MIN_GOALS = 3;
+
 export function computeGapScore(inputs?: {
   actual_goals?: number;
   actual_assists?: number;
@@ -312,10 +321,13 @@ export function computeGapScore(inputs?: {
   const oppMult = clampOpponentStrengthMultiplier(
     inputs.opponent_strength_multiplier,
   );
-  return round(
+  const gap = round(
     (goals * 8 + assists * 5) * oppMult + shots * 7 + kp * 5 + setPiece,
     1,
   );
+  return goals >= GAP_FLOOR_MIN_GOALS
+    ? Math.max(gap, GAP_TOURNAMENT_FLOOR)
+    : gap;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1002,6 +1014,19 @@ export function calculateResults(
         b3.parlay_ev_inputs.p_joint = minLeg;
         if (typeof b3.p_joint === "number") b3.p_joint = minLeg;
       }
+    } else if (pj !== undefined && legProbs.length === 0) {
+      // AUDIT FIX — the invariant cap silently no-oped when legs were
+      // missing/empty, letting an unverifiable (possibly inflated) p_joint
+      // straight into EV. A 3-leg SGP without leg probabilities is
+      // structurally invalid, so withhold the bet rather than price it.
+      result.data_quality_flags = result.data_quality_flags || [];
+      result.data_quality_flags.push(
+        "SGP p_joint present but no leg probabilities — invariant unverifiable; bet_3 withheld.",
+      );
+      b3.active = false;
+      b3.skip_reason =
+        b3.skip_reason ??
+        "SGP legs missing — p_joint invariant unverifiable; bet withheld.";
     }
     const ev = computeEv(pj, sp);
     if (ev !== undefined) b3.parlay_ev = ev;
@@ -1061,11 +1086,15 @@ export function calculateResults(
         const oppMult = clampOpponentStrengthMultiplier(
           inputs.opponent_strength_multiplier,
         );
+        const floored =
+          (num(inputs.actual_goals) ?? 0) >= GAP_FLOOR_MIN_GOALS &&
+          gap === GAP_TOURNAMENT_FLOOR;
         a.gap_calculation =
           `((${inputs.actual_goals ?? 0}×8) + (${inputs.actual_assists ?? 0}×5))` +
           `${oppMult !== 1 ? ` × ${oppMult} [opp-strength]` : ""} ` +
           `+ (${inputs.shots_pg_delta ?? 0}×7) + (${inputs.keypasses_pg_delta ?? 0}×5) ` +
-          `+ ${inputs.set_piece_weight ?? 0} = ${gap}`;
+          `+ ${inputs.set_piece_weight ?? 0} = ${gap}` +
+          `${floored ? ` [tournament floor ${GAP_TOURNAMENT_FLOOR} — ≥${GAP_FLOOR_MIN_GOALS} goals]` : ""}`;
       }
       const mult = computeStackedMultiplier(a?.multiplier_inputs);
       if (mult !== undefined) a.stacked_multiplier = mult.stacked_multiplier;

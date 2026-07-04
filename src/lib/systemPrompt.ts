@@ -1062,7 +1062,14 @@ tactical_analysis:
   expected_corners_range,
   expected_cards_range,
   goals_model_direction,
-  formation_change_impact
+  formation_change_impact,
+  call4_fixture_count: number —
+    the count of fixtures actually
+    present in the CALL 4 last-5
+    lists (the smaller of the two
+    teams' counts). The app uses it
+    to validate the fewer-than-3-
+    fixtures dimension-weight rule.
 context_inputs:
   venue_name: string
   home_last_fixture_date: ISO-8601
@@ -1149,6 +1156,12 @@ bet_3:
     leg_number, market (soccer
       terminology), selection,
     odds, model_probability,
+    pinnacle_odds (copy the leg's
+      market/selection price from
+      C9B when present, else null —
+      NEVER estimated; enables the
+      app's per-leg Pinnacle gap
+      adjustment),
     correlation_logic,
     stake_label string
   p_independent, correlation_factor,
@@ -1621,6 +1634,14 @@ EXAMPLE OUTPUT:
       "verdict": "STAKE OFFERS VALUE vs PINNACLE"
     },
     {
+      "market": "Over/Under Goals",
+      "line": "Over 2.5",
+      "stake_odds": 2.05,
+      "pinnacle_odds": 2.10,
+      "gap_pct": -2.4,
+      "verdict": "STAKE WORSE THAN PINNACLE"
+    },
+    {
       "market": "Corners",
       "line": "Over 9.5",
       "stake_odds": 1.88,
@@ -1682,7 +1703,8 @@ EXAMPLE OUTPUT:
     "expected_corners_range": "9-11",
     "expected_cards_range": "3-5",
     "goals_model_direction": "UNDER",
-    "formation_change_impact": "Senegal 4-4-2 without Mane strengthens Under 2.5 signal."
+    "formation_change_impact": "Senegal 4-4-2 without Mane strengthens Under 2.5 signal.",
+    "call4_fixture_count": 5
   },
   "player_intelligence": {
     "absences": [
@@ -1761,6 +1783,7 @@ EXAMPLE OUTPUT:
         "selection": "France Win",
         "odds": 1.72,
         "model_probability": 0.68,
+        "pinnacle_odds": 1.65,
         "correlation_logic": "France dominant with elite defence (0.6 conceded, 3 clean sheets) — win correlates with Under here, not against it.",
         "stake_label": "Navigate: Soccer → France vs Senegal → Same Game Parlay → Moneyline\nSelect: France Win\n90 minutes only — excludes ET"
       },
@@ -1770,6 +1793,7 @@ EXAMPLE OUTPUT:
         "selection": "Under 2.5 Goals",
         "odds": 1.78,
         "model_probability": 0.618,
+        "pinnacle_odds": 1.72,
         "correlation_logic": "France defensive solidity. Mane absence guts Senegal attack. Weak positive with a low-concession favourite win (NOT the free-scoring-favourite negative case).",
         "stake_label": "Add to SGP: Goal Totals → Under 2.5\n90 minutes only — excludes ET"
       },
@@ -1779,6 +1803,7 @@ EXAMPLE OUTPUT:
         "selection": "Over 9.5 Corners",
         "odds": 1.88,
         "model_probability": 0.58,
+        "pinnacle_odds": 1.94,
         "correlation_logic": "Possession asymmetry (62pct vs 44pct) — France sustained pressure lifts corner volume. Weak positive with France win.",
         "stake_label": "Add to SGP: Corners → Over 9.5 Corners\n90 minutes only — excludes ET"
       }
@@ -1793,7 +1818,7 @@ EXAMPLE OUTPUT:
       "stake_sgp": 4.96
     },
     "returns": {
-      "potential_return_raw": "$55.70",
+      "potential_return_raw": "$57.56",
       "potential_return_realistic": "$49.60"
     },
     "reasoning": "France Win + Under 2.5 Goals + Over 9.5 Corners. Net weak-positive correlation (x1.02): defensive favourite makes win+Under compatible; possession asymmetry supports corners. App computes parlay_ev = p_joint × stake_sgp − 1."
@@ -1847,7 +1872,7 @@ EXAMPLE OUTPUT:
     "level": "LOW",
     "triggers": ["Mane confirmed absent C6."]
   },
-  "key_risk_flag": "3-signal conflict on goals. Model 1.70 vs Poisson 2.15 and historical 2.55 (expected goals).",
+  "key_risk_flag": "3-signal conflict on goals. Model 1.70 vs Poisson 2.05 and historical 2.40 (expected goals).",
   "analyst_note": "Under 2.5 clearest value — Stake 1.78 beats Pinnacle 1.72 on the gap check [C9B]. Mane CRITICAL absence reduces Senegal 31.6%. Possession asymmetry supports the corners bet and SGP.",
   "log_entry": {
     "match": "France vs Senegal",

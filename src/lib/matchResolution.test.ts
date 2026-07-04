@@ -31,14 +31,36 @@ describe("findStatsApiMatchInList — two-sided pair matching", () => {
     expect(found?.id).toBe("exact");
   });
 
-  it("contains pair still works for naming variants (USA vs United States)", () => {
+  it("contains pair still works for naming variants (United States vs Bosnia)", () => {
     const list = [mt("m1", "United States", "Bosnia and Herzegovina")];
-    const found = findStatsApiMatchInList(list, "USA... ", "Bosnia") as ReturnType<typeof mt>;
-    // "usa" is not a substring of "united states" — that pair correctly fails;
-    // but a genuine contains variant does match:
-    const found2 = findStatsApiMatchInList(list, "United States", "Bosnia") as ReturnType<typeof mt>;
-    expect(found).toBeUndefined();
-    expect(found2?.id).toBe("m1");
+    const found = findStatsApiMatchInList(list, "United States", "Bosnia") as ReturnType<typeof mt>;
+    expect(found?.id).toBe("m1");
+  });
+
+  // AUDIT FIX — alias table: cross-API naming conventions for the same nation
+  // now resolve via canonicalization in the exact pass (the strict two-sided
+  // design is unchanged; these spellings are taught to be the same country).
+  it("alias: USA resolves a United States fixture (and stays two-sided)", () => {
+    const list = [mt("m1", "United States", "Bosnia and Herzegovina")];
+    const found = findStatsApiMatchInList(list, "USA", "Bosnia") as ReturnType<typeof mt>;
+    expect(found?.id).toBe("m1");
+    // Two-sided still enforced: right home alias + wrong away → no match.
+    expect(findStatsApiMatchInList(list, "USA", "Cameroon")).toBeUndefined();
+  });
+
+  it("alias: South Korea resolves a Korea Republic fixture; Korea DPR does not", () => {
+    const list = [
+      mt("dpr", "Korea DPR", "Japan"),
+      mt("rep", "Korea Republic", "Japan"),
+    ];
+    const found = findStatsApiMatchInList(list, "South Korea", "Japan") as ReturnType<typeof mt>;
+    expect(found?.id).toBe("rep");
+  });
+
+  it("alias: Ivory Coast resolves a Côte d'Ivoire fixture (accent-stripped)", () => {
+    const list = [mt("m1", "Côte d'Ivoire", "Norway")];
+    const found = findStatsApiMatchInList(list, "Ivory Coast", "Norway") as ReturnType<typeof mt>;
+    expect(found?.id).toBe("m1");
   });
 
   it("swapped home/away still resolves", () => {

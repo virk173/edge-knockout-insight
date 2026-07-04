@@ -1,6 +1,15 @@
-import { describe, it, expect } from "vitest";
-import { clvSelectionLabel } from "./analyse";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { clvSelectionLabel, captureClosingOdds } from "./analyse";
 import { matchClosingPrice, computeClv, type ClosingCapture } from "./clv";
+import type { AnalysedMatch } from "./fixtures";
+
+// apiFetch is mocked so captureClosingOdds can run under the node test env
+// with a controlled odds payload (no network). Only the collision-guard tests
+// below exercise it; the pure-function tests above never call apiFetch.
+const { apiFetchSpy } = vi.hoisted(() => ({
+  apiFetchSpy: vi.fn(),
+}));
+vi.mock("./api-proxy.functions", () => ({ apiFetch: apiFetchSpy }));
 
 // EDGE-FIX tier 3 — capture-time selection normalization. Raw feeds label 1X2
 // outcomes "Home"/"Away" and AH lines "Home -1.5"; Claude's bet selections are
@@ -95,5 +104,94 @@ describe("capture → matchClosingPrice round trip with Claude-style selections"
     expect(close!.odds).toBe(2.05);
     const close15 = matchClosingPrice(multiLine, "Asian Handicap", "France -1.5");
     expect(close15!.odds).toBe(2.4);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// AUDIT FIX — captureClosingOdds C9A=Pinnacle collision guard.
+// The main-pipeline C9B block already guarded against stake_bookmaker_id
+// resolving to Pinnacle (id 4); the closing capture didn't, so it would fetch
+// the same book twice and silently lose the retail reference. The capture now
+// skips the retail pass when the stored "Stake" id IS Pinnacle.
+// ─────────────────────────────────────────────────────────────
+describe("captureClosingOdds — Pinnacle collision guard", () => {
+  const pinnacleOdds = [
+    {
+      fixture: { id: 777 },
+      bookmakers: [
+        {
+          id: 4,
+          name: "Pinnacle",
+          bets: [
+            {
+              name: "Match Winner",
+              values: [
+                { value: "Home", odd: "1.65" },
+                { value: "Draw", odd: "4.05" },
+                { value: "Away", odd: "5.90" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const match = {
+    id: 777,
+    home: "France",
+    away: "Senegal",
+    kickoffUtc: new Date(Date.now() + 10 * 60000).toISOString(),
+  } as unknown as AnalysedMatch;
+
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    apiFetchSpy.mockReset();
+    apiFetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: { response: pinnacleOdds },
+    });
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: {
+        getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+        setItem: (k: string, v: string) => void store.set(k, String(v)),
+        removeItem: (k: string) => void store.delete(k),
+        key: (i: number) => [...store.keys()][i] ?? null,
+        get length() {
+          return store.size;
+        },
+      },
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it("stake_bookmaker_id=4 → retail pass skipped, single bookmaker=4 fetch, source PINNACLE", async () => {
+    store.set("stake_bookmaker_id", "4");
+    const capture = await captureClosingOdds(match);
+    const urls = apiFetchSpy.mock.calls.map(
+      (c) => (c[0] as { data: { url: string } }).data.url,
+    );
+    const oddsCalls = urls.filter((u) => u.includes("/odds?fixture="));
+    expect(oddsCalls).toHaveLength(1);
+    expect(oddsCalls[0]).toContain("bookmaker=4");
+    expect(capture).not.toBeNull();
+    expect(capture!.source).toBe("PINNACLE");
+    expect(capture!.prices["1X2 Full Time Result"]).toBeDefined();
+  });
+
+  it("distinct stake id → both passes run (retail + Pinnacle), two odds fetches", async () => {
+    store.set("stake_bookmaker_id", "22");
+    await captureClosingOdds(match);
+    const urls = apiFetchSpy.mock.calls.map(
+      (c) => (c[0] as { data: { url: string } }).data.url,
+    );
+    const oddsCalls = urls.filter((u) => u.includes("/odds?fixture="));
+    expect(oddsCalls).toHaveLength(2);
+    expect(oddsCalls[0]).toContain("bookmaker=22");
+    expect(oddsCalls[1]).toContain("bookmaker=4");
   });
 });

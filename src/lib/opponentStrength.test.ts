@@ -123,3 +123,43 @@ describe("tier 8.1 — computeGapScore applies the multiplier to goals/assists o
     expect(inflated).toBe(computeGapScore(base));
   });
 });
+
+// AUDIT FIX — tournament floor rule now enforced app-side (previously
+// prompt-only with no backstop): actual_goals >= 3 floors the gap at 38.
+describe("tournament floor — actual_goals >= 3 floors the gap at 38", () => {
+  it("a 3-goal scorer with tiny deltas floors to 38 (was scoreable as MINOR)", () => {
+    // Raw: (3×8 + 0×5) + 0.1×7 + 0×5 + 0 = 24.7 → floored to 38.
+    const gap = computeGapScore({
+      actual_goals: 3,
+      actual_assists: 0,
+      shots_pg_delta: 0.1,
+      keypasses_pg_delta: 0,
+      set_piece_weight: 0,
+    });
+    expect(gap).toBe(38);
+  });
+
+  it("the opponent-strength discount cannot pull a 3-goal scorer below the floor", () => {
+    // Raw: (3×8)×0.6 = 14.4 + 0 → floored to 38.
+    const gap = computeGapScore({
+      actual_goals: 3,
+      opponent_strength_multiplier: 0.6,
+    });
+    expect(gap).toBe(38);
+  });
+
+  it("above-floor gaps pass through unchanged; 2 goals never floors", () => {
+    // 5×8 + 2×5 + 2×7 + 1×5 + 15 = 84 — floor is a no-op.
+    expect(
+      computeGapScore({
+        actual_goals: 5,
+        actual_assists: 2,
+        shots_pg_delta: 2,
+        keypasses_pg_delta: 1,
+        set_piece_weight: 15,
+      }),
+    ).toBe(84);
+    // 2 goals: (2×8) = 16, stays 16 — no floor below 3 goals.
+    expect(computeGapScore({ actual_goals: 2 })).toBe(16);
+  });
+});

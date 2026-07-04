@@ -39,6 +39,30 @@ describe("p_joint invariant clamp — joint prob can never exceed the least like
       (out.data_quality_flags ?? []).filter((f) => !f.includes("p_joint")),
     );
   });
+
+  // AUDIT FIX — the clamp silently no-oped when legs were missing/empty,
+  // letting an unverifiable p_joint straight into EV. Now the bet is withheld.
+  it("p_joint with NO legs → bet_3 withheld (inactive, flagged), never priced as active", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_3: {
+          active: true,
+          legs: [],
+          p_joint: 0.62,
+          parlay_ev_inputs: { p_joint: 0.62, stake_sgp: 4.96 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_3?.active).toBe(false);
+    expect(out.bet_3?.skip_reason).toContain("unverifiable");
+    expect(
+      (out.data_quality_flags ?? []).some((f) =>
+        f.includes("no leg probabilities"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("ensemble mixed-scale guard", () => {
