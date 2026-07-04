@@ -195,3 +195,99 @@ describe("captureClosingOdds — Pinnacle collision guard", () => {
     expect(oddsCalls[1]).toContain("bookmaker=4");
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// AUDIT FIX — manual closing odds must MERGE into an automatic capture, not
+// replace it. The old code only merged when the existing capture was already
+// MANUAL; a PINNACLE capture at the same matchId+day key was overwritten by a
+// single-selection MANUAL capture, orphaning every not-yet-settled rec for
+// the match (including shadow entries) and flipping the benchmark source.
+// ─────────────────────────────────────────────────────────────
+describe("setManualClosingOdds — merges into an existing PINNACLE capture", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: {
+        getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+        setItem: (k: string, v: string) => void store.set(k, String(v)),
+        removeItem: (k: string) => void store.delete(k),
+        key: (i: number) => [...store.keys()][i] ?? null,
+        get length() {
+          return store.size;
+        },
+      },
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  async function seed() {
+    const { appendLogEntry } = await import("./backtestLog");
+    const { writeClosingCapture } = await import("./clv");
+    // Automatic PINNACLE capture with two markets.
+    writeClosingCapture({
+      matchId: 555,
+      capturedAt: Date.now() - 60_000,
+      minutesBeforeKickoff: 15,
+      source: "PINNACLE",
+      prices: {
+        "1X2 Full Time Result": [{ selection: "France", odds: 1.65 }],
+        "Over/Under Goals": [{ selection: "Under 2.5", odds: 1.72 }],
+      },
+    });
+    // Log entry: one rec matchable from the Pinnacle capture, one not
+    // (corners — absent from the capture, needs a manual close).
+    const entries = appendLogEntry({
+      match: "France vs Senegal",
+      matchId: 555,
+      recommendations: [
+        { market: "Moneyline (3-way)", selection: "France Win", odds: 1.72 },
+        { market: "Corners Totals", selection: "Over 9.5 Corners", odds: 1.88 },
+      ],
+    });
+    return entries[entries.length - 1].id;
+  }
+
+  it("manual price for one rec keeps the Pinnacle markets and both recs settle with true sources", async () => {
+    const entryId = await seed();
+    const { setManualClosingOdds } = await import("./backtestLog");
+    const { readClosingCapture } = await import("./clv");
+
+    const updated = setManualClosingOdds(entryId, 1, 1.94);
+    const entry = updated.find((e) => e.id === entryId)!;
+
+    // The Pinnacle-covered rec settled from the SURVIVING automatic capture.
+    expect(entry.recommendations[0].closing_odds).toBe(1.65);
+    expect(entry.recommendations[0].closing_source).toBe("PINNACLE");
+    // The manually-priced rec settled from the merged manual outcome.
+    expect(entry.recommendations[1].closing_odds).toBe(1.94);
+    expect(entry.recommendations[1].closing_source).toBe("MANUAL");
+
+    // The stored capture carries BOTH the original markets and the manual one.
+    const cap = readClosingCapture(555)!;
+    expect(cap.prices["1X2 Full Time Result"]).toBeDefined();
+    expect(cap.prices["Over/Under Goals"]).toBeDefined();
+    expect(cap.prices["Corners Totals"]).toEqual([
+      { selection: "Over 9.5 Corners", odds: 1.94, source: "MANUAL" },
+    ]);
+    expect(cap.source).toBe("PINNACLE");
+  });
+
+  it("repeated manual entries accumulate and re-entry replaces the same selection", async () => {
+    const entryId = await seed();
+    const { setManualClosingOdds } = await import("./backtestLog");
+    const { readClosingCapture } = await import("./clv");
+
+    setManualClosingOdds(entryId, 1, 1.90);
+    const updated = setManualClosingOdds(entryId, 1, 1.94); // corrected re-entry
+    const entry = updated.find((e) => e.id === entryId)!;
+    expect(entry.recommendations[1].closing_odds).toBe(1.94);
+
+    const cap = readClosingCapture(555)!;
+    expect(cap.prices["Corners Totals"]).toHaveLength(1);
+    // Pinnacle markets still intact after two manual writes.
+    expect(cap.prices["1X2 Full Time Result"]).toBeDefined();
+  });
+});

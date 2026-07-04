@@ -601,27 +601,36 @@ export function setManualClosingOdds(
   const rec = entry.recommendations[recIndex];
   if (!rec || !Number.isFinite(odds) || odds <= 0) return entries;
 
-  // Merge into any existing MANUAL capture so multiple manual prices accumulate.
+  // AUDIT FIX — merge into ANY existing capture, not just MANUAL ones. The
+  // old MANUAL-only merge started from {} when the existing capture was
+  // PINNACLE/STAKE and wrote to the same matchId+day key, obliterating the
+  // full automatic capture (and orphaning every not-yet-settled rec for this
+  // match, including shadow entries). Now the automatic markets are carried
+  // over untouched; only the manually-entered selection is added/replaced,
+  // tagged per-outcome as MANUAL so the carried-over prices keep reporting
+  // their true source (matchClosingPrice reads outcome.source ?? capture
+  // source).
   const existing = readClosingCapture(entry.matchId);
-  const prices =
-    existing && existing.source === "MANUAL" && existing.prices
-      ? { ...existing.prices }
-      : {};
+  const prices = existing?.prices ? { ...existing.prices } : {};
   const marketKey = rec.market ?? "Manual";
   const list = Array.isArray(prices[marketKey]) ? [...prices[marketKey]] : [];
   const selKey = rec.selection ?? "";
   const idx = list.findIndex(
     (o) => (o.selection ?? "").toLowerCase() === selKey.toLowerCase(),
   );
-  if (idx >= 0) list[idx] = { selection: selKey, odds };
-  else list.push({ selection: selKey, odds });
+  const manualOutcome = { selection: selKey, odds, source: "MANUAL" as const };
+  if (idx >= 0) list[idx] = manualOutcome;
+  else list.push(manualOutcome);
   prices[marketKey] = list;
 
   writeClosingCapture({
     matchId: entry.matchId,
     capturedAt: Date.now(),
-    minutesBeforeKickoff: 0,
-    source: "MANUAL",
+    minutesBeforeKickoff: existing?.minutesBeforeKickoff ?? 0,
+    // Capture-level source stays the automatic capture's when one existed —
+    // untagged (carried-over) outcomes inherit it; the manual outcome carries
+    // its own MANUAL tag.
+    source: existing && existing.source !== "MANUAL" ? existing.source : "MANUAL",
     prices,
   });
   return settleClv(entryId);

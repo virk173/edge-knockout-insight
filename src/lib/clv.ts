@@ -20,8 +20,14 @@ export interface ClosingCapture {
   capturedAt: number; // epoch ms
   minutesBeforeKickoff: number;
   source: ClosingSource;
-  // market label → array of { selection, odds }
-  prices: Record<string, Array<{ selection: string; odds: number }>>;
+  // market label → array of { selection, odds }. An outcome may carry its own
+  // source override (e.g. one MANUAL price merged into a PINNACLE capture);
+  // absent = inherit the capture-level source. Old captures have no per-
+  // outcome source and behave exactly as before.
+  prices: Record<
+    string,
+    Array<{ selection: string; odds: number; source?: ClosingSource }>
+  >;
 }
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -131,12 +137,13 @@ export function matchClosingPrice(
       if (!capSel || !sel) continue;
       const odds = Number(o?.odds);
       if (!Number.isFinite(odds) || odds <= 0) continue;
+      const outcomeSource = o?.source ?? capture.source;
       if (capSel === sel) {
-        return { odds, source: capture.source };
+        return { odds, source: outcomeSource };
       }
       // Case-insensitive substring match in both directions (fallback only).
       if (!fallback && (capSel.includes(sel) || sel.includes(capSel))) {
-        fallback = { odds, source: capture.source };
+        fallback = { odds, source: outcomeSource };
       }
     }
   }
