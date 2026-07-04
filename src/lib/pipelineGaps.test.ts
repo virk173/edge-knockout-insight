@@ -44,7 +44,7 @@ describe("formatDataForClaude — status permutations", () => {
       "2A": { key: "2A", label: "", status: "SUCCESS", data: { extracted: { form: "WWWWW" } } },
       "3": { key: "3", label: "", status: "EMPTY", error: "No H2H found." },
       "5": { key: "5", label: "", status: "FAILED", error: "network down" },
-      "10": { key: "10", label: "", status: "EXPECTED_EMPTY" },
+      "10": { key: "10", label: "", status: "EXPECTED_EMPTY", error: "Next round (Quarter-finals) fixtures not yet determined. Bracket context unavailable." },
       // "8" entirely missing.
     } as never);
 
@@ -56,7 +56,10 @@ describe("formatDataForClaude — status permutations", () => {
     expect(out).toMatch(/\[CALL 5 — .* — EMPTY\]/);
     expect(out).toContain("network down");
     expect(out).toContain("EXPECTED EMPTY");
-    expect(out).toContain("Round of 32 still in progress");
+    // Renders the per-run recorded message (actual next round), plus the
+    // guidance that stops the model penalizing data_quality/confidence.
+    expect(out).toContain("Next round (Quarter-finals) fixtures not yet determined");
+    expect(out).toContain("do not count this call against data_quality");
     // Missing call 8 still renders an explicit EMPTY block.
     expect(out).toMatch(/\[CALL 8 — .* — EMPTY\]/);
     // Every block is closed.

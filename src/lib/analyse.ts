@@ -768,8 +768,15 @@ export function formatDataForClaude(
         `[CALL ${n} — ${header} — SUCCESS]\n${json}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
+      // Use the recorded per-run message (names the actual next round) instead
+      // of a hardcoded stage description that goes stale as the bracket
+      // advances. The trailing guidance stops the model from counting this
+      // expected state against data_quality (-7 confidence via PARTIAL).
+      const detail =
+        r.error ??
+        "Next round fixtures not yet determined. Bracket context unavailable.";
       blocks.push(
-        `[CALL ${n} — bracket context — EXPECTED EMPTY]\nNext round fixtures not yet scheduled. Round of 32 still in progress. Bracket context unavailable.\n[END CALL ${n}]`,
+        `[CALL ${n} — bracket context — EXPECTED EMPTY]\n${detail}\nThis is normal knockout-bracket timing, NOT missing data: do not count this call against data_quality, do not apply any confidence adjustment for it, and treat next-opponent rotation risk and motivation as neutral.\n[END CALL ${n}]`,
       );
 
     } else {

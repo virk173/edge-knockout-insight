@@ -383,6 +383,15 @@ CALL 10 — bracket context
 Parse fixtures tree for next opponent.
 Assess rotation risk or motivation.
 
+If C10 is EXPECTED EMPTY (next-round
+fixtures not yet determined): this is
+normal bracket timing, not missing
+data. Do NOT count C10 against
+data_quality, do NOT reduce
+confidence for it, and treat
+rotation risk and next-opponent
+motivation as neutral.
+
 ════════════════════════════════════════
 SECTION 2 — PROBABILITY AND EV
 ════════════════════════════════════════
@@ -962,7 +971,7 @@ No markdown fences.
 Keep values concise.
 Complete JSON always better than
 detailed but truncated JSON.
-Target completion within 6000 tokens.
+Target completion within 8000 tokens.
 
 Required fields:
 
