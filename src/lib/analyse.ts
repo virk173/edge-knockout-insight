@@ -16,6 +16,7 @@ import {
 import { apiFootballGet } from "./apiFootball";
 import { readCallCache, writeCallCache } from "./callCache";
 import { writeClosingCapture, type ClosingCapture } from "./clv";
+import { resolveMarketType } from "./bettingGlossary";
 
 /*
  * KNOWN GAPS — documented, not bugs
@@ -1098,134 +1099,11 @@ interface PinnacleMarketSummary {
   }>;
 }
 
-// Pull opening + last_seen prices out of a TheStatsAPI odds outcome node and
-// derive the line-movement signal. movement_pct = (last_seen - opening)/opening*100.
-function summariseOutcome(name: string, node: unknown) {
-  const opening = toNum(getField(node, ["opening"]));
-  const current = toNum(getField(node, ["last_seen", "last", "current"]));
-  const mv = movementSignal(opening, current);
-  return { name, opening, current, ...mv };
-}
-
-// Build a structured odds summary from a TheStatsAPI /matches/{id}/odds
-// response. Prefers the Pinnacle bookmaker (sharp money); when Pinnacle is not
-// among the returned bookmakers — real WC2026 data frequently ships a single
-// bookmaker such as Bet365 — it falls back to the first bookmaker present so the
-// markets are not silently dropped. Extracts 1X2, BTTS, Total Goals, Corners and
-// Asian Handicap with opening + last_seen prices and line movement.
-//
-// CRITICAL (per authoritative spec at api.thestatsapi.com/llms.txt): for
-// total_goals, match_corners and asian_handicap the LINE VALUE is the object KEY
-// (e.g. "2.5", "9.5", "-0.5"), NOT a fixed field name like over_2_5. We iterate
-// the keys dynamically and keep whatever lines are actually present.
-function buildPinnacleSummary(
-  oddsJson: unknown,
-): {
-  bookmaker: string;
-  is_pinnacle: boolean;
-  markets: PinnacleMarketSummary[];
-  raw: unknown;
-} | null {
-  const bookmakers = extractArray(getField(oddsJson, ["bookmakers"]) ?? oddsJson);
-  if (!bookmakers.length) return null;
-  // Only a bookmaker named exactly "Pinnacle" (case-insensitive) counts as the
-  // sharp reference. If Pinnacle is absent we STILL extract the first available
-  // book (often Bet365) so its markets can serve as a RETAIL reference for the
-  // overround/C9B block — but is_pinnacle stays false so the pipeline never
-  // feeds those prices into pinnacle_odds (which would wrongly trigger the 15%
-  // Stake-anchoring EV reduction against a non-sharp book).
-  const truePinnacle = bookmakers.find((b) => {
-    const name = getField(b, ["bookmaker", "name"]);
-    return typeof name === "string" && normalize(name) === "pinnacle";
-  });
-  const chosen = truePinnacle ?? bookmakers[0];
-  const is_pinnacle = !!truePinnacle;
-  const bookmakerName = (getField(chosen, ["bookmaker", "name"]) as string) ?? "UNKNOWN";
-  const m = getField(chosen, ["markets"]);
-  if (!m || typeof m !== "object") return null;
-
-  const markets: PinnacleMarketSummary[] = [];
-
-  // 1X2 — match_odds (home / draw / away). Each outcome is a flat
-  // { opening, last_seen } node.
-  const matchOdds = getField(m, ["match_odds", "match_result", "1x2"]);
-  if (matchOdds) {
-    const outcomes = (
-      [
-        ["Home", getField(matchOdds, ["home"])],
-        ["Draw", getField(matchOdds, ["draw"])],
-        ["Away", getField(matchOdds, ["away"])],
-      ] as Array<[string, unknown]>
-    )
-      .filter(([, n]) => n != null)
-      .map(([name, n]) => summariseOutcome(name, n));
-    if (outcomes.length) markets.push({ market: "1X2 Full Time Result", outcomes });
-  }
-
-  // BTTS — yes / no.
-  const btts = getField(m, ["btts"]);
-  if (btts) {
-    const outcomes = (
-      [
-        ["Yes", getField(btts, ["yes"])],
-        ["No", getField(btts, ["no"])],
-      ] as Array<[string, unknown]>
-    )
-      .filter(([, n]) => n != null)
-      .map(([name, n]) => summariseOutcome(name, n));
-    if (outcomes.length) markets.push({ market: "BTTS", outcomes });
-  }
-
-  // Over/Under goals + corners — dynamic line keys. `preferredLine` is the line
-  // we most want (2.5 goals, 9.5 corners); if it is absent we do NOT error, we
-  // keep whatever lines ARE returned and log which keys the match actually had.
-  const flattenLines = (label: string, container: unknown, preferredLine: number) => {
-    if (!container || typeof container !== "object") return;
-    const keys = Object.keys(container as Record<string, unknown>);
-    console.log(`[analyse] ${label} lines returned:`, keys);
-    if (!keys.some((k) => parseFloat(k) === preferredLine)) {
-      console.log(
-        `[analyse] ${label}: preferred line ${preferredLine} not present — falling back to available lines.`,
-      );
-    }
-    const outcomes: PinnacleMarketSummary["outcomes"] = [];
-    for (const [line, node] of Object.entries(container as Record<string, unknown>)) {
-      const over = getField(node, ["over"]);
-      const under = getField(node, ["under"]);
-      if (over) outcomes.push(summariseOutcome(`Over ${line}`, over));
-      if (under) outcomes.push(summariseOutcome(`Under ${line}`, under));
-    }
-    if (outcomes.length) markets.push({ market: label, outcomes });
-  };
-  flattenLines("Over/Under Goals", getField(m, ["total_goals", "totals"]), 2.5);
-  flattenLines("Corners", getField(m, ["match_corners", "corners"]), 9.5);
-
-  // Asian Handicap — { home: { "<line>": {opening,last_seen}, ... },
-  //                    away: { "<line>": {opening,last_seen}, ... } }.
-  // The handicap line is the nested object KEY, so iterate dynamically rather
-  // than reading opening/last_seen straight off home/away (which are containers,
-  // not price nodes — the old code did this and always got undefined).
-  const ah = getField(m, ["asian_handicap", "handicap"]);
-  if (ah && typeof ah === "object") {
-    const ahOutcomes: PinnacleMarketSummary["outcomes"] = [];
-    for (const side of ["home", "away"] as const) {
-      const sideObj = getField(ah, [side]);
-      if (!sideObj || typeof sideObj !== "object") continue;
-      const lines = Object.keys(sideObj as Record<string, unknown>);
-      console.log(`[analyse] Asian Handicap ${side} lines returned:`, lines);
-      for (const [line, node] of Object.entries(sideObj as Record<string, unknown>)) {
-        ahOutcomes.push(
-          summariseOutcome(`${side === "home" ? "Home" : "Away"} ${line}`, node),
-        );
-      }
-    }
-    if (ahOutcomes.length) markets.push({ market: "Asian Handicap", outcomes: ahOutcomes });
-  }
-
-  return markets.length
-    ? { bookmaker: bookmakerName, is_pinnacle, markets, raw: chosen }
-    : null;
-}
+// (The old TheStatsAPI odds parser — buildPinnacleSummary/summariseOutcome —
+// was deleted in EDGE-FIX tier 3: TheStatsAPI carries no Pinnacle for WC2026,
+// so both C9B and the CLV closing capture now use the API-Football bookmaker=4
+// parser below. movementSignal above is retained: priceOutcome() uses it to
+// stamp the explicit "no movement data" shape.)
 
 // API-Football Pinnacle bookmaker id (confirmed live: bookmaker=4 carries real
 // Pinnacle price levels for WC2026 — 1X2, Asian Handicap, O/U, corners).
@@ -1234,8 +1112,7 @@ export const PINNACLE_BOOKMAKER_ID = 4;
 // Build a Pinnacle price-level summary from an API-Football /odds response that
 // was fetched filtered to bookmaker=4 (Pinnacle).
 //
-// WHY THIS EXISTS (separate from buildPinnacleSummary above, which parses the
-// TheStatsAPI odds shape): C9B was repointed away from TheStatsAPI, which for
+// WHY THIS EXISTS: C9B was repointed away from TheStatsAPI, which for
 // WC2026 carries ONLY Bet365 (no Pinnacle) and has no `opening` field. This
 // parser reads API-Football's { response:[ { bookmakers:[ { id, name, bets:[
 // { name, values:[ { value, odd } ] } ] } ] } ] } shape — the SAME plumbing
@@ -1396,21 +1273,41 @@ export function buildPinnacleSummaryFromApiFootball(
 // CLV CLOSING-ODDS CAPTURE (PART 1B)
 // ----------------------------------------------------------------------------
 // Standalone fetcher that runs ONLY the odds calls (CALL 9 Stake path + CALL 9B
-// TheStatsAPI path) FRESH, bypassing the 15-min per-call cache used by
-// collectMatchData (we call afGet / saGet directly). Used to snapshot the
-// closing line near kickoff for Closing Line Value (CLV) tracking.
+// API-Football bookmaker=4 Pinnacle path) FRESH, bypassing the 15-min per-call
+// cache used by collectMatchData. Used to snapshot the closing line near
+// kickoff for Closing Line Value (CLV) tracking.
 //
 // Source precedence:
-//   - 9B is_pinnacle=true  → store Pinnacle last_seen prices, source PINNACLE.
-//                            Pinnacle prices OVERRIDE Stake per market.
+//   - 9B is_pinnacle=true  → Pinnacle current prices, source PINNACLE.
+//                            Pinnacle prices OVERRIDE Stake per market type.
 //   - Stake succeeded      → source STAKE (Stake prices).
-//   - Stake failed, 9B retail only → source RETAIL (retail last_seen prices).
 //   - nothing usable       → return null (NEVER guess a price).
+// ("RETAIL" remains in the ClosingSource enum only so captures stored by older
+//  builds still render.)
 // ============================================================================
+
+// Rewrite bookmaker-generic selection labels to team names so matchClosingPrice
+// can find them from Claude's selections ("France Win", "USA -1"). Raw feeds
+// label 1X2 outcomes "Home"/"Away" (or "1"/"2") and AH lines "Home -1.5" —
+// none of which substring-match a team-name selection, silently dropping CLV
+// for those bets.
+export function clvSelectionLabel(raw: string, home: string, away: string): string {
+  const s = raw.trim();
+  if (/^(home|1)$/i.test(s)) return home;
+  if (/^(away|2)$/i.test(s)) return away;
+  if (/^(draw|x)$/i.test(s)) return "Draw";
+  const sided = s.match(/^(home|away)\s+(.+)$/i);
+  if (sided) {
+    return `${sided[1].toLowerCase() === "home" ? home : away} ${sided[2]}`;
+  }
+  return s;
+}
+
 export async function captureClosingOdds(
   match: AnalysedMatch,
 ): Promise<ClosingCapture | null> {
   const prices: Record<string, Array<{ selection: string; odds: number }>> = {};
+  const label = (raw: string) => clvSelectionLabel(raw, match.home, match.away);
 
   // ---- Stake odds (CALL 9 path), fresh ------------------------------------
   let stakeOk = false;
@@ -1437,11 +1334,11 @@ export async function captureClosingOdds(
     );
     const trimmed = extractStakeMarkets(afOdds);
     if (trimmed) {
-      for (const [label, values] of Object.entries(trimmed.markets)) {
+      for (const [mkLabel, values] of Object.entries(trimmed.markets)) {
         const outs = values
-          .map((v) => ({ selection: v.value, odds: Number(v.odd) }))
+          .map((v) => ({ selection: label(v.value), odds: Number(v.odd) }))
           .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
-        if (outs.length) prices[label] = outs;
+        if (outs.length) prices[mkLabel] = outs;
       }
       stakeOk = Object.keys(prices).length > 0;
     }
@@ -1449,48 +1346,44 @@ export async function captureClosingOdds(
     console.warn("[clv] Stake odds capture failed", e);
   }
 
-  // ---- TheStatsAPI odds (CALL 9B path), fresh -----------------------------
+  // ---- Pinnacle price levels (CALL 9B path — API-Football bookmaker=4) ----
+  // Repointed from the old TheStatsAPI path, which carries no Pinnacle for
+  // WC2026 (the "PINNACLE" close source was unreachable through it).
   let isPinnacle = false;
-  let retailOnly = false;
   try {
-    const ref = await resolveStatsApiMatch(match.home, match.away, match.kickoffUtc);
-    const matchId = ref?.id ?? null;
-    if (matchId) {
-      const oddsJson = await saGet(`/football/matches/${matchId}/odds`);
-      const summary = buildPinnacleSummary(oddsJson);
-      if (summary) {
-        isPinnacle = summary.is_pinnacle;
-        // Build { label → outcomes } from the summary's last_seen prices.
-        const saPrices: Record<string, Array<{ selection: string; odds: number }>> = {};
-        for (const mk of summary.markets) {
-          const outs = mk.outcomes
-            .map((o) => ({ selection: o.name, odds: Number(o.current) }))
-            .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
-          if (outs.length) saPrices[mk.market] = outs;
-        }
-        if (isPinnacle) {
-          // Pinnacle takes precedence per market — overlay onto Stake prices.
-          for (const [label, outs] of Object.entries(saPrices)) prices[label] = outs;
-        } else if (!stakeOk) {
-          // Retail 9B stored only when Stake failed.
-          for (const [label, outs] of Object.entries(saPrices)) prices[label] = outs;
-          retailOnly = Object.keys(saPrices).length > 0;
-        }
+    const oddsJson = await afGet(
+      `/odds?fixture=${match.id}&bookmaker=${PINNACLE_BOOKMAKER_ID}`,
+    );
+    const summary = buildPinnacleSummaryFromApiFootball(oddsJson);
+    if (summary?.is_pinnacle) {
+      isPinnacle = true;
+      // Pinnacle takes precedence per MARKET TYPE: drop any Stake entry whose
+      // market resolves to a type Pinnacle also carries (labels differ between
+      // the two extractors, so compare resolved types, not raw keys).
+      const pinnacleTypes = new Set(
+        summary.markets.map((mk) => resolveMarketType(mk.market)).filter(Boolean),
+      );
+      for (const key of Object.keys(prices)) {
+        const t = resolveMarketType(key);
+        if (t && pinnacleTypes.has(t)) delete prices[key];
+      }
+      for (const mk of summary.markets) {
+        const outs = mk.outcomes
+          .map((o) => ({
+            selection: label(String(o.name ?? "")),
+            odds: Number(o.current),
+          }))
+          .filter((o) => Number.isFinite(o.odds) && o.odds > 0);
+        if (outs.length) prices[mk.market] = outs;
       }
     }
   } catch (e) {
-    console.warn("[clv] TheStatsAPI odds capture failed", e);
+    console.warn("[clv] Pinnacle (bookmaker=4) odds capture failed", e);
   }
 
   if (Object.keys(prices).length === 0) return null;
 
-  const source: ClosingCapture["source"] = isPinnacle
-    ? "PINNACLE"
-    : stakeOk
-      ? "STAKE"
-      : retailOnly
-        ? "RETAIL"
-        : "STAKE";
+  const source: ClosingCapture["source"] = isPinnacle ? "PINNACLE" : "STAKE";
 
   const now = Date.now();
   const koMs = Date.parse(match.kickoffUtc);

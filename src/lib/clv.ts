@@ -111,6 +111,12 @@ export function matchClosingPrice(
   const wantType = resolveMarketType(marketName ?? "");
   const sel = (selection ?? "").toLowerCase().trim();
 
+  // Two passes: EXACT selection equality wins over substring. With multiple
+  // lines of the same market captured (e.g. "France -1" AND "France -1.5"),
+  // a substring-first scan can return the WRONG line's price — "france -1" is
+  // a substring of "france -1.5". Exact-first prevents that; substring stays
+  // as the fallback for phrasing differences ("France Win" vs "France").
+  let fallback: { odds: number; source: ClosingSource } | null = null;
   for (const [capMarket, outcomes] of Object.entries(capture.prices)) {
     if (!Array.isArray(outcomes)) continue;
     // Market must resolve to the same glossary type, OR match by raw label.
@@ -125,11 +131,14 @@ export function matchClosingPrice(
       if (!capSel || !sel) continue;
       const odds = Number(o?.odds);
       if (!Number.isFinite(odds) || odds <= 0) continue;
-      // Case-insensitive substring match in both directions.
-      if (capSel === sel || capSel.includes(sel) || sel.includes(capSel)) {
+      if (capSel === sel) {
         return { odds, source: capture.source };
+      }
+      // Case-insensitive substring match in both directions (fallback only).
+      if (!fallback && (capSel.includes(sel) || sel.includes(capSel))) {
+        fallback = { odds, source: capture.source };
       }
     }
   }
-  return null;
+  return fallback;
 }
