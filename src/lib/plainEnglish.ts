@@ -59,3 +59,101 @@ export function plainBetReason(reason: string): string {
 export function plainCLV(): string {
   return "Did you get a better price than the final pre-kickoff price? Positive = you beat the market.";
 }
+
+// ── Analyst-note de-jargonizer (UI cleanup 2026-07-05) ──
+// The analyst_note is free-form Claude prose full of internal codenames
+// (C6B, D6, PROPAGATING, pct…). These substitutions translate the codes to
+// plain phrases while keeping the code in parentheses so the technical
+// reader can still cross-reference. Order matters: longer/more specific
+// patterns first so e.g. C6B never gets caught by the C6 rule.
+const JARGON_SUBSTITUTIONS: Array<[RegExp, string]> = [
+  [/\b3-signal CONFLICT\b/g, "three-way disagreement between the goal estimates (CONFLICT)"],
+  [/\bAPP-POISSON\b/g, "the app's goals model"],
+  [/\bAPP-Poisson\b/g, "the app's goals model"],
+  [/\bR16\b/g, "Round-of-16"],
+  [/\bH2H gate\b/gi, "head-to-head history requirement"],
+  [/\bH2H\b/g, "head-to-head"],
+  [/\bBTTS\b/g, "Both Teams To Score"],
+  [/\bC6B\b/g, "the player-stats feed (C6B)"],
+  [/\bC6\b/g, "the lineup feed (C6)"],
+  [/\bC5\b/g, "the injury feed (C5)"],
+  [/\bC7\b/g, "the referee feed (C7)"],
+  [/\bC8\b/g, "the prediction feed (C8)"],
+  [/\bC9A\b/g, "the retail-odds feed (C9A)"],
+  [/\bC9B\b/g, "the Pinnacle-odds feed (C9B)"],
+  [/\bD1\b/g, "form (D1)"],
+  [/\bD2\b/g, "tactical (D2)"],
+  [/\bD3\b/g, "context (D3)"],
+  [/\bD4\b/g, "injuries (D4)"],
+  [/\bD5\b/g, "referee (D5)"],
+  [/\bD6\b/g, "head-to-head (D6)"],
+  [/\bPROPAGATING state\b/g, "still-publishing (PROPAGATING) state"],
+  [/\bPROPAGATING\b/g, "still publishing (PROPAGATING)"],
+  [/\breturned EMPTY\b/g, "returned no data (EMPTY)"],
+  [/\bEMPTY\b/g, "no data"],
+  [/\bgap-scored\b/g, "measured"],
+  [/\bgap score\b/gi, "impact score"],
+  [/\bSGP\b/g, "same-game parlay"],
+  [/\bCLV\b/g, "closing-line value"],
+  [/\bxG-proxy\b/g, "shots-on-target stand-in for expected goals"],
+  [/\bCONFLICT\b/g, "disagreement (CONFLICT)"],
+  [/(\d)pct\b/g, "$1%"],
+  [/\bpct\b/g, "%"],
+];
+
+/**
+ * Translate internal codenames in free-form Claude prose to plain phrases.
+ * Each substitution is stashed behind a placeholder until the end so a later
+ * rule can never re-match text an earlier rule inserted (e.g. the standalone
+ * CONFLICT rule re-hitting the "(CONFLICT)" kept by the 3-signal rule).
+ */
+export function dejargonize(text: string): string {
+  const stash: string[] = [];
+  let out = text;
+  for (const [re, replacement] of JARGON_SUBSTITUTIONS) {
+    out = out.replace(re, (...args) => {
+      const groups = args.slice(1, -2) as string[];
+      const resolved = replacement.replace(/\$(\d)/g, (_, g: string) => {
+        return groups[Number(g) - 1] ?? "";
+      });
+      stash.push(resolved);
+      return `\uE000${stash.length - 1}\uE000`;
+    });
+  }
+  return out.replace(/\uE000(\d+)\uE000/g, (_, i: string) => stash[Number(i)] ?? "");
+}
+
+// A sentence longer than this reads badly as a single bullet — split it at
+// its em-dashes into separate bullets.
+const BULLET_SPLIT_THRESHOLD = 180;
+
+/**
+ * Turn a free-form analyst note into plain-English bullet points:
+ * de-jargonize, split into sentences (safe against decimals like "2.5"),
+ * and break overlong sentences at em-dashes.
+ */
+export function analystNoteBullets(note: string): string[] {
+  // Split the RAW note first — de-jargonizing can lowercase a sentence start
+  // ("H2H gate failed" → "head-to-head history requirement failed"), which
+  // would defeat the uppercase-lookahead below and merge two sentences.
+  // Split after ., ! or ? followed by whitespace and an uppercase/quote/paren
+  // start — a decimal point ("Over 2.5 Goals") has no following space, so it
+  // never splits.
+  const sentences = note
+    .trim()
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)
+    .map((s) => dejargonize(s.trim()))
+    .filter(Boolean);
+  const bullets: string[] = [];
+  for (const sentence of sentences) {
+    const parts =
+      sentence.length > BULLET_SPLIT_THRESHOLD
+        ? sentence.split(/\s+—\s+/).map((p) => p.trim())
+        : [sentence];
+    for (const part of parts) {
+      if (!part) continue;
+      bullets.push(part.charAt(0).toUpperCase() + part.slice(1));
+    }
+  }
+  return bullets;
+}

@@ -1,10 +1,5 @@
 import { useState } from "react";
-import {
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-  MapPin,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, AlertTriangle, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type AnalysisResult,
@@ -14,6 +9,7 @@ import {
   type MarketRejected,
 } from "@/lib/analysisResult";
 import { computeEv } from "@/lib/calculate";
+import { analystNoteBullets } from "@/lib/plainEnglish";
 import {
   isCardsMarket,
   CARDS_MARKET_SOURCE_AVAILABLE,
@@ -122,8 +118,7 @@ function CalibrationLine({ bet }: { bet: StraightBet }) {
       {typeof raw === "number" ? (
         <span className="text-slate">
           {" "}
-          (raw {(raw * 100).toFixed(1)}%
-          {lam != null ? `, λ ${lam}` : ""})
+          (raw {(raw * 100).toFixed(1)}%{lam != null ? `, λ ${lam}` : ""})
         </span>
       ) : null}
     </span>
@@ -132,14 +127,11 @@ function CalibrationLine({ bet }: { bet: StraightBet }) {
 
 // A paper bet renders with a 📝 PAPER badge, blue-grey border, its paper_reason,
 // and its would-be Kelly stake struck-through.
-const PAPER_WRAP =
-  "rounded-md border border-signal-blue/40 bg-signal-blue/5 p-3";
+const PAPER_WRAP = "rounded-md border border-signal-blue/40 bg-signal-blue/5 p-3";
 
 function PaperReason({ reason }: { reason?: string }) {
   if (!reason) return null;
-  return (
-    <span className="text-[13px] text-signal-blue">📝 Paper (not staked): {reason}</span>
-  );
+  return <span className="text-[13px] text-signal-blue">📝 Paper (not staked): {reason}</span>;
 }
 
 function wouldStakeText(bet: { kelly_result?: { recommended_stake?: number } }): string {
@@ -174,8 +166,8 @@ function PriceConfirm({
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-2 text-[12px]">
       <span className="text-accent-amber">
-        ⚠️ Feed price is {fmtOdds(bet.odds)} from a proxy book — confirm the real
-        Stake.com price before placing:
+        ⚠️ Feed price is {fmtOdds(bet.odds)} from a proxy book — confirm the real Stake.com price
+        before placing:
       </span>
       <input
         type="number"
@@ -210,9 +202,7 @@ function StraightBetRow({
   if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4 first:border-t-0 first:pt-0">
-        <span className="font-bold text-slate">
-          ❌ BET {index} — Straight Bet
-        </span>
+        <span className="font-bold text-slate">❌ BET {index} — Straight Bet</span>
         <span className="text-[13px] text-slate">
           {bet.skip_reason || "Inactive — no qualifying value."}
         </span>
@@ -251,7 +241,13 @@ function StraightBetRow({
       <CalibrationLine bet={bet} />
       <span className="text-sm text-slate">
         EV: <span className={cn("font-bold", evTextClass(bet.ev))}>{evPctText(bet.ev)}</span>
-        {kelly ? <> {" | "}{kelly}</> : null}
+        {kelly ? (
+          <>
+            {" "}
+            {" | "}
+            {kelly}
+          </>
+        ) : null}
         {bet.ev_confidence ? (
           <span className="text-slate"> ({bet.ev_confidence} confidence)</span>
         ) : null}
@@ -268,9 +264,7 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
   if (!bet.active) {
     return (
       <div className="flex flex-col gap-1 border-t border-border pt-4">
-        <span className="font-bold text-slate">
-          ❌ BET 3 — 3-Leg Accumulator
-        </span>
+        <span className="font-bold text-slate">❌ BET 3 — 3-Leg Accumulator</span>
         <span className="text-[13px] text-slate">
           {bet.skip_reason || "Inactive — SGP not viable."}
         </span>
@@ -288,8 +282,7 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
         {paper ? "📝 PAPER" : "✅"} BET 3 — 3-Leg Accumulator
       </span>
       <span className="text-base font-semibold text-foreground">
-        Same Game Parlay @{" "}
-        <span className="text-accent-amber">{fmtOdds(odds)}</span>
+        Same Game Parlay @ <span className="text-accent-amber">{fmtOdds(odds)}</span>
       </span>
       <ul className="flex flex-col gap-0.5 py-1">
         {legs.map((leg, i) => (
@@ -300,9 +293,7 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
             ) : null}
           </li>
         ))}
-        {legs.length === 0 && (
-          <li className="text-sm text-slate">No legs provided.</li>
-        )}
+        {legs.length === 0 && <li className="text-sm text-slate">No legs provided.</li>}
       </ul>
       <span className="text-sm text-slate">
         Stake:{" "}
@@ -318,14 +309,15 @@ function SgpBetRow({ bet }: { bet: SgpBet }) {
           </>
         ) : null}
         {" | "}
-        EV: <span className={cn("font-bold", evTextClass(bet.parlay_ev))}>{evPctText(bet.parlay_ev)}</span>
+        EV:{" "}
+        <span className={cn("font-bold", evTextClass(bet.parlay_ev))}>
+          {evPctText(bet.parlay_ev)}
+        </span>
       </span>
       {paper && <PaperReason reason={bet.paper_reason} />}
       <NavLabel
         label={
-          bet.legs[0]?.stake_label
-            ? "Soccer → Same Game Parlay\nAdd all legs above"
-            : undefined
+          bet.legs[0]?.stake_label ? "Soccer → Same Game Parlay\nAdd all legs above" : undefined
         }
       />
       <ExpandableText text={bet.reasoning} />
@@ -358,8 +350,7 @@ function JackpotBetRow({ bet }: { bet: JackpotBet }) {
         {paper ? "📝 PAPER" : "✅"} BET 4 — Jackpot
       </span>
       <span className="text-base font-semibold text-foreground">
-        Accumulator @{" "}
-        <span className="text-accent-amber">{fmtOdds(bet.combined_odds)}</span>
+        Accumulator @ <span className="text-accent-amber">{fmtOdds(bet.combined_odds)}</span>
       </span>
       <ul className="flex flex-col gap-0.5 py-1">
         {legs.map((leg, i) => (
@@ -402,12 +393,10 @@ function YourBets({
 }) {
   const dq = (result.data_quality ?? "").toUpperCase();
   const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
-  const subtitle =
-    [result.match, result.round].filter(Boolean).join(" — ") || "—";
+  const subtitle = [result.match, result.round].filter(Boolean).join(" — ") || "—";
 
   const hasUnallocated =
-    !!result.unallocated_stake &&
-    !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim());
+    !!result.unallocated_stake && !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim());
 
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
@@ -447,16 +436,12 @@ function YourBets({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-sm">
         <span className="text-slate">
           Total Staked:{" "}
-          <span className="font-bold text-foreground">
-            {result.total_staked ?? "—"}
-          </span>
+          <span className="font-bold text-foreground">{result.total_staked ?? "—"}</span>
         </span>
         {hasUnallocated && (
           <span className="text-slate">
             Unallocated:{" "}
-            <span className="font-bold text-accent-amber">
-              {result.unallocated_stake}
-            </span>
+            <span className="font-bold text-accent-amber">{result.unallocated_stake}</span>
           </span>
         )}
       </div>
@@ -490,15 +475,10 @@ function numOf(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-function straightCandidate(
-  bet: StraightBet | undefined,
-  index: number,
-  minEv: number,
-): Candidate {
+function straightCandidate(bet: StraightBet | undefined, index: number, minEv: number): Candidate {
   const active = bet?.active === true && bet?.paper_bet !== true;
   const paper = bet?.active === true && bet?.paper_bet === true;
-  const selText =
-    [bet?.market, bet?.selection].filter(Boolean).join(" — ") || "—";
+  const selText = [bet?.market, bet?.selection].filter(Boolean).join(" — ") || "—";
   return {
     key: `bet_${index}`,
     label: `Bet ${index} · Straight`,
@@ -514,11 +494,7 @@ function straightCandidate(
     shadow: bet?.shadow_pick === true,
     minEv,
     stakeLabel: bet?.stake_label,
-    suggestedStake: active
-      ? bet?.stake ?? "—"
-      : paper
-        ? "$0 (paper)"
-        : "$0 suggested",
+    suggestedStake: active ? (bet?.stake ?? "—") : paper ? "$0 (paper)" : "$0 suggested",
     reason: bet?.skip_reason ?? bet?.paper_reason ?? undefined,
   };
 }
@@ -567,11 +543,7 @@ function parlayCandidate(
     shadow: bet?.shadow_pick === true,
     minEv: opts.minEv,
     stakeLabel,
-    suggestedStake: active
-      ? bet?.stake ?? "—"
-      : paper
-        ? "$0 (paper)"
-        : "$0 suggested",
+    suggestedStake: active ? (bet?.stake ?? "—") : paper ? "$0 (paper)" : "$0 suggested",
     reason: bet?.skip_reason ?? bet?.paper_reason ?? undefined,
   };
 }
@@ -622,8 +594,7 @@ function valueBadge(c: Candidate): {
     return {
       text: "⛔ NO VALUE",
       cls: "border-signal-red/50 bg-signal-red/15 text-signal-red",
-      subtitle:
-        "Price is worse than our estimated chance — expected to lose money over time",
+      subtitle: "Price is worse than our estimated chance — expected to lose money over time",
     };
   return {
     text: "⚠️ BELOW THRESHOLD",
@@ -647,14 +618,11 @@ function CandidateCard({
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [stake, setStake] = useState("");
-  const [oddsStr, setOddsStr] = useState(
-    typeof c.odds === "number" ? String(c.odds) : "",
-  );
+  const [oddsStr, setOddsStr] = useState(typeof c.odds === "number" ? String(c.odds) : "");
   const [placed, setPlaced] = useState(false);
 
   const badge = valueBadge(c);
-  const marketImplied =
-    typeof c.odds === "number" && c.odds > 0 ? 1 / c.odds : undefined;
+  const marketImplied = typeof c.odds === "number" && c.odds > 0 ? 1 / c.odds : undefined;
 
   const confirm = () => {
     const stakeNum = Number(stake);
@@ -676,21 +644,14 @@ function CandidateCard({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate">
-          {c.label}
-        </span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate">{c.label}</span>
         <div className="flex items-center gap-1.5">
           {c.shadow && (
             <span className="rounded-full border border-[#a78bfa]/50 bg-[#a78bfa]/15 px-2 py-0.5 text-[11px] font-bold text-[#a78bfa]">
               👻 SHADOW
             </span>
           )}
-          <span
-            className={cn(
-              "rounded-full border px-2 py-0.5 text-[11px] font-bold",
-              badge.cls,
-            )}
-          >
+          <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-bold", badge.cls)}>
             {badge.text}
           </span>
         </div>
@@ -707,9 +668,7 @@ function CandidateCard({
         </p>
       </div>
 
-      {badge.subtitle && (
-        <p className="text-xs text-signal-red">{badge.subtitle}</p>
-      )}
+      {badge.subtitle && <p className="text-xs text-signal-red">{badge.subtitle}</p>}
 
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
         <span className="text-slate">
@@ -717,17 +676,14 @@ function CandidateCard({
           <span
             className={cn(
               "font-bold",
-              typeof c.ev === "number" && c.ev < 0
-                ? "text-signal-red"
-                : "text-signal-green",
+              typeof c.ev === "number" && c.ev < 0 ? "text-signal-red" : "text-signal-green",
             )}
           >
             {evPct(c.ev)}
           </span>
         </span>
         <span className="text-slate">
-          Our estimate:{" "}
-          <span className="font-semibold text-foreground">{pct(c.modelProb)}</span>
+          Our estimate: <span className="font-semibold text-foreground">{pct(c.modelProb)}</span>
         </span>
         <span className="text-slate">
           Market's estimate:{" "}
@@ -743,20 +699,15 @@ function CandidateCard({
       )}
 
       <p className="text-xs text-slate">
-        Suggested stake:{" "}
-        <span className="font-semibold text-foreground">{c.suggestedStake}</span>
+        Suggested stake: <span className="font-semibold text-foreground">{c.suggestedStake}</span>
       </p>
 
-      {c.reason && !c.active && (
-        <p className="text-xs italic text-slate/80">{c.reason}</p>
-      )}
+      {c.reason && !c.active && <p className="text-xs italic text-slate/80">{c.reason}</p>}
 
       {onPlaceActionBet && (
         <div className="border-t border-border pt-2">
           {placed ? (
-            <p className="text-xs font-semibold text-signal-green">
-              💵 Logged as an action bet.
-            </p>
+            <p className="text-xs font-semibold text-signal-green">💵 Logged as an action bet.</p>
           ) : !formOpen ? (
             <button
               type="button"
@@ -841,22 +792,16 @@ function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
                   key={i}
                   className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 rounded border border-border bg-card/30 px-3 py-1.5 text-xs"
                 >
-                  <span className="font-semibold text-foreground">
-                    {m.market ?? "—"}
-                  </span>
+                  <span className="font-semibold text-foreground">{m.market ?? "—"}</span>
                   <span className="text-slate">{CARDS_UNAVAILABLE_SHORT}</span>
                   <span className="w-full text-slate/80">
-                    No cards price this run (retail feed carries none; Pinnacle
-                    C9B offered no cards market) — data gap, not a model
-                    judgment.
+                    No cards price this run (retail feed carries none; Pinnacle C9B offered no cards
+                    market) — data gap, not a model judgment.
                   </span>
                 </div>
               );
             }
-            const recomputed = computeEv(
-              m.ev_inputs?.model_probability,
-              m.ev_inputs?.decimal_odds,
-            );
+            const recomputed = computeEv(m.ev_inputs?.model_probability, m.ev_inputs?.decimal_odds);
             const evText =
               recomputed !== undefined
                 ? evPct(recomputed)
@@ -868,13 +813,9 @@ function RejectedMarkets({ markets }: { markets: MarketRejected[] }) {
                 key={i}
                 className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 rounded border border-border bg-card/30 px-3 py-1.5 text-xs"
               >
-                <span className="font-semibold text-foreground">
-                  {m.market ?? "—"}
-                </span>
+                <span className="font-semibold text-foreground">{m.market ?? "—"}</span>
                 <span className="text-slate">EV: {evText}</span>
-                {m.reason && (
-                  <span className="w-full text-slate/80">{m.reason}</span>
-                )}
+                {m.reason && <span className="w-full text-slate/80">{m.reason}</span>}
               </div>
             );
           })}
@@ -895,19 +836,13 @@ function CandidatesCard({
   return (
     <div className={cn(CARD, "flex flex-col gap-4")}>
       <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-bold text-foreground">
-          📋 All Candidates
-        </h2>
+        <h2 className="text-xl font-bold text-foreground">📋 All Candidates</h2>
         <p className="text-sm text-slate">Every bet evaluated this match</p>
       </div>
 
       <div className="flex flex-col gap-3">
         {candidates.map((c) => (
-          <CandidateCard
-            key={c.key}
-            c={c}
-            onPlaceActionBet={onPlaceActionBet}
-          />
+          <CandidateCard key={c.key} c={c} onPlaceActionBet={onPlaceActionBet} />
         ))}
       </div>
 
@@ -920,12 +855,29 @@ function CandidatesCard({
 
 // Analyst note
 // ─────────────────────────────────────────────────────────────
+// UI cleanup 2026-07-05: the raw note is a wall of jargon-heavy prose.
+// Render it as de-jargonized bullet points anyone can read; the original
+// paragraph stays available behind a disclosure.
 function AnalystNote({ note }: { note?: string }) {
   if (!note) return null;
+  const bullets = analystNoteBullets(note);
   return (
     <div className={cn(CARD, "flex flex-col gap-2 border-l-4 border-l-signal-blue")}>
       <SectionLabel>Analyst Note</SectionLabel>
-      <p className="text-sm leading-7 text-foreground">{note}</p>
+      <ul className="flex flex-col gap-1.5">
+        {bullets.map((b, i) => (
+          <li key={i} className="flex gap-2 text-sm leading-6 text-foreground">
+            <span className="mt-px shrink-0 text-signal-blue">•</span>
+            <span>{b}</span>
+          </li>
+        ))}
+      </ul>
+      <details>
+        <summary className="cursor-pointer text-[11px] text-slate/70 hover:text-foreground">
+          Original note
+        </summary>
+        <p className="mt-1 text-xs leading-6 text-slate">{note}</p>
+      </details>
     </div>
   );
 }
@@ -936,24 +888,19 @@ function AnalystNote({ note }: { note?: string }) {
 function BottomBar({ result }: { result: AnalysisResult }) {
   const [riskOpen, setRiskOpen] = useState(false);
   const hasUnallocated =
-    !!result.unallocated_stake &&
-    !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim());
+    !!result.unallocated_stake && !/^\$?0(\.0+)?$/.test(result.unallocated_stake.trim());
 
   return (
     <div className="sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl border border-border bg-background/95 px-5 py-3 backdrop-blur">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
         <span className="text-slate">
           Total staked:{" "}
-          <span className="font-bold text-foreground">
-            {result.total_staked ?? "—"}
-          </span>
+          <span className="font-bold text-foreground">{result.total_staked ?? "—"}</span>
         </span>
         {hasUnallocated && (
           <span className="text-slate">
             Unallocated:{" "}
-            <span className="font-bold text-accent-amber">
-              {result.unallocated_stake}
-            </span>
+            <span className="font-bold text-accent-amber">{result.unallocated_stake}</span>
           </span>
         )}
       </div>
@@ -964,9 +911,7 @@ function BottomBar({ result }: { result: AnalysisResult }) {
           className="flex items-start gap-1.5 text-left text-xs text-slate"
         >
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-accent-amber" />
-          <span className={cn(!riskOpen && "line-clamp-1")}>
-            Key risk: {result.key_risk_flag}
-          </span>
+          <span className={cn(!riskOpen && "line-clamp-1")}>Key risk: {result.key_risk_flag}</span>
         </button>
       )}
     </div>
