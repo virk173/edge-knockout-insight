@@ -366,6 +366,9 @@ export interface AnalysisResult {
   classification?: string; // "COMPETITIVE" | "HEAVY MISMATCH" | "JACKPOT"
   data_quality?: string; // "FULL" | "PARTIAL" | "THIN"
   pinnacle_available?: boolean;
+  // ALWAYS [] — no line-movement history exists for this competition; any
+  // content here is fabricated (asserted by verifyResultIntegrity).
+  line_movement_signals?: unknown[];
   overround_pinnacle?: number | null;
   // Raw variables from Claude (preferred source of truth for overround).
   overround_inputs?: OverroundInputs;
@@ -401,6 +404,9 @@ export interface AnalysisResult {
   data_quality_flags?: string[];
   dimension_weights?: DimensionWeights;
   dimension_weights_validation?: DimensionWeightsValidation;
+  // Runtime integrity self-audit (verifyResultIntegrity, calculate.ts) — runs
+  // last on every enriched result; violations mean an upstream guard failed.
+  integrity?: { passed: boolean; violations: string[] };
   analyst_note?: string;
   // Contextual factor inputs from Claude + computed adjustments (app code).
   context_inputs?: ContextInputs;

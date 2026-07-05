@@ -998,6 +998,17 @@ export function generateRunReport(
   } else {
     push("Weights: NOT RUN");
   }
+  // Runtime integrity self-audit — every invariant the engine promises.
+  if (r.integrity) {
+    push(
+      r.integrity.passed
+        ? "Integrity: PASSED (all runtime invariants hold)"
+        : `Integrity: ⚠️ ${r.integrity.violations.length} VIOLATION(S)`,
+    );
+    for (const viol of r.integrity.violations) push(`  - ${viol}`);
+  } else {
+    push("Integrity: NOT RUN (pre-integrity-checker result)");
+  }
   push();
 
   // ── Raw Claude JSON ─────────────────────────────────────

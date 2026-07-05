@@ -1717,7 +1717,132 @@ export function calculateResults(
     }
   }
 
+  // ── RUNTIME INTEGRITY CHECK (always last) ─────────────────────
+  // Self-audit of the fully-enriched result against the engine's own
+  // invariants. A violation here means a guard upstream failed — it is
+  // surfaced loudly (data_quality_flags + result.integrity) instead of
+  // waiting for a human to read the run report.
+  const integrity = verifyResultIntegrity(result);
+  result.integrity = integrity;
+  if (!integrity.passed) {
+    result.data_quality_flags = result.data_quality_flags || [];
+    for (const violation of integrity.violations) {
+      result.data_quality_flags.push(`INTEGRITY: ${violation}`);
+    }
+  }
+
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Runtime integrity checker — the engine's invariants, asserted on every
+// enriched result. Each violation is a guard failure, not a data nuance:
+// nothing on this list should ever be true of a result the UI shows.
+// ─────────────────────────────────────────────────────────────
+export function verifyResultIntegrity(result: AnalysisResult): {
+  passed: boolean;
+  violations: string[];
+} {
+  const v: string[] = [];
+  const fin = (x: unknown): x is number =>
+    typeof x === "number" && Number.isFinite(x);
+  const stakeNum = (s: unknown): number =>
+    Number.parseFloat(String(s ?? "").replace(/[^0-9.]/g, ""));
+
+  const checkStraight = (
+    bet: StraightBet | undefined,
+    key: string,
+    minEv: number,
+  ): void => {
+    if (!bet?.active || bet.paper_bet === true) return;
+    if (!fin(bet.ev)) v.push(`${key} is active without a finite EV`);
+    else if (bet.ev < minEv - 1e-9)
+      v.push(`${key} is active with EV ${bet.ev} below its ${minEv} gate`);
+    if (!fin(bet.odds) || bet.odds <= 1)
+      v.push(`${key} is active with invalid odds ${bet.odds}`);
+    const p = bet.model_probability;
+    if (!fin(p) || p <= 0 || p >= 1)
+      v.push(`${key} is active with model probability ${p} outside (0,1)`);
+    const s = stakeNum(bet.stake);
+    if (!Number.isFinite(s) || s <= 0)
+      v.push(`${key} is active with an unparseable/zero stake "${bet.stake}"`);
+  };
+  checkStraight(result.bet_1, "bet_1", 0.05);
+  checkStraight(result.bet_2, "bet_2", 0.03);
+
+  const b3 = result.bet_3;
+  if (b3?.active && b3.paper_bet !== true) {
+    const legs = b3.legs ?? [];
+    const probs = legs
+      .map((l) => l.model_probability)
+      .filter((p): p is number => fin(p));
+    if (legs.length < 3 || probs.length !== legs.length)
+      v.push("bet_3 is active without full per-leg probabilities (3+ legs required)");
+    const pj = num(b3.parlay_ev_inputs?.p_joint);
+    if (pj !== undefined && probs.length && pj > Math.min(...probs) + 1e-9)
+      v.push(`bet_3 p_joint ${pj} exceeds the least likely leg's probability`);
+    if (!fin(b3.parlay_ev) || b3.parlay_ev < 0.05 - 1e-9)
+      v.push(`bet_3 is active with parlay EV ${b3.parlay_ev} below the 0.05 gate`);
+  }
+
+  const b4 = result.bet_4;
+  if (b4?.active && b4.paper_bet !== true) {
+    const legs = b4.legs ?? [];
+    if (legs.length < 4 || legs.length > 5)
+      v.push(`bet_4 is active with ${legs.length} legs (jackpot requires 4-5)`);
+    if (!legs.every((l) => fin(l.model_probability) && fin(l.odds) && l.odds > 1))
+      v.push("bet_4 is active with legs missing model_probability/odds");
+    if (!fin(b4.jackpot_ev) || b4.jackpot_ev < 0.05 - 1e-9)
+      v.push(`bet_4 is active with jackpot EV ${b4.jackpot_ev} below the 0.05 gate`);
+  }
+
+  // Money conservation: the headline total must equal the sum of active
+  // real-money stakes, and stay under the per-match exposure cap.
+  const totals = [result.bet_1, result.bet_2, result.bet_3, result.bet_4].map(
+    (b) =>
+      b?.active && (b as { paper_bet?: boolean }).paper_bet !== true
+        ? stakeNum((b as { stake?: string }).stake) || 0
+        : 0,
+  );
+  const sum = totals.reduce((a, b) => a + b, 0);
+  const declared = stakeNum(result.total_staked);
+  if (Number.isFinite(declared) && Math.abs(declared - sum) > 0.011)
+    v.push(
+      `total_staked ${result.total_staked} does not equal the sum of active real stakes $${sum.toFixed(2)}`,
+    );
+  const bankroll = num(result.bankroll_at_analysis);
+  if (
+    bankroll !== undefined &&
+    sum > bankroll * BANKROLL_DEFAULTS.MAX_MATCH_EXPOSURE_PCT + 0.011
+  )
+    v.push(
+      `active real stakes $${sum.toFixed(2)} exceed the ${BANKROLL_DEFAULTS.MAX_MATCH_EXPOSURE_PCT * 100}% per-match exposure cap on $${bankroll}`,
+    );
+
+  // Structural invariants.
+  if (
+    Array.isArray(result.line_movement_signals) &&
+    result.line_movement_signals.length > 0
+  )
+    v.push(
+      "line_movement_signals is non-empty — no movement data exists for this competition, this is fabricated",
+    );
+  if (
+    result.ensemble_check?.alignment === "CONFLICT" &&
+    result.data_quality === "FULL"
+  )
+    v.push("ensemble alignment is CONFLICT but data_quality is still FULL");
+  const dw = result.dimension_weights;
+  if (dw) {
+    const dwSum = [dw.D1, dw.D2, dw.D3, dw.D4, dw.D5, dw.D6].reduce(
+      (a, b) => a + (fin(b) ? b : 0),
+      0,
+    );
+    if (Math.abs(dwSum - 100) > 1)
+      v.push(`dimension weights sum to ${dwSum}, not 100`);
+  }
+
+  return { passed: v.length === 0, violations: v };
 }
 
 // ─────────────────────────────────────────────────────────────

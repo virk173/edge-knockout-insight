@@ -362,3 +362,69 @@ describe("applyConfirmedPrice", () => {
     expect(JSON.stringify(before)).toBe(snapshot);
   });
 });
+
+// Runtime integrity self-audit — asserted on every enriched result.
+import { verifyResultIntegrity } from "./calculate";
+
+describe("verifyResultIntegrity", () => {
+  it("passes a clean enriched result end-to-end (integrity attached by calculateResults)", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        data_quality: "PARTIAL",
+        line_movement_signals: [],
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 0.65, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500, lambda: 1, strictMode: false },
+    );
+    expect(out.integrity?.passed).toBe(true);
+    expect(out.integrity?.violations).toEqual([]);
+  });
+
+  it("catches an active bet below its EV gate, bad stakes, and fabricated movement signals", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      data_quality: "FULL",
+      line_movement_signals: [{ market: "1X2", signal: "sharp" }],
+      ensemble_check: { alignment: "CONFLICT" },
+      bankroll_at_analysis: 500,
+      total_staked: "$99.00",
+      bet_1: {
+        active: true,
+        ev: 0.01, // below the 0.05 gate
+        odds: 1.7,
+        model_probability: 0.65,
+        stake: "$12",
+      },
+    } as never);
+    expect(passed).toBe(false);
+    const text = violations.join(" | ");
+    expect(text).toContain("below its 0.05 gate");
+    expect(text).toContain("line_movement_signals");
+    expect(text).toContain("CONFLICT");
+    expect(text).toContain("total_staked");
+  });
+
+  it("catches an active jackpot with the wrong leg count and an exposure-cap breach", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bankroll_at_analysis: 500,
+      total_staked: "$40.00",
+      bet_4: {
+        active: true,
+        jackpot_ev: 0.2,
+        stake: "$40",
+        legs: [{ leg_number: 1, odds: 2, model_probability: 0.5 }],
+      },
+    } as never);
+    expect(passed).toBe(false);
+    const text = violations.join(" | ");
+    expect(text).toContain("jackpot requires 4-5");
+    expect(text).toContain("exposure cap");
+  });
+});
