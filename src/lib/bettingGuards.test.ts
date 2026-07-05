@@ -99,6 +99,33 @@ describe("p_joint invariant clamp — joint prob can never exceed the least like
   });
 });
 
+// Live E2E 2026-07-05 (Brazil vs Norway): a stale 10Bet cards quote (both
+// sides of Cards 3.5 at 1.83, Pinnacle 2.66/1.46) produced a phantom +25.3%
+// gap that survived the 15% haircut and became the top real-money bet. The
+// >15% tier re-anchors EV to the Pinnacle price, which gates the bet.
+describe("extreme Pinnacle divergence gate — full calculateResults path", () => {
+  it("regression: Cards Under 3.5 @ 1.83 vs Pinnacle 1.46 → EV negative, bet inactive", () => {
+    const out = calculateResults(
+      {
+        match: "Brazil vs Norway",
+        bet_1: {
+          active: true,
+          market: "Total Cards Over/Under",
+          selection: "Under 3.5 Cards",
+          market_group: "E",
+          ev_inputs: { model_probability: 0.6, decimal_odds: 1.83 },
+          pinnacle_odds: 1.46,
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.ev).toBeLessThan(0);
+    expect(out.bet_1?.ev_confidence).toBe("LOW");
+    expect(out.bet_1?.pinnacle_check_note).toContain("re-anchored");
+  });
+});
+
 describe("ensemble mixed-scale guard", () => {
   const base = (signals: [number, number, number]) => ({
     match: "A vs B",

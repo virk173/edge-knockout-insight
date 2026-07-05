@@ -613,6 +613,23 @@ describe("adjustEVForPinnacleGap", () => {
     expect(result.ev_confidence).toBe("HIGH");
     expect(result.adjusted_ev).toBe(0.08);
   });
+
+  // Live E2E 2026-07-05 (Brazil vs Norway): 10Bet quoted Cards Under 3.5 at
+  // 1.83 vs Pinnacle 1.46 (+25.3%) — a stale retail quote, not value. The
+  // flat 15% haircut still left +5.9% EV and a $9 real bet. Gaps above 15%
+  // now re-anchor EV to the Pinnacle price.
+  it("re-anchors EV to the Pinnacle price and drops confidence to LOW above a 15% gap", () => {
+    const result = adjustEVForPinnacleGap({
+      raw_ev: 0.0685, // 0.5839 × 1.83 − 1
+      stake_odds: 1.83,
+      pinnacle_odds: 1.46,
+      // gap = +25.3% → EV re-anchored: 0.5839 × 1.46 − 1 = −0.1475
+    });
+    expect(result.ev_confidence).toBe("LOW");
+    expect(result.adjusted_ev).toBeCloseTo(0.5839 * 1.46 - 1, 3);
+    expect(result.adjusted_ev).toBeLessThan(0);
+    expect(result.note).toContain("re-anchored");
+  });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

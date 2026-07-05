@@ -70,13 +70,15 @@ export type ClaudeCallResult =
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 const FALLBACK_MODEL = "claude-sonnet-4-6";
-// Live probe 2026-07-04 (claude-sonnet-5, current prompt + forced tool): a
-// full response with all Tier 0-8 required fields naturally completes at
-// 7,183 output tokens — the old 6500 cap truncated every run (stop_reason
-// max_tokens). 10,000 = measured size + ~40% headroom for data-rich matches,
-// and at the conservative ~112 tok/s measured rate generates in ~89s, leaving
-// ~61s margin under the 150s per-attempt timeout (~16,800 is the ceiling).
-const DEFAULT_MAX_TOKENS = 10_000;
+// Live measurements (claude-sonnet-5, current prompt + forced tool):
+//   2026-07-04 probe (few-shot data):        7,183 output tokens
+//   2026-07-05 E2E, full 14-call live data:  8,662 output tokens
+// The old 6500 cap truncated every run (stop_reason max_tokens); 10,000 left
+// only ~13% headroom over the live E2E. 12,000 = live measurement + ~38%
+// headroom, and at the conservative ~112 tok/s measured rate generates in
+// ~107s, leaving ~43s margin under the 150s per-attempt timeout (~16,800 is
+// the ceiling).
+const DEFAULT_MAX_TOKENS = 12_000;
 
 // Native Structured Outputs (Anthropic tool use). We force this single tool so
 // the model's response is a real JSON object on a `tool_use` block instead of a

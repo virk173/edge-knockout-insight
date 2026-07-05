@@ -305,17 +305,23 @@ CALL 9A — Stake live odds
 Use for all EV calculations.
 Show overround.
 NOTE ON CARDS PRICES: the retail feed
-(9A) carries NO cards/bookings odds.
-Cards prices, when they exist at all,
-come ONLY from CALL 9B (Pinnacle).
+(9A) MAY carry cards odds, but they
+are frequently stale or placeholder
+quotes (e.g. both sides of the same
+line at an identical price) and are
+NOT trustworthy as executable prices.
 A cards bet may be proposed ONLY when
 C9B contains a Cards market with a
-real price for THIS match. Then use
-that C9B price as decimal_odds and
-copy it to pinnacle_odds, and state
-in reasoning that the price is
-Pinnacle-referenced (executable Stake
-price must be verified at bet time).
+real price for THIS match. ALWAYS use
+that C9B price as decimal_odds — never
+the 9A cards price — and copy it to
+pinnacle_odds, and state in reasoning
+that the price is Pinnacle-referenced
+(executable Stake price must be
+verified at bet time). If the 9A and
+C9B cards prices diverge by more than
+15 percent, treat the retail quote as
+a data error, never as value.
 If C9B has no Cards market: treat
 cards odds as unavailable. Never
 locate, infer, or estimate a cards
@@ -1552,9 +1558,10 @@ BTTS Yes: 1.90
 BTTS No: 1.85
 Corners over 9.5: 1.88
 Corners under 9.5: 1.92
-(no cards markets — the retail feed
-does not carry them; cards prices
-come only from C9B when offered)
+(no cards markets in this feed for
+this match; when 9A does carry cards
+prices they are unreliable — cards
+EV always anchors to the C9B price)
 [END CALL 9A]
 
 [CALL 9B — Pinnacle odds (API-Football

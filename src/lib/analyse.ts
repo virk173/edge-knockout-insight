@@ -366,7 +366,15 @@ function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<strin
   };
 }
 
+// Caution shipped to Claude when an XI was published far before kickoff
+// (team sheets are only official ~T-60/75; earlier = likely projected).
+const EARLY_LINEUP_NOTE =
+  "CAUTION: this XI was published more than 90 minutes before kickoff. Official team sheets are only released ~60-75 minutes pre-match, so treat this as a LIKELY/PROJECTED lineup, not a confirmed team sheet — hedge lineup-dependent conclusions and do not present the XI as final.";
+
 function compactLineup(data: unknown, rawInjuries: unknown): Record<string, unknown> {
+  // Stamped by the CALL 6 step when the XI arrived outside the pre-kickoff
+  // window (read BEFORE unwrapping `data`, where the stamp lives).
+  const early = getField(data, ["early_lineup_publication"]) === true;
   const node = getField(data, ["data"]) ?? data;
   const home = getField(node, ["home"]);
   const away = getField(node, ["away"]);
@@ -378,11 +386,15 @@ function compactLineup(data: unknown, rawInjuries: unknown): Record<string, unkn
     return {
       confirmed: getField(node, ["confirmed"]) ?? null,
       source: getField(node, ["source"]) ?? null,
+      ...(early ? { early_publication_note: EARLY_LINEUP_NOTE } : {}),
       home: home ? compactLineupSide(home, sideDoubtful(home)) : null,
       away: away ? compactLineupSide(away, sideDoubtful(away)) : null,
     };
   }
-  return { sides: extractArray(node).map((s) => compactLineupSide(s, sideDoubtful(s))) };
+  return {
+    ...(early ? { early_publication_note: EARLY_LINEUP_NOTE } : {}),
+    sides: extractArray(node).map((s) => compactLineupSide(s, sideDoubtful(s))),
+  };
 }
 
 function compactPredictions(data: unknown): Record<string, unknown> {
@@ -3564,6 +3576,15 @@ export async function collectMatchData(
     // Option A bump folded in: 5 x 60s (5 minutes) inside the pre-kickoff window
     // instead of 3 x 60s. Wider window, still cheap.
     const maxAttempts = withinWindow ? 5 : 1;
+    // Live E2E 2026-07-05 (Brazil vs Norway): TheStatsAPI served a fully
+    // POPULATED XI ~16h before kickoff. Team sheets are only official ~T-60/75,
+    // so an XI published this early is likely a PROJECTED lineup. Stamp the
+    // payload so the Claude-facing C6 block carries a caution instead of
+    // presenting a provisional XI as a confirmed team sheet.
+    const stampEarly = (p: unknown): unknown =>
+      !withinWindow && p && typeof p === "object" && !Array.isArray(p)
+        ? { ...(p as Record<string, unknown>), early_lineup_publication: true }
+        : p;
     let payload: unknown = null;
     let state: LineupState = "NOT_ANNOUNCED";
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -3576,7 +3597,7 @@ export async function collectMatchData(
           `[S3 lineups] State 3 LINEUP CONFIRMED (TheStatsAPI) for matchId=${matchId} ` +
             `(${match.home} vs ${match.away}, ${tag}) — starting_xi populated for both teams.`,
         );
-        return payload;
+        return stampEarly(payload);
       }
       if (state === "PROPAGATING") {
         console.warn(
@@ -3602,7 +3623,7 @@ export async function collectMatchData(
           `[S3 lineups] State 3 LINEUP CONFIRMED via API-Football fallback for ` +
             `${match.home} vs ${match.away} (TheStatsAPI was ${state}, ${tag}).`,
         );
-        return afEarly;
+        return stampEarly(afEarly);
       }
 
       if (attempt < maxAttempts - 1) await sleep(60000);

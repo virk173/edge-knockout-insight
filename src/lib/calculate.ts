@@ -247,6 +247,23 @@ export const adjustEVForPinnacleGap = (inputs: {
 
   const gap_pct = (inputs.stake_odds / inputs.pinnacle_odds - 1) * 100;
 
+  if (gap_pct > 15) {
+    // An extreme same-line divergence from the sharp book is almost always a
+    // stale or erroneous retail quote, not value (live E2E 2026-07-05:
+    // 10Bet quoted BOTH sides of Cards 3.5 at 1.83 while Pinnacle priced
+    // 2.66/1.46 — the "+25% edge" was phantom and became the top real-money
+    // bet). The retail price can't be trusted as executable, so EV is
+    // re-anchored to the Pinnacle price: recover the model probability from
+    // raw_ev (p = (ev + 1) / odds), then ev = p × pinnacle − 1. A negative
+    // re-anchored EV gates the bet downstream.
+    const modelP = (inputs.raw_ev + 1) / inputs.stake_odds;
+    return {
+      adjusted_ev: round(modelP * inputs.pinnacle_odds - 1),
+      ev_confidence: "LOW",
+      note: `Stake odds ${gap_pct.toFixed(1)}% above Pinnacle — a divergence this large usually means a stale/erroneous retail quote, not value. EV re-anchored to the Pinnacle price (${inputs.pinnacle_odds}). Verify the real executable price on Stake before considering this market.`,
+    };
+  }
+
   if (gap_pct > 5) {
     // Stake offers meaningfully better odds than Pinnacle — could be
     // genuine value OR Stake mispricing. Flag for caution, don't kill it.
