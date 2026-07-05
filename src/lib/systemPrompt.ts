@@ -578,15 +578,15 @@ Adjustments (each as type and delta):
   Poisson conflict above 0.6: -5
     force PARTIAL
 
-NO DOUBLE-COUNTING: when data_quality
-is PARTIAL SOLELY because a conflict
-rule forced it (3-signal conflict or
-Poisson conflict), apply ONLY the
-conflict delta — do NOT also apply
-the PARTIAL -7. Apply the PARTIAL -7
-only when PARTIAL is driven by data
-coverage (6-8 useful calls) or
-another independent data issue.
+NO DOUBLE-COUNTING: the PARTIAL -7
+applies ONLY when PARTIAL is driven
+by call coverage (6-8 useful calls
+per the data_quality definition).
+xG-proxy use and signal conflicts
+already carry their own deltas
+(-3 / -5) — when they are what
+forced PARTIAL, do NOT also apply
+the -7. One cause, one delta.
 
 Note: there are NO sharp-money or
 drift confidence adjustments. C9B
@@ -1294,7 +1294,12 @@ bet_4:
  bankroll — you may omit them)
 markets_evaluated: array
 markets_rejected array each with:
-  market, ev, reason
+  market, reason,
+  ev: null (NEVER compute it — rule
+    28; the app recomputes),
+  ev_inputs when the market was
+    actually priced:
+    { model_probability, decimal_odds }
 lineup_dependency:
   level NONE LOW or HIGH,
   triggers array
@@ -1724,12 +1729,6 @@ EXAMPLE OUTPUT:
       "verdict": "STAKE OFFERS VALUE vs PINNACLE"
     },
     {
-      "market": "Over/Under Goals",
-      "line": "Over 2.5",
-      "gap_pct": -2.4,
-      "verdict": "STAKE WORSE THAN PINNACLE"
-    },
-    {
       "market": "Corners",
       "line": "Over 9.5",
       "gap_pct": -3.1,
@@ -1750,7 +1749,7 @@ EXAMPLE OUTPUT:
     "draw": 22,
     "away": 16
   },
-  "probability_derivation": "1X2 from D1-D6 weighted blend (C2A/C2B form + C8 Poisson 15pct + H2H gate passed). Under 2.5: 0.618 from model 1.70 expected goals vs round base 2.4. SGP: P_ind 0.68x0.618x0.58=0.244, corr x1.02, p_joint 0.249.",
+  "probability_derivation": "1X2 from D1-D6 weighted blend (C2A/C2B form + C8 Poisson 15pct + H2H gate passed). Under 2.5: 0.618 from model 1.70 expected goals vs round base 2.4. SGP: P_ind 0.62x0.618x0.58=0.222, corr x1.02, p_joint 0.227.",
   "amnesty_status": {
     "current_stage": "Round of 32",
     "amnesty_1_applied": true,
@@ -1765,8 +1764,7 @@ EXAMPLE OUTPUT:
       "dimension_weighted_raw": 72,
       "adjustments": [
         {"type": "xG_proxy_used", "delta": -3},
-        {"type": "3_signal_conflict", "delta": -5},
-        {"type": "data_quality_PARTIAL", "delta": -7}
+        {"type": "3_signal_conflict", "delta": -5}
       ]
     }
   },
@@ -1868,7 +1866,7 @@ EXAMPLE OUTPUT:
         "market": "Moneyline (3-way)",
         "selection": "France Win",
         "odds": 1.72,
-        "model_probability": 0.68,
+        "model_probability": 0.62,
         "pinnacle_odds": 1.65,
         "correlation_logic": "France dominant with elite defence (0.6 conceded, 3 clean sheets) — win correlates with Under here, not against it.",
         "stake_label": "Navigate: Soccer → France vs Senegal → Same Game Parlay → Moneyline\nSelect: France Win\n90 minutes only — excludes ET"
@@ -1894,13 +1892,13 @@ EXAMPLE OUTPUT:
         "stake_label": "Add to SGP: Corners → Over 9.5 Corners\n90 minutes only — excludes ET"
       }
     ],
-    "p_independent": 0.244,
+    "p_independent": 0.222,
     "correlation_factor": 1.02,
-    "p_joint": 0.249,
+    "p_joint": 0.227,
     "stake_sgp": 4.96,
     "combined_odds_sgp": 4.96,
     "parlay_ev_inputs": {
-      "p_joint": 0.249,
+      "p_joint": 0.227,
       "stake_sgp": 4.96
     },
     "returns": {
@@ -1940,13 +1938,15 @@ EXAMPLE OUTPUT:
   "markets_rejected": [
     {
       "market": "France 1X2 straight",
-      "ev": 0.034,
-      "reason": "EV below 0.05 threshold."
+      "ev": null,
+      "ev_inputs": {"model_probability": 0.62, "decimal_odds": 1.72},
+      "reason": "Below the 0.05 EV threshold (app recomputes the exact figure)."
     },
     {
       "market": "Over 2.5 Goals",
-      "ev": -0.042,
-      "reason": "Negative EV. Stake 2.05 offers no edge vs Pinnacle 2.10 [C9B gap check]. 3-signal conflict."
+      "ev": null,
+      "ev_inputs": {"model_probability": 0.382, "decimal_odds": 2.05},
+      "reason": "Negative EV side. Stake 2.05 offers no edge vs Pinnacle 2.10 [C9B gap check]. 3-signal conflict."
     },
     {
       "market": "Cards Over 3.5",
@@ -1995,7 +1995,7 @@ EXAMPLE OUTPUT:
         "selection": "3-leg SGP",
         "odds": 4.96,
         "stake": "SIZED BY APP",
-        "model_probability": 0.249,
+        "model_probability": 0.227,
         "ev": null,
         "confidence": null,
         "ensemble_alignment": "CONFLICT",

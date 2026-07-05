@@ -629,11 +629,17 @@ function Index() {
     try {
       const parsed = tryParse();
       const liveCollection = getState(match.id).collection;
+      const appPoisson = liveCollection?.callResults?.["POISSON"]?.data as
+        | { expected_total_goals?: number }
+        | undefined;
       const enriched = calculateResults(parsed, {
         bankroll: getBankroll(),
         strictMode: strictMode,
         lambda: getCalibration().lambda,
         h2hMeetings: countH2hMeetings(liveCollection?.callResults),
+        // Pipeline truth overrides model claims (audit 2026-07-05).
+        lineupConfirmed: liveCollection?.lineupResolved,
+        appPoissonTotal: appPoisson?.expected_total_goals ?? null,
       });
       // Guarantee a consistent structure before the result reaches the UI or
       // the cache. Every display component can then read containers directly.

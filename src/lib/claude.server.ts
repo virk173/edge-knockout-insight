@@ -147,8 +147,34 @@ const ANALYSIS_TOOL_INPUT_SCHEMA = {
     key_risk_flag: { type: "string" },
     analyst_note: { type: "string" },
     log_entry: loose,
+    // Audit 2026-07-05: with forced structured outputs the model reliably
+    // emits only ENUMERATED properties (model_probabilities silently vanished
+    // from every live run until listed here, despite additionalProperties).
+    // Everything Section 9 requires must therefore appear below — most
+    // critically lineup_dependency/lineup_confirmed, whose absence made the
+    // HIGH-lineup-dependency paper-bet gate structurally unreachable.
+    lineup_confirmed: { type: "boolean" },
+    lineup_dependency: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        level: { type: "string" },
+        triggers: { type: "array", items: { type: "string" } },
+      },
+      required: ["level"],
+    },
+    lineup_source: { type: "string" },
+    odds_source: { type: "string" },
+    odds_confirmed_UTC: { type: "string" },
+    overround_inputs: loose,
+    overround_pinnacle: {},
+    pinnacle_available: { type: "boolean" },
+    pinnacle_gap_check: { type: "array", items: loose },
+    line_movement_signals: { type: "array", items: loose },
+    amnesty_status: loose,
+    context_inputs: loose,
   },
-  required: ["model_probabilities", "dimension_weights"],
+  required: ["model_probabilities", "dimension_weights", "lineup_dependency"],
 } as const;
 
 // Per-attempt timeout: 10 minutes. Real responses complete in 50-125s

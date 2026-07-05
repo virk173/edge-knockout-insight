@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateResults, computeConfidence } from "./calculate";
+import { calculateResults, computeConfidence, calculateKellyStake } from "./calculate";
 
 // EDGE-FIX tier 5 — p_joint invariant clamp, ensemble mixed-scale guard,
 // strip-regex tightening.
@@ -426,5 +426,138 @@ describe("verifyResultIntegrity", () => {
     const text = violations.join(" | ");
     expect(text).toContain("jackpot requires 4-5");
     expect(text).toContain("exposure cap");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Audit 2026-07-05 — adversarial-workflow findings
+// ─────────────────────────────────────────────────────────────
+describe("probability sanitation (audit: percent-form p bypassed every gate)", () => {
+  it("converts a percent-form model_probability and flags it", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 65, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500, lambda: 1 },
+    );
+    // 65 → 0.65 → EV 0.105, a sane active bet instead of EV +109.5.
+    expect(out.bet_1?.ev).toBeCloseTo(0.65 * 1.7 - 1, 3);
+    expect(out.bet_1?.model_probability).toBeCloseTo(0.65, 4);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("percent-form")),
+    ).toBe(true);
+  });
+
+  it("withholds a bet whose probability is garbage even after conversion", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          ev_inputs: { model_probability: 850, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.skip_reason).toContain("withheld");
+  });
+});
+
+describe("Kelly sizing hardening (audit: Claude-controlled kelly odds → Infinity Kelly)", () => {
+  it("calculateKellyStake refuses odds <= 1", () => {
+    const k = calculateKellyStake({
+      ev: 0.1,
+      decimal_odds: 1.0,
+      bankroll: 500,
+      fraction: 0.25,
+      max_bet_pct: 0.025,
+      min_actionable: 2,
+    });
+    expect(k.recommended_stake).toBe(0);
+    expect(k.reasoning).toContain("Invalid decimal odds");
+  });
+
+  it("app-verified bet.odds outranks Claude's kelly_inputs.decimal_odds", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          ev_inputs: { model_probability: 0.6, decimal_odds: 2.0 },
+          kelly_inputs: { decimal_odds: 1.0 }, // poisoned — would be Infinity Kelly
+        },
+      },
+      { bankroll: 500, lambda: 1 },
+    );
+    expect(out.bet_1?.kelly_inputs?.decimal_odds).toBe(2.0);
+    expect(Number.isFinite(out.bet_1?.kelly_result?.raw_stake ?? NaN)).toBe(true);
+  });
+});
+
+describe("SGP price cap (audit: stake_sgp never checked against leg-odds product)", () => {
+  it("caps an inflated stake_sgp at the independent product of leg odds", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_3: {
+          active: true,
+          legs: [
+            { leg_number: 1, market: "Goal Totals", selection: "L1", odds: 1.5, model_probability: 0.6 },
+            { leg_number: 2, market: "Goal Totals", selection: "L2", odds: 1.6, model_probability: 0.6 },
+            { leg_number: 3, market: "Goal Totals", selection: "L3", odds: 1.7, model_probability: 0.6 },
+          ],
+          p_joint: 0.216,
+          parlay_ev_inputs: { p_joint: 0.216, stake_sgp: 9.0 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    const product = 1.5 * 1.6 * 1.7; // 4.08
+    expect(out.bet_3?.parlay_ev_inputs?.stake_sgp).toBeCloseTo(product, 2);
+    expect(out.bet_3?.parlay_ev).toBeCloseTo(0.216 * product - 1, 2);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("independent product")),
+    ).toBe(true);
+  });
+});
+
+describe("APP-POISSON pin + pipeline lineup truth (audit: echoed signals / model lineup claims)", () => {
+  it("pins ensemble signal_1 to the app-computed Poisson total and flags divergence", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        data_quality: "FULL",
+        ensemble_check: {
+          market: "Goals Total",
+          signal_1_model: 2.2, // echoed to match the others → fake TRIPLE ALIGNED
+          signal_2_poisson: 2.2,
+          signal_3_historical: 2.2,
+        },
+        confidence_scores: {
+          confidence_inputs: { dimension_weighted_raw: 70, adjustments: [] },
+        },
+      },
+      { bankroll: 500, appPoissonTotal: 3.1 },
+    );
+    expect(out.ensemble_check?.signal_1_model).toBe(3.1);
+    expect(out.ensemble_check?.alignment).not.toBe("TRIPLE ALIGNED");
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("APP-POISSON")),
+    ).toBe(true);
+  });
+
+  it("opts.lineupConfirmed overrides the model's lineup_confirmed claim", () => {
+    const out = calculateResults(
+      { match: "A vs B", lineup_confirmed: true },
+      { bankroll: 500, lineupConfirmed: false },
+    );
+    expect(out.lineup_confirmed).toBe(false);
   });
 });

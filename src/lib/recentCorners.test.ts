@@ -40,10 +40,13 @@ describe("tier 8.2 — extractTeamCornersFromStats", () => {
     expect(away).toEqual({ corners_for: 3, corners_against: 7 });
   });
 
-  it("string values are parsed; null corner stat → null (fixture skipped)", () => {
+  it("string values are parsed; a present-but-null corner stat is a real 0 (API-Football reports zero counts as null)", () => {
     const c = extractTeamCornersFromStats(statsFixture(10, "6", 20, null), 10);
-    expect(c).toEqual({ corners_for: 6, corners_against: null });
-    expect(extractTeamCornersFromStats(statsFixture(10, null, 20, 4), 10)).toBeNull();
+    expect(c).toEqual({ corners_for: 6, corners_against: 0 });
+    expect(extractTeamCornersFromStats(statsFixture(10, null, 20, 4), 10)).toEqual({
+      corners_for: 0,
+      corners_against: 4,
+    });
   });
 
   it("team not in the response / malformed response → null, never a guess", () => {
@@ -69,16 +72,16 @@ describe("tier 8.2 — summariseRecentCorners", () => {
     });
   });
 
-  it("fixtures without a usable corner stat are skipped, not zero-filled", () => {
+  it("present-but-null corner rows count as a real 0 (API-Football reports zero counts as null)", () => {
     const statsByFixture = [
       { fixtureId: 1, stats: statsFixture(10, 6, 20, 4) },
-      { fixtureId: 2, stats: statsFixture(30, null, 10, null) }, // no corners recorded
+      { fixtureId: 2, stats: statsFixture(30, null, 10, null) }, // 0-corner match
     ];
     const s = summariseRecentCorners(statsByFixture, 10, [1, 2]);
     expect(s).toEqual({
-      corners_for_avg: 6,
-      corners_against_avg: 4,
-      fixtures_counted: 1,
+      corners_for_avg: 3,
+      corners_against_avg: 2,
+      fixtures_counted: 2,
     });
   });
 

@@ -854,8 +854,12 @@ export function formatDataForClaude(
             `${deadRubberSuffix("4")}${recentStatsSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
         );
       } else {
+        // No scorelines → no recency-adjusted form exists. Appending the
+        // dead-rubber suffix here shipped adjusted_goals_avg 0 labeled "use
+        // these, not raw averages" — the model would read a data outage as
+        // two teams that never score.
         blocks.push(
-          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}${recentStatsSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
+          `[CALL 4 — recent form — EMPTY]\nNo recent form data available. Do not infer recent form — fall back to season stats (C2A/C2B) and historical base rates.\n[END CALL 4]`,
         );
       }
       continue;
@@ -1668,7 +1672,11 @@ const WANTED_STAKE_MARKETS: Array<{
 }> = [
   {
     label: "1X2 (Match Winner)",
-    match: (n) => /match winner|1x2|full time result|home\/away/.test(n),
+    // Audit 2026-07-05: "home/away" removed — that is API-Football's label
+    // for the Draw No Bet market (2-way, draw voided), whose systematically
+    // shorter prices poisoned the 1X2 primary extraction and consensus
+    // median whenever a book carried DNB but not Match Winner.
+    match: (n) => /match winner|1x2|full time result/.test(n),
   },
   {
     // OPT 1: valueFilter widened from 2.5-only to 1.5/2.5/3.5 so heavy-mismatch
@@ -2705,6 +2713,9 @@ export function extractTeamCornersFromStats(
       const t = getField(s, ["type"]);
       if (typeof t === "string" && normalize(t) === normalize("Corner Kicks")) {
         const v = getField(s, ["value"]);
+        // Present-but-null = a real 0 corners (API-Football reports zero
+        // counts as null) — skipping it overstated corner averages.
+        if (v === null || v === undefined || v === "NOT_AVAILABLE") return 0;
         const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
         return Number.isFinite(n) ? n : null;
       }
@@ -2767,11 +2778,26 @@ export function summariseRecentCorners(
 // payload at zero additional API cost.
 
 // One numeric stat value from a team block ("62%" possession strings parse to 62).
-function statValueOf(block: unknown, type: string): number | null {
+// API-Football reports zero-count stats as value:null (a fixture with no
+// yellows carries { type: "Yellow Cards", value: null }). For COUNT stats a
+// present-but-null row therefore means 0 — skipping it averaged yellows/fouls
+// only over matches where they occurred, systematically overstating rates.
+// Ratio stats (possession) keep null-as-missing: 0% possession is not real.
+function statValueOf(
+  block: unknown,
+  type: string,
+  opts: { nullMeansZero?: boolean } = {},
+): number | null {
   for (const s of extractArray(getField(block, ["statistics"]))) {
     const t = getField(s, ["type"]);
     if (typeof t === "string" && normalize(t) === normalize(type)) {
       const v = getField(s, ["value"]);
+      if (
+        (v === null || v === undefined || v === "NOT_AVAILABLE") &&
+        opts.nullMeansZero
+      ) {
+        return 0;
+      }
       const n =
         typeof v === "number" ? v : parseFloat(String(v ?? "").replace("%", ""));
       return Number.isFinite(n) ? n : null;
@@ -2809,17 +2835,19 @@ export function summariseRecentTeamStats(
     const take = (
       type: string,
       key: keyof typeof sums,
+      nullMeansZero: boolean,
     ): void => {
-      const v = statValueOf(own, type);
+      const v = statValueOf(own, type, { nullMeansZero });
       if (v !== null) {
         sums[key] += v;
         seen[key]++;
       }
     };
-    take("Shots on Goal", "sot");
-    take("Ball Possession", "pos");
-    take("Yellow Cards", "yel");
-    take("Fouls", "foul");
+    // Count stats: a present-but-null row is a real 0 (see statValueOf).
+    take("Shots on Goal", "sot", true);
+    take("Ball Possession", "pos", false);
+    take("Yellow Cards", "yel", true);
+    take("Fouls", "foul", true);
   }
   if (!counted) return null;
   const r1 = (n: number) => Math.round(n * 10) / 10;

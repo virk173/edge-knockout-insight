@@ -174,6 +174,20 @@ export const calculateKellyStake = (inputs: {
     };
   }
 
+  // Audit 2026-07-05: odds at or below 1.0 made full_kelly Infinity (division
+  // by zero/negative) which the cap then converted into a max-cap real stake.
+  if (!Number.isFinite(inputs.decimal_odds) || inputs.decimal_odds <= 1) {
+    return {
+      full_kelly_pct: 0,
+      fractional_kelly_pct: 0,
+      raw_stake: 0,
+      recommended_stake: 0,
+      capped: false,
+      skipped_too_small: false,
+      reasoning: `Invalid decimal odds ${inputs.decimal_odds} (must be > 1) — no stake.`,
+    };
+  }
+
   const full_kelly = inputs.ev / (inputs.decimal_odds - 1);
   const fractional_kelly = full_kelly * inputs.fraction;
   const raw_stake = Math.round(fractional_kelly * inputs.bankroll * 100) / 100;
@@ -531,8 +545,12 @@ export function computeConfidence(
   ensemble_impact?: number;
 } | undefined {
   if (!inputs) return undefined;
-  const raw = num(inputs.dimension_weighted_raw);
-  if (raw === undefined) return undefined;
+  // Clamp to a valid confidence base — dimension_weighted_raw is Claude's own
+  // blend (no per-dimension scores exist to recompute it from), so at minimum
+  // a slipped digit (e.g. 680) cannot leave the 0-100 scale.
+  const rawUnclamped = num(inputs.dimension_weighted_raw);
+  if (rawUnclamped === undefined) return undefined;
+  const raw = Math.min(100, Math.max(0, rawUnclamped));
 
   let adjustments: ConfidenceAdjustment[] = [...(inputs.adjustments ?? [])];
   let ensembleImpact: number | undefined;
@@ -963,6 +981,14 @@ export function calculateResults(
     // Competitive H2H meetings from C3 (drives the D6 gate in the
     // dimension-weight validation). null/undefined = unknown (cached runs).
     h2hMeetings?: number | null;
+    // Pipeline truth for whether the XI is genuinely confirmed (CALL 6
+    // POPULATED). Overrides the model's own lineup_confirmed claim so the
+    // HIGH-lineup-dependency paper gate runs on app data, not model say-so.
+    lineupConfirmed?: boolean;
+    // App-computed Poisson expected_total_goals (the POISSON call result).
+    // Pins ensemble signal_1 to app arithmetic so a fabricated TRIPLE
+    // ALIGNED +5 via an echoed signal_1 is impossible.
+    appPoissonTotal?: number | null;
   },
 ): AnalysisResult {
   if (!rawOutput || typeof rawOutput !== "object") {
@@ -970,6 +996,13 @@ export function calculateResults(
   }
 
   const result = clone(rawOutput) as AnalysisResult;
+
+  // Pipeline truth beats model claims: when the caller knows whether the XI
+  // is genuinely confirmed (CALL 6 POPULATED), override the model's
+  // lineup_confirmed before any gate reads it.
+  if (typeof opts?.lineupConfirmed === "boolean") {
+    result.lineup_confirmed = opts.lineupConfirmed;
+  }
 
   // Live bankroll drives all sizing. Defaults to STARTING_BANKROLL (tests).
   const bankroll = num(opts?.bankroll) ?? BANKROLL_DEFAULTS.STARTING_BANKROLL;
@@ -1014,9 +1047,10 @@ export function calculateResults(
   // bankroll/floor/ceiling; only decimal_odds is still read as a fallback.
   const enrichStraightBet = (
     bet: typeof result.bet_1,
-    defaults: { minEv: number },
+    defaults: { minEv: number; label?: string },
   ) => {
     if (!bet) return;
+    const label = defaults.label ?? "straight bet";
 
     // FIX 2 — capture Claude's own skip BEFORE we touch active. We never flip a
     // bet Claude explicitly skipped back to active.
@@ -1024,8 +1058,31 @@ export function calculateResults(
 
     // EV from raw variables — computed on the CALIBRATED probability.
     if (bet.ev_inputs) {
-      const rawModelP = num(bet.ev_inputs.model_probability);
+      let rawModelP = num(bet.ev_inputs.model_probability);
       const odds = num(bet.ev_inputs.decimal_odds);
+      // Probability sanitation (audit 2026-07-05): a percent-form probability
+      // (55 or "55%" instead of 0.55) flowed uncorrected into calibration →
+      // EV +7600% → a max-cap real stake. Percent-form gets converted with a
+      // flag; anything still outside (0,1) kills the bet outright.
+      if (rawModelP !== undefined && rawModelP > 1 && rawModelP <= 100) {
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          `${label} model_probability ${rawModelP} looked percent-form — converted to ${rawModelP / 100}.`,
+        );
+        rawModelP = rawModelP / 100;
+        bet.ev_inputs.model_probability = rawModelP;
+      }
+      if (rawModelP !== undefined && (rawModelP <= 0 || rawModelP >= 1)) {
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          `${label} model_probability ${rawModelP} outside (0,1) — bet withheld.`,
+        );
+        bet.active = false;
+        bet.skip_reason =
+          bet.skip_reason ??
+          `Model probability ${rawModelP} is not a valid fraction — bet withheld.`;
+        rawModelP = undefined;
+      }
       // Calibration: shrink the model probability toward the market price by λ
       // (fit from settled results) BEFORE computing EV. EV, the Pinnacle
       // adjustment, the EV gate and Kelly ALL run on this calibrated value so
@@ -1067,9 +1124,15 @@ export function calculateResults(
     // Bankroll-based Kelly sizing from the (adjusted) EV.
     if (bet.ev !== undefined && bet.odds !== undefined) {
       const ki = bet.kelly_inputs ?? {};
+      // Audit 2026-07-05: Claude-controlled kelly_inputs.decimal_odds used to
+      // take PRIORITY over the app-verified bet.odds, so the stake could be
+      // sized from a different number than the odds the EV cleared its gate
+      // at (odds 1.0 → Infinity Kelly → max-cap stake). Rule 28: the app's
+      // own odds are authoritative; Claude's kelly_inputs are display-only.
+      const sizingOdds = bet.odds ?? num(ki.decimal_odds);
       const kelly = calculateKellyStake({
         ev: bet.ev,
-        decimal_odds: num(ki.decimal_odds) ?? bet.odds,
+        decimal_odds: sizingOdds ?? 0,
         bankroll,
         fraction: BANKROLL_DEFAULTS.KELLY_FRACTION,
         max_bet_pct: BANKROLL_DEFAULTS.MAX_BET_PCT,
@@ -1080,7 +1143,7 @@ export function calculateResults(
       // bankroll (the bet card previously fell back to a hardcoded $50).
       bet.kelly_inputs = {
         ...ki,
-        decimal_odds: num(ki.decimal_odds) ?? bet.odds,
+        decimal_odds: sizingOdds,
         bankroll,
       };
 
@@ -1101,8 +1164,8 @@ export function calculateResults(
     }
   };
 
-  enrichStraightBet(result.bet_1, { minEv: 0.05 });
-  enrichStraightBet(result.bet_2, { minEv: 0.03 });
+  enrichStraightBet(result.bet_1, { minEv: 0.05, label: "bet_1" });
+  enrichStraightBet(result.bet_2, { minEv: 0.03, label: "bet_2" });
 
   // Auto-generate verified Stake stake_labels for the straight bets.
   if (result.bet_1) applyStakeLabel(result.bet_1);
@@ -1122,7 +1185,7 @@ export function calculateResults(
   const b3 = result.bet_3;
   if (b3?.parlay_ev_inputs) {
     let pj = num(b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final);
-    const sp =
+    let sp =
       b3.parlay_ev_inputs.stake_sgp ?? b3.parlay_ev_inputs.effective_sgp_price;
     // RULE 28 — the app does ALL arithmetic. p_independent/p_joint are pure
     // arithmetic over the per-leg probabilities, so the model's product is
@@ -1134,13 +1197,33 @@ export function calculateResults(
     const b3Legs = b3.legs ?? [];
     const legProbs = b3Legs
       .map((l) => num(l.model_probability))
-      .filter((p): p is number => p !== undefined && p > 0);
+      .filter((p): p is number => p !== undefined && p > 0 && p < 1);
     if (legProbs.length > 0 && legProbs.length === b3Legs.length) {
       const pIndependent = legProbs.reduce((a, b) => a * b, 1);
       // Correlation factor clamped to the prompt's heuristic range 0.92-1.08.
       const corr = Math.min(1.08, Math.max(0.92, num(b3.correlation_factor) ?? 1));
       const minLeg = Math.min(...legProbs);
       const recomputed = Math.min(pIndependent * corr, minLeg);
+      // stake_sgp sanity (audit 2026-07-05): the offered SGP price can only
+      // sit AT or BELOW the independent product of the leg odds (the builder
+      // skims hold, never adds value). An inflated stake_sgp inflated
+      // parlay_ev unchecked — cap it at the leg-odds product.
+      const legOddsList = b3Legs
+        .map((l) => num(l.odds))
+        .filter((o): o is number => o !== undefined && o > 1);
+      if (sp !== undefined && legOddsList.length === b3Legs.length) {
+        const independentPrice = legOddsList.reduce((a, b) => a * b, 1);
+        const spNum = num(sp);
+        if (spNum !== undefined && spNum > independentPrice * 1.02) {
+          result.data_quality_flags = result.data_quality_flags || [];
+          result.data_quality_flags.push(
+            `SGP price ${spNum} exceeds the independent product of leg odds (${independentPrice.toFixed(2)}) — capped (an SGP price can never beat uncorrelated pricing).`,
+          );
+          sp = round(independentPrice, 2);
+          b3.parlay_ev_inputs.stake_sgp = sp;
+          if (typeof b3.stake_sgp === "number") b3.stake_sgp = sp;
+        }
+      }
       if (pj !== undefined && Math.abs(pj - recomputed) > 0.01) {
         result.data_quality_flags = result.data_quality_flags || [];
         result.data_quality_flags.push(
@@ -1211,7 +1294,7 @@ export function calculateResults(
       const b4Legs = b4.legs ?? [];
       const legProbs = b4Legs
         .map((l) => num(l.model_probability))
-        .filter((p): p is number => p !== undefined && p > 0);
+        .filter((p): p is number => p !== undefined && p > 0 && p < 1);
       const legOdds = b4Legs
         .map((l) => num(l.odds))
         .filter((o): o is number => o !== undefined && o > 1);
@@ -1316,6 +1399,22 @@ export function calculateResults(
   // Claude mixed a probability (≤1.0) with a goals figure (≥1.5), any computed
   // alignment is meaningless — a CONFLICT/-5 would fire purely from the unit
   // mismatch. Detect that, zero the impact, and flag it.
+  // Pin ensemble signal_1 to the APP-POISSON expected total when the caller
+  // provides it — signal_1 is app arithmetic by design (the prompt anchors
+  // the model to the injected APP-POISSON block), so an echoed/convenient
+  // signal_1 can't manufacture TRIPLE ALIGNED +5.
+  const appPoisson = num(opts?.appPoissonTotal ?? undefined);
+  if (result.ensemble_check && appPoisson !== undefined) {
+    const claimed = num(result.ensemble_check.signal_1_model);
+    if (claimed !== undefined && Math.abs(claimed - appPoisson) > 0.05) {
+      result.data_quality_flags = result.data_quality_flags || [];
+      result.data_quality_flags.push(
+        `ensemble signal_1_model ${claimed} diverged from the APP-POISSON expected total ${appPoisson} — pinned to the app value.`,
+      );
+    }
+    result.ensemble_check.signal_1_model = appPoisson;
+  }
+
   const ensembleScalesMixed = (() => {
     if (!result.ensemble_check) return false;
     const sigs = [
