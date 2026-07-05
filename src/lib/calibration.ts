@@ -53,7 +53,7 @@ export function getCalibration(): CalibrationState {
     return {
       lambda:
         typeof parsed.lambda === "number" && Number.isFinite(parsed.lambda)
-          ? parsed.lambda
+          ? Math.min(1, Math.max(0, parsed.lambda))
           : DEFAULT_LAMBDA,
       n: typeof parsed.n === "number" ? parsed.n : 0,
       brier:
@@ -80,6 +80,12 @@ function writeCalibration(state: CalibrationState): void {
  * Shrink a model probability toward the market-implied probability by λ.
  *   marketP = 1 / decimalOdds  (includes vig → a conservative anchor, accepted)
  *   return marketP + λ * (modelP - marketP)
+ *
+ * λ is clamped to [0,1] (the fitted grid's range — anything outside is
+ * corruption, and λ > 1 would EXPAND model overconfidence instead of
+ * shrinking it) and the output is clamped to a valid probability. Codex
+ * adversarial review 2026-07-05: an unclamped stale λ could turn a valid
+ * probability into p > 1 → inflated EV → capped real stake.
  */
 export function calibrateProbability(
   modelP: number,
@@ -87,8 +93,10 @@ export function calibrateProbability(
   lambda: number,
 ): number {
   if (!Number.isFinite(decimalOdds) || decimalOdds <= 0) return modelP;
+  const lam = Number.isFinite(lambda) ? Math.min(1, Math.max(0, lambda)) : DEFAULT_LAMBDA;
   const marketP = 1 / decimalOdds;
-  return marketP + lambda * (modelP - marketP);
+  const calibrated = marketP + lam * (modelP - marketP);
+  return Math.min(0.999, Math.max(0.001, calibrated));
 }
 
 /** Brier score = mean((calibratedP - won01)^2) over samples for a given λ. */

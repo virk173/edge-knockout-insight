@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calculateResults, computeConfidence, calculateKellyStake } from "./calculate";
+import { calibrateProbability } from "./calibration";
 
 // EDGE-FIX tier 5 — p_joint invariant clamp, ensemble mixed-scale guard,
 // strip-regex tightening.
@@ -559,5 +560,371 @@ describe("APP-POISSON pin + pipeline lineup truth (audit: echoed signals / model
       { bankroll: 500, lineupConfirmed: false },
     );
     expect(out.lineup_confirmed).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Codex adversarial review 2026-07-05 — cross-model findings
+// ─────────────────────────────────────────────────────────────
+describe("Codex finding 1 — straight bets require app-recomputable ev_inputs", () => {
+  it("withholds an active bet that ships bet.ev without ev_inputs", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          odds: 1.9,
+          model_probability: 0.6,
+          ev: 0.14, // Claude-claimed EV, no raw inputs to verify it
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.ev).toBeUndefined();
+    expect(out.bet_1?.stake).toBe("$0");
+    expect(out.bet_1?.skip_reason).toContain("ev_inputs");
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("rule 28")),
+    ).toBe(true);
+  });
+
+  it("integrity flags an active bet lacking ev_inputs", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bet_1: { active: true, ev: 0.1, odds: 1.9, model_probability: 0.6, stake: "$10" },
+    } as never);
+    expect(passed).toBe(false);
+    expect(violations.join(" | ")).toContain("ev_inputs");
+  });
+});
+
+describe("Codex finding 2 — undefined EV is a hard gate failure before sizing", () => {
+  it("a model-active SGP with uncomputable parlay_ev never receives a stake", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_3: {
+          active: true,
+          legs: [
+            { leg_number: 1, market: "Goal Totals", selection: "L1", odds: 1.9, model_probability: 0.6 },
+            { leg_number: 2, market: "Goal Totals", selection: "L2", odds: 1.9, model_probability: 0.6 },
+            { leg_number: 3, market: "Goal Totals", selection: "L3", odds: 1.9, model_probability: 0.6 },
+          ],
+          // No parlay_ev_inputs at all → parlay_ev never computed.
+        },
+      },
+      { bankroll: 500, strictMode: false },
+    );
+    expect(out.bet_3?.active).toBe(false);
+    expect(out.bet_3?.stake).toBe("$0");
+  });
+
+  it("a model-active jackpot with no computable jackpot_ev never receives a stake (strict mode off)", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        classification: "JACKPOT",
+        bet_4: {
+          active: true,
+          legs: [1, 2, 3, 4].map((n) => ({
+            leg_number: n,
+            market: "Goal Totals",
+            selection: `L${n}`,
+            odds: 1.8,
+            model_probability: 0.6,
+          })),
+          // No jackpot_ev_inputs → the EV chain never produces jackpot_ev...
+          // except the leg-recompute guard prices it; remove legs' odds to
+          // block that too? No — keep this as the pure missing-inputs case:
+        },
+      },
+      { bankroll: 500, strictMode: false },
+    );
+    // Either the guard withheld it or the gate did — it must never be active
+    // with a stake and no finite jackpot_ev.
+    const b4 = out.bet_4;
+    if (b4?.active) {
+      expect(Number.isFinite(b4.jackpot_ev ?? NaN)).toBe(true);
+    } else {
+      expect(b4?.stake ?? "$0").toBe("$0");
+    }
+  });
+});
+
+describe("Codex finding 3 — lambda and calibrated probability are clamped", () => {
+  it("a corrupted lambda > 1 cannot expand the model probability past validity", () => {
+    // p 0.9 @ odds 1.4 (market 0.714), λ 5 uncapped → 0.714 + 5×0.186 = 1.64.
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          ev_inputs: { model_probability: 0.9, decimal_odds: 1.4 },
+        },
+      },
+      { bankroll: 500, lambda: 5 },
+    );
+    const p = out.bet_1?.model_probability ?? 0;
+    expect(p).toBeGreaterThan(0);
+    expect(p).toBeLessThan(1);
+    // λ clamps to 1 → calibrated = raw 0.9 → EV = 0.9×1.4−1 = 0.26.
+    expect(out.bet_1?.ev).toBeCloseTo(0.26, 3);
+  });
+
+  it("calibrateProbability never returns a value outside (0,1)", () => {
+    expect(calibrateProbability(0.9, 1.4, 5)).toBeLessThan(1);
+    expect(calibrateProbability(0.1, 10, -3)).toBeGreaterThan(0);
+    expect(calibrateProbability(0.5, 2, Number.NaN)).toBeGreaterThan(0);
+  });
+});
+
+// Codex round-2 findings — bypasses in the round-1 guards themselves.
+describe("Codex round 2 — guard bypasses closed", () => {
+  it("model-emitted parlay_ev without parlay_ev_inputs is never trusted", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_3: {
+          active: true,
+          parlay_ev: 0.2, // fabricated — no inputs block at all
+          legs: [
+            { leg_number: 1, market: "Goal Totals", selection: "L1", odds: 1.9, model_probability: 0.6 },
+            { leg_number: 2, market: "Goal Totals", selection: "L2", odds: 1.9, model_probability: 0.6 },
+            { leg_number: 3, market: "Goal Totals", selection: "L3", odds: 1.9, model_probability: 0.6 },
+          ],
+        },
+      },
+      { bankroll: 500, strictMode: false },
+    );
+    expect(out.bet_3?.active).toBe(false);
+    expect(out.bet_3?.stake).toBe("$0");
+  });
+
+  it("model-emitted jackpot_ev without jackpot_ev_inputs is never trusted", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        classification: "JACKPOT",
+        bet_4: {
+          active: true,
+          jackpot_ev: 0.25, // fabricated
+          legs: [1, 2, 3, 4].map((n) => ({
+            leg_number: n,
+            market: "Goal Totals",
+            selection: `L${n}`,
+            odds: 1.8,
+            model_probability: 0.6,
+          })),
+        },
+      },
+      { bankroll: 500, strictMode: false },
+    );
+    expect(out.bet_4?.active).toBe(false);
+    expect(out.bet_4?.stake).toBe("$0");
+  });
+
+  it("applyConfirmedPrice refuses to resurrect a bet withheld for missing ev_inputs", () => {
+    const withheld = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          model_probability: 0.9, // leftover Claude field, no ev_inputs
+          odds: 1.9,
+          ev: 0.71,
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(withheld.bet_1?.active).toBe(false);
+    const after = applyConfirmedPrice(withheld, "bet_1", 2.0);
+    expect(after.bet_1?.active).toBe(false);
+    expect(after.bet_1?.price_confirmed).toBeUndefined();
+    expect(after.bet_1?.stake).toBe("$0");
+  });
+
+  it("applyConfirmedPrice re-runs the integrity self-audit on the re-priced result", () => {
+    const base = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 0.65, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500, lambda: 1, strictMode: false },
+    );
+    const after = applyConfirmedPrice(base, "bet_1", 1.72);
+    expect(after.integrity).toBeDefined();
+    expect(after.integrity?.passed).toBe(true);
+  });
+});
+
+// Codex round-3 finding — re-pricing must derive probability from raw inputs.
+describe("Codex round 3 — applyConfirmedPrice recomputes probability from ev_inputs", () => {
+  it("an inflated stored model_probability cannot drive the re-priced stake", () => {
+    const base = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 0.55, decimal_odds: 2.0 },
+        },
+      },
+      { bankroll: 500, lambda: 1, strictMode: false },
+    );
+    // Simulate a stale/corrupted enriched object: inflated display probability.
+    base.bet_1!.model_probability = 5;
+    const after = applyConfirmedPrice(base, "bet_1", 2.0);
+    // Probability recomputed from ev_inputs (λ=1 → 0.55), NOT the stored 5.
+    expect(after.bet_1?.model_probability).toBeCloseTo(0.55, 3);
+    expect(after.bet_1?.ev).toBeCloseTo(0.55 * 2.0 - 1, 3);
+    expect(after.integrity?.passed).toBe(true);
+  });
+});
+
+// Codex round-4 finding — invalid probability branch must be a hard stop.
+describe("Codex round 4 — invalid ev_inputs probability cannot fall back to model-emitted EV", () => {
+  it("garbage probability + model-supplied top-level ev/odds → withheld, $0, never reactivated", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 850, decimal_odds: 1.7 },
+          odds: 1.7,
+          ev: 0.2, // model-supplied — must never reach sizing
+        },
+      },
+      { bankroll: 500, strictMode: false },
+    );
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.stake).toBe("$0");
+    expect(out.bet_1?.ev).toBeUndefined();
+    expect(out.bet_1?.kelly_result).toBeUndefined();
+  });
+
+  it("integrity rejects an active bet whose ev_inputs probability is not a valid fraction", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bet_1: {
+        active: true,
+        ev: 0.1,
+        odds: 1.9,
+        model_probability: 0.6,
+        stake: "$10",
+        ev_inputs: { model_probability: 850, decimal_odds: 1.9 },
+      },
+    } as never);
+    expect(passed).toBe(false);
+    expect(violations.join(" | ")).toContain("ev_inputs");
+  });
+});
+
+// Codex round-5 finding — version skew: a pre-fix cached ACTIVE bet with
+// invalid ev_inputs must be sanitized at the price-confirmation boundary,
+// never returned unchanged with its stale stake.
+describe("Codex round 5 — applyConfirmedPrice sanitizes stale invalid active bets", () => {
+  it("an active cached bet with invalid ev_inputs is withheld on confirm, not preserved", () => {
+    const staleCached = {
+      match: "A vs B",
+      bet_1: {
+        active: true,
+        ev: 0.2,
+        odds: 1.7,
+        stake: "$12",
+        model_probability: 0.9,
+        ev_inputs: { model_probability: 850, decimal_odds: 1.7 },
+        kelly_result: { recommended_stake: 12 },
+      },
+    } as never;
+    const after = applyConfirmedPrice(staleCached, "bet_1", 1.8);
+    expect(after.bet_1?.active).toBe(false);
+    expect(after.bet_1?.stake).toBe("$0");
+    expect(after.bet_1?.ev).toBeUndefined();
+    expect(after.bet_1?.skip_reason).toContain("withheld");
+    expect(after.integrity).toBeDefined();
+  });
+
+  it("a typo in the confirmed odds leaves the bet untouched (no mutation on bad user input)", () => {
+    const base = calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          ev_inputs: { model_probability: 0.65, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500, lambda: 1, strictMode: false },
+    );
+    const after = applyConfirmedPrice(base, "bet_1", 0.9);
+    expect(after.bet_1?.active).toBe(true);
+    expect(after.bet_1?.price_confirmed).toBeUndefined();
+  });
+});
+
+// Codex round-6 finding — cached parlays must fail integrity without the full
+// raw input set, and the stored EV must equal the recompute.
+describe("Codex round 6 — hydration integrity binds parlay EV to its inputs", () => {
+  it("cached active bet_3 missing stake_sgp fails integrity", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bet_3: {
+        active: true,
+        stake: "$5",
+        parlay_ev: 0.2, // model-emitted, no price to recompute from
+        parlay_ev_inputs: { p_joint: 0.25 },
+        legs: [
+          { leg_number: 1, odds: 1.9, model_probability: 0.6 },
+          { leg_number: 2, odds: 1.9, model_probability: 0.6 },
+          { leg_number: 3, odds: 1.9, model_probability: 0.7 },
+        ],
+      },
+    } as never);
+    expect(passed).toBe(false);
+    expect(violations.join(" | ")).toContain("full parlay_ev_inputs");
+  });
+
+  it("cached active bet_3 whose parlay_ev disagrees with its inputs fails integrity", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bet_3: {
+        active: true,
+        stake: "$5",
+        parlay_ev: 0.5, // fabricated — inputs say 0.25 × 4.96 − 1 = 0.24
+        parlay_ev_inputs: { p_joint: 0.25, stake_sgp: 4.96 },
+        legs: [
+          { leg_number: 1, odds: 1.9, model_probability: 0.6 },
+          { leg_number: 2, odds: 1.9, model_probability: 0.6 },
+          { leg_number: 3, odds: 1.9, model_probability: 0.7 },
+        ],
+      },
+    } as never);
+    expect(passed).toBe(false);
+    expect(violations.join(" | ")).toContain("does not equal");
+  });
+
+  it("cached active bet_4 missing combined_odds fails integrity", () => {
+    const { passed, violations } = verifyResultIntegrity({
+      match: "A vs B",
+      bet_4: {
+        active: true,
+        stake: "$3",
+        jackpot_ev: 0.3,
+        jackpot_ev_inputs: { p_final: 0.13 },
+        legs: [1, 2, 3, 4].map((n) => ({ leg_number: n, odds: 1.8, model_probability: 0.6 })),
+      },
+    } as never);
+    expect(passed).toBe(false);
+    expect(violations.join(" | ")).toContain("full jackpot_ev_inputs");
   });
 });

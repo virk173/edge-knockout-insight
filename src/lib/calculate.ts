@@ -1010,7 +1010,12 @@ export function calculateResults(
 
   // Calibration shrink factor λ (fit from settled results). Defaults to the
   // prior 0.7. EV/Kelly for straight bets run on the CALIBRATED probability.
-  const lambda = num(opts?.lambda) ?? DEFAULT_LAMBDA;
+  // λ clamped to [0,1] — a corrupted opts.lambda above 1 would EXPAND model
+  // overconfidence instead of shrinking it (Codex adversarial review).
+  const lambda = Math.min(1, Math.max(0, num(opts?.lambda) ?? DEFAULT_LAMBDA));
+  // Persisted so applyConfirmedPrice can recompute the calibrated probability
+  // from raw ev_inputs instead of trusting any stored display value.
+  result.calibration_lambda = lambda;
   // Strict-signal regime: real money only on bets that pass qualifiesForRealStake;
   // everything else becomes a $0 paper bet. Default ON.
   const strictMode = opts?.strictMode ?? true;
@@ -1056,6 +1061,34 @@ export function calculateResults(
     // bet Claude explicitly skipped back to active.
     const claudeSkipped = bet.active === false;
 
+    // RULE 28 hard requirement (Codex adversarial review 2026-07-05): a
+    // straight bet is only priceable from raw ev_inputs the app recomputes.
+    // Without them, a Claude-emitted bet.ev used to flow untouched into the
+    // Pinnacle adjustment, Kelly sizing and the EV gate — an unverifiable
+    // number driving a real stake. Strip the claimed EV and withhold.
+    {
+      const eviP = num(bet.ev_inputs?.model_probability);
+      const eviOdds = num(bet.ev_inputs?.decimal_odds);
+      if (eviP === undefined || eviOdds === undefined || eviOdds <= 1) {
+        if (bet.active === true || bet.ev !== undefined) {
+          result.data_quality_flags = result.data_quality_flags || [];
+          result.data_quality_flags.push(
+            `${label} lacks valid ev_inputs (model_probability + decimal_odds) — Claude-emitted EV discarded, bet withheld (rule 28).`,
+          );
+        }
+        bet.ev = undefined;
+        bet.raw_ev = undefined;
+        if (bet.active === true) {
+          bet.active = false;
+          bet.skip_reason =
+            bet.skip_reason ??
+            "No valid ev_inputs — EV unverifiable; bet withheld.";
+        }
+        bet.stake = "$0";
+        return;
+      }
+    }
+
     // EV from raw variables — computed on the CALIBRATED probability.
     if (bet.ev_inputs) {
       let rawModelP = num(bet.ev_inputs.model_probability);
@@ -1073,6 +1106,10 @@ export function calculateResults(
         bet.ev_inputs.model_probability = rawModelP;
       }
       if (rawModelP !== undefined && (rawModelP <= 0 || rawModelP >= 1)) {
+        // Codex round-4 finding: this branch used to fall through — a
+        // model-supplied top-level bet.ev survived, flowed into the Pinnacle
+        // adjustment + Kelly sizing, and could REACTIVATE the bet. Invalid
+        // probability = hard stop: strip every priced field and return.
         result.data_quality_flags = result.data_quality_flags || [];
         result.data_quality_flags.push(
           `${label} model_probability ${rawModelP} outside (0,1) — bet withheld.`,
@@ -1081,7 +1118,11 @@ export function calculateResults(
         bet.skip_reason =
           bet.skip_reason ??
           `Model probability ${rawModelP} is not a valid fraction — bet withheld.`;
-        rawModelP = undefined;
+        bet.ev = undefined;
+        bet.raw_ev = undefined;
+        bet.kelly_result = undefined;
+        bet.stake = "$0";
+        return;
       }
       // Calibration: shrink the model probability toward the market price by λ
       // (fit from settled results) BEFORE computing EV. EV, the Pinnacle
@@ -1183,6 +1224,11 @@ export function calculateResults(
   // the parlay stake is a flat 1% of bankroll regardless of EV — so calibrating
   // it would add noise without changing sizing. It stays Claude-derived.
   const b3 = result.bet_3;
+  // Codex round-2 finding: a model-emitted parlay_ev with NO
+  // parlay_ev_inputs block skipped recomputation entirely and read as a
+  // finite EV to gateTier/sizeParlay. EV fields exist only if the app
+  // computes them below.
+  if (b3) b3.parlay_ev = undefined;
   if (b3?.parlay_ev_inputs) {
     let pj = num(b3.parlay_ev_inputs.p_joint ?? b3.parlay_ev_inputs.p_final);
     let sp =
@@ -1286,6 +1332,8 @@ export function calculateResults(
   // the same guard existed there — this path was simply never exercised
   // because no CLASS C match had qualified yet).
   const b4 = result.bet_4;
+  // Same guard for the jackpot: model-emitted jackpot_ev is never trusted.
+  if (b4) b4.jackpot_ev = undefined;
   if (b4?.jackpot_ev_inputs) {
     let pf = num(b4.jackpot_ev_inputs.p_final);
     let odds = num(b4.jackpot_ev_inputs.combined_odds);
@@ -1618,10 +1666,27 @@ export function calculateResults(
   // FIX 2 — each tier gates at its own minimum EV (bet_2 at 0.03; the rest 0.05).
   const gateTier = (
     evValue: number | undefined,
-    tier: { active?: boolean; ev_rating?: string } | undefined,
+    tier: { active?: boolean; ev_rating?: string; skip_reason?: string | null } | undefined,
     minEv: number,
   ) => {
-    if (!tier || evValue === undefined || !Number.isFinite(evValue)) return;
+    if (!tier) return;
+    // Codex adversarial review 2026-07-05: an ACTIVE bet whose app-computed
+    // EV is missing/non-finite used to sail through this gate untouched and
+    // get sized by sizeParlay. No verifiable EV = no bet, ever.
+    if (evValue === undefined || !Number.isFinite(evValue)) {
+      if (tier.active === true) {
+        tier.active = false;
+        tier.ev_rating = "UNPRICED";
+        tier.skip_reason =
+          tier.skip_reason ??
+          "EV could not be computed from raw inputs — bet withheld (no verifiable price, no stake).";
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          "A model-active bet had no app-computable EV — withheld by the EV gate.",
+        );
+      }
+      return;
+    }
     if (evValue < 0) {
       tier.ev_rating = "NEGATIVE";
       tier.active = false;
@@ -1655,8 +1720,22 @@ export function calculateResults(
   const sizeParlay = (
     bet: { active?: boolean; stake?: string; skip_reason?: string | null } | undefined,
     pct: number,
+    evValue: number | undefined,
+    minEv: number,
   ) => {
     if (!bet) return;
+    // Belt to gateTier's braces (Codex adversarial review 2026-07-05): a
+    // parlay only receives money when its app-computed EV is finite AND
+    // clears the tier threshold — active=true alone is a model claim.
+    if (
+      bet.active &&
+      (evValue === undefined || !Number.isFinite(evValue) || evValue < minEv)
+    ) {
+      bet.active = false;
+      bet.skip_reason =
+        bet.skip_reason ??
+        "Parlay EV missing or below threshold at sizing time — no stake.";
+    }
     if (!bet.active) {
       bet.stake = "$0";
       return;
@@ -1671,8 +1750,8 @@ export function calculateResults(
       bet.stake = `$${s}`;
     }
   };
-  sizeParlay(result.bet_3, BANKROLL_DEFAULTS.SGP_STAKE_PCT);
-  sizeParlay(result.bet_4, BANKROLL_DEFAULTS.JACKPOT_STAKE_PCT);
+  sizeParlay(result.bet_3, BANKROLL_DEFAULTS.SGP_STAKE_PCT, num(result.bet_3?.parlay_ev), 0.05);
+  sizeParlay(result.bet_4, BANKROLL_DEFAULTS.JACKPOT_STAKE_PCT, num(result.bet_4?.jackpot_ev), 0.05);
 
   // ── STRICT-SIGNAL REGIME → PAPER BETS ─────────────────────────
   // Every positive-EV bet is LOGGED, but real money only rides bets that pass
@@ -1854,6 +1933,17 @@ export function verifyResultIntegrity(result: AnalysisResult): {
     minEv: number,
   ): void => {
     if (!bet?.active || bet.paper_bet === true) return;
+    // Codex adversarial review: an active real straight bet must be priced
+    // from raw ev_inputs the app recomputed — a bet.ev without them is
+    // unverifiable model arithmetic.
+    let eviP = num(bet.ev_inputs?.model_probability);
+    if (eviP !== undefined && eviP > 1 && eviP <= 100) eviP = eviP / 100;
+    const eviOdds = num(bet.ev_inputs?.decimal_odds);
+    if (
+      eviP === undefined || eviP <= 0 || eviP >= 1 ||
+      eviOdds === undefined || eviOdds <= 1
+    )
+      v.push(`${key} is active without valid ev_inputs (EV not app-recomputable)`);
     if (!fin(bet.ev)) v.push(`${key} is active without a finite EV`);
     else if (bet.ev < minEv - 1e-9)
       v.push(`${key} is active with EV ${bet.ev} below its ${minEv} gate`);
@@ -1871,6 +1961,17 @@ export function verifyResultIntegrity(result: AnalysisResult): {
 
   const b3 = result.bet_3;
   if (b3?.active && b3.paper_bet !== true) {
+    // Codex round-6: require the FULL raw input set and verify the stored EV
+    // equals the recompute — p_joint alone let a cached model-emitted
+    // parlay_ev pass the audit.
+    const pj3 = num(b3.parlay_ev_inputs?.p_joint);
+    const sp3 = num(
+      b3.parlay_ev_inputs?.stake_sgp ?? b3.parlay_ev_inputs?.effective_sgp_price,
+    );
+    if (pj3 === undefined || sp3 === undefined || sp3 <= 1)
+      v.push("bet_3 is active without full parlay_ev_inputs (p_joint + stake_sgp — EV not app-recomputable)");
+    else if (!fin(b3.parlay_ev) || Math.abs(b3.parlay_ev - (pj3 * sp3 - 1)) > 0.005)
+      v.push(`bet_3 parlay_ev ${b3.parlay_ev} does not equal p_joint × stake_sgp − 1 (${(pj3 * sp3 - 1).toFixed(3)})`);
     const legs = b3.legs ?? [];
     const probs = legs
       .map((l) => l.model_probability)
@@ -1886,6 +1987,12 @@ export function verifyResultIntegrity(result: AnalysisResult): {
 
   const b4 = result.bet_4;
   if (b4?.active && b4.paper_bet !== true) {
+    const pf4 = num(b4.jackpot_ev_inputs?.p_final);
+    const co4 = num(b4.jackpot_ev_inputs?.combined_odds);
+    if (pf4 === undefined || co4 === undefined || co4 <= 1)
+      v.push("bet_4 is active without full jackpot_ev_inputs (p_final + combined_odds — EV not app-recomputable)");
+    else if (!fin(b4.jackpot_ev) || Math.abs(b4.jackpot_ev - (pf4 * co4 - 1)) > 0.005)
+      v.push(`bet_4 jackpot_ev ${b4.jackpot_ev} does not equal p_final × combined_odds − 1 (${(pf4 * co4 - 1).toFixed(3)})`);
     const legs = b4.legs ?? [];
     if (legs.length < 4 || legs.length > 5)
       v.push(`bet_4 is active with ${legs.length} legs (jackpot requires 4-5)`);
@@ -2388,9 +2495,58 @@ export function applyConfirmedPrice(
 ): AnalysisResult {
   const next = clone(result) as AnalysisResult;
   const bet = next[betKey];
-  const p = num(bet?.model_probability);
   const odds = num(confirmedOdds);
-  if (!bet || p === undefined || odds === undefined || odds <= 1) return next;
+  // Codex rounds 2-3: this helper may neither resurrect a withheld bet nor
+  // price from a stored model_probability (which could be stale or model-
+  // emitted). Re-pricing is only allowed for a CURRENTLY active real-money
+  // bet, and the probability is RECOMPUTED here from raw ev_inputs plus the
+  // λ persisted by calculateResults — app-owned pricing state end to end.
+  let eviP = num(bet?.ev_inputs?.model_probability);
+  const eviOdds = num(bet?.ev_inputs?.decimal_odds);
+  if (eviP !== undefined && eviP > 1 && eviP <= 100) eviP = eviP / 100;
+  // Not re-priceable at all (no bet / not active real money / bad typed odds):
+  // return unchanged — a typo in the odds field must not mutate the bet.
+  if (
+    !bet ||
+    bet.active !== true ||
+    bet.paper_bet === true ||
+    odds === undefined ||
+    odds <= 1
+  ) {
+    return next;
+  }
+  // Codex round-5 finding (version skew): a PRE-FIX cached result can carry
+  // an active stake with invalid ev_inputs. Returning it unchanged would let
+  // that stale stake survive the re-pricing boundary — sanitize it instead.
+  if (eviP === undefined || eviP <= 0 || eviP >= 1 || eviOdds === undefined || eviOdds <= 1) {
+    bet.active = false;
+    bet.ev = undefined;
+    bet.raw_ev = undefined;
+    bet.kelly_result = undefined;
+    bet.stake = "$0";
+    bet.skip_reason =
+      bet.skip_reason ??
+      "Bet's ev_inputs are invalid/unverifiable (stale cached result) — withheld at price confirmation.";
+    next.data_quality_flags = (next.data_quality_flags ?? []).filter(
+      (f) => !f.startsWith("INTEGRITY: "),
+    );
+    next.data_quality_flags.push(
+      `${betKey} had invalid ev_inputs at price confirmation — stale stake withheld.`,
+    );
+    const integ = verifyResultIntegrity(next);
+    next.integrity = integ;
+    for (const violation of integ.violations) {
+      next.data_quality_flags.push(`INTEGRITY: ${violation}`);
+    }
+    return next;
+  }
+  const lambda = Math.min(
+    1,
+    Math.max(0, num(next.calibration_lambda) ?? DEFAULT_LAMBDA),
+  );
+  // Calibrate against the CONFIRMED executable odds (the market anchor the
+  // money actually meets), never against a stored display probability.
+  const p = calibrateProbability(eviP, odds, lambda);
 
   const minEv = betKey === "bet_1" ? 0.05 : 0.03;
   const priorOdds = num(bet.odds);
@@ -2409,6 +2565,7 @@ export function applyConfirmedPrice(
   bet.price_confirmed = true;
   bet.confirmed_odds = odds;
   bet.odds = odds;
+  bet.model_probability = round(p, 4);
   bet.raw_ev = bet.ev;
   bet.ev = ev;
   bet.kelly_result = kelly;
@@ -2436,5 +2593,16 @@ export function applyConfirmedPrice(
   );
   const total = [...stakes, ...parlays].reduce((a, b) => a + b, 0);
   next.total_staked = `$${total.toFixed(2)}`;
+
+  // Re-run the runtime self-audit on the re-priced result (drop the previous
+  // run's INTEGRITY flags first so they don't double up).
+  next.data_quality_flags = (next.data_quality_flags ?? []).filter(
+    (f) => !f.startsWith("INTEGRITY: "),
+  );
+  const integrity = verifyResultIntegrity(next);
+  next.integrity = integrity;
+  for (const violation of integrity.violations) {
+    next.data_quality_flags.push(`INTEGRITY: ${violation}`);
+  }
   return next;
 }

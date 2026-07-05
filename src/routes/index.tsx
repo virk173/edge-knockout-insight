@@ -35,6 +35,7 @@ import {
   calculateEnsembleAlignment,
   calculateResults,
   applyConfirmedPrice,
+  verifyResultIntegrity,
 } from "@/lib/calculate";
 import {
   plainEnsembleAlignment,
@@ -332,9 +333,15 @@ function Index() {
         if (existing?.analysisResult) continue; // fresh in-memory result wins
         const cached = readResultCache(m.id);
         if (!cached) continue;
+        // Codex round-5: cached results skip calculateResults on hydration, so
+        // run the integrity self-audit here — a pre-fix cached stake with
+        // invalid inputs must announce itself instead of rendering silently.
+        const hydrated = normalizeAnalysisResult(cached.result);
+        const hydratedIntegrity = verifyResultIntegrity(hydrated);
+        hydrated.integrity = hydratedIntegrity;
         next[m.id] = {
           ...(existing ?? EMPTY_MATCH_STATE),
-          analysisResult: normalizeAnalysisResult(cached.result),
+          analysisResult: hydrated,
           analysisRaw: cached.rawClaudeJson,
           tokenUsage: cached.tokenUsage,
           analysisSavedAt: cached.savedAt,

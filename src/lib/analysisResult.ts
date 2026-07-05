@@ -404,6 +404,9 @@ export interface AnalysisResult {
   data_quality_flags?: string[];
   dimension_weights?: DimensionWeights;
   dimension_weights_validation?: DimensionWeightsValidation;
+  // λ used by calculateResults — persisted so applyConfirmedPrice recomputes
+  // the calibrated probability from raw ev_inputs (Codex round-3 finding).
+  calibration_lambda?: number;
   // Runtime integrity self-audit (verifyResultIntegrity, calculate.ts) — runs
   // last on every enriched result; violations mean an upstream guard failed.
   integrity?: { passed: boolean; violations: string[] };
