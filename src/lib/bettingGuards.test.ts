@@ -928,3 +928,114 @@ describe("Codex round 6 — hydration integrity binds parlay EV to its inputs", 
     expect(violations.join(" | ")).toContain("full jackpot_ev_inputs");
   });
 });
+
+// App-enforced consensus stale-quote guard (previously prompt-only). The
+// proven failure mode: 10Bet quoting Cards Under 3.5 at 1.83 while the
+// multi-book median sat at 1.50 — no Pinnacle price to re-anchor against.
+import { findConsensusMedian } from "./calculate";
+
+describe("consensus stale-quote guard — app-enforced >10% rule", () => {
+  const consensus = {
+    books_counted: 8,
+    markets: {
+      "Cards Over/Under": [
+        { value: "Under 3.5", median_odd: 1.5, books: 5 },
+        { value: "Over 3.5", median_odd: 2.4, books: 5 },
+      ],
+      "1X2 (Match Winner)": [
+        { value: "Home", median_odd: 1.79, books: 13 },
+        { value: "Away", median_odd: 4.55, books: 13 },
+        { value: "Draw", median_odd: 3.67, books: 13 },
+      ],
+      "Over/Under 2.5 Goals": [{ value: "Over 2.5", median_odd: 1.74, books: 12 }],
+    },
+  };
+
+  it("findConsensusMedian resolves markets and team-name selections conservatively", () => {
+    expect(
+      findConsensusMedian(consensus, "Total Cards Over/Under", "Under 3.5 Cards", "Brazil", "Norway"),
+    ).toEqual({ median: 1.5, books: 5 });
+    expect(
+      findConsensusMedian(consensus, "Moneyline (3-way)", "Brazil Win", "Brazil", "Norway"),
+    ).toEqual({ median: 1.79, books: 13 });
+    // Unknown market / thin consensus → undefined, never a guess.
+    expect(
+      findConsensusMedian(consensus, "Asian Handicap", "Home -1", "Brazil", "Norway"),
+    ).toBeUndefined();
+    expect(
+      findConsensusMedian(
+        { markets: { "Cards Over/Under": [{ value: "Under 3.5", median_odd: 1.5, books: 2 }] } },
+        "Cards", "Under 3.5", "A", "B",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("re-anchors a no-Pinnacle straight bet priced >10% above the consensus median", () => {
+    const out = calculateResults(
+      {
+        match: "Brazil vs Norway",
+        bet_1: {
+          active: true,
+          market: "Total Cards Over/Under",
+          selection: "Under 3.5 Cards",
+          ev_inputs: { model_probability: 0.6, decimal_odds: 1.83 },
+          pinnacle_odds: null, // no sharp anchor — the exact live gap
+        },
+      },
+      { bankroll: 500, lambda: 1, consensusOdds: consensus },
+    );
+    // Re-anchored: 0.6 × 1.50 − 1 = −0.10 → gated inactive.
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.ev).toBeLessThan(0);
+    expect(out.bet_1?.ev_confidence).toBe("LOW");
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("consensus median")),
+    ).toBe(true);
+  });
+
+  it("caps an SGP leg priced >10% above the consensus median before products are computed", () => {
+    const out = calculateResults(
+      {
+        match: "Brazil vs Norway",
+        bet_3: {
+          active: true,
+          legs: [
+            { leg_number: 1, market: "Moneyline (3-way)", selection: "Brazil Win", odds: 1.79, model_probability: 0.55 },
+            { leg_number: 2, market: "Goal Totals", selection: "Over 2.5 Goals", odds: 1.74, model_probability: 0.6 },
+            { leg_number: 3, market: "Total Cards Over/Under", selection: "Under 3.5 Cards", odds: 1.83, model_probability: 0.6 },
+          ],
+          p_joint: 0.2,
+          parlay_ev_inputs: { p_joint: 0.2, stake_sgp: 5.0 },
+        },
+      },
+      { bankroll: 500, consensusOdds: consensus },
+    );
+    const leg3 = out.bet_3?.legs?.[2];
+    expect(leg3?.odds).toBe(1.5); // capped to the median
+    // stake_sgp re-capped by the now-honest product: 1.79 × 1.74 × 1.50 = 4.67.
+    expect(out.bet_3?.parlay_ev_inputs?.stake_sgp).toBeLessThanOrEqual(1.79 * 1.74 * 1.5 * 1.02);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("capped to the median")),
+    ).toBe(true);
+  });
+
+  it("leaves fairly-priced bets untouched (no false positives)", () => {
+    const out = calculateResults(
+      {
+        match: "Brazil vs Norway",
+        bet_1: {
+          active: true,
+          market: "Moneyline (3-way)",
+          selection: "Brazil Win",
+          ev_inputs: { model_probability: 0.62, decimal_odds: 1.8 }, // median 1.79 — within 10%
+          pinnacle_odds: null,
+        },
+      },
+      { bankroll: 500, lambda: 1, consensusOdds: consensus },
+    );
+    expect(out.bet_1?.ev).toBeCloseTo(0.62 * 1.8 - 1, 3);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("consensus median")),
+    ).toBe(false);
+  });
+});

@@ -221,6 +221,11 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     JSON.stringify({
       model,
       max_tokens: maxTokens,
+      // Deterministic sampling: run-to-run variance in money-relevant fields
+      // (dimension weights, adjustment lists, leg probabilities) was observed
+      // across live runs on identical data. Analysis is a pricing engine, not
+      // creative writing — greedy decoding is correct here.
+      temperature: 0,
       // Prompt caching (REST format): system is an array of content blocks and
       // cache_control is attached to the block, not the top level. TTL "1h"
       // keeps the large static system prompt warm across same-day matches.

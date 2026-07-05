@@ -27,6 +27,7 @@ import {
   LINEUP_STATE_INFO,
   type CollectionResult,
   type ProgressUpdate,
+  extractConsensusOdds,
 } from "@/lib/analyse";
 import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
@@ -639,6 +640,9 @@ function Index() {
       const appPoisson = liveCollection?.callResults?.["POISSON"]?.data as
         | { expected_total_goals?: number }
         | undefined;
+      const oddsRoot = liveCollection?.callResults?.["9"]?.data as
+        | { stakeOdds?: unknown }
+        | undefined;
       const enriched = calculateResults(parsed, {
         bankroll: getBankroll(),
         strictMode: strictMode,
@@ -647,6 +651,8 @@ function Index() {
         // Pipeline truth overrides model claims (audit 2026-07-05).
         lineupConfirmed: liveCollection?.lineupResolved,
         appPoissonTotal: appPoisson?.expected_total_goals ?? null,
+        // App-enforced stale-quote guard vs the multi-book consensus median.
+        consensusOdds: extractConsensusOdds(oddsRoot?.stakeOdds ?? null),
       });
       // Guarantee a consistent structure before the result reaches the UI or
       // the cache. Every display component can then read containers directly.

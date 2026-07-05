@@ -27,6 +27,7 @@ import type {
   RestDisparity,
   SgpBet,
   StraightBet,
+  TierLeg,
   TravelBurden,
 } from "@/lib/analysisResult";
 import { getVenueData } from "@/lib/venueData";
@@ -306,6 +307,88 @@ export const adjustEVForPinnacleGap = (inputs: {
       "Stake and Pinnacle aligned within 5%. EV reflects genuine model disagreement with an efficient market.",
   };
 };
+
+// ─────────────────────────────────────────────────────────────
+// Market-consensus lookup (median odds across all books in the feed)
+//
+// The odds feed is a proxy retail book, and its stale/placeholder quotes are
+// the proven failure mode (live E2E: both sides of Cards 3.5 at 1.83 vs a
+// true market of 2.66/1.46). The >10%-above-consensus rule used to live only
+// in the system prompt — model-enforced. This makes it app-enforced: bets
+// and parlay legs whose odds beat the consensus median by >10% get
+// re-anchored/capped to the median.
+// ─────────────────────────────────────────────────────────────
+
+// Structural type for the consensus computed by extractConsensusOdds in
+// analyse.ts (declared here to avoid a circular import).
+export interface ConsensusOddsInput {
+  books_counted?: number;
+  markets?: Record<
+    string,
+    Array<{ value?: string; median_odd?: number; books?: number }>
+  >;
+}
+
+// Resolve the consensus median for a bet/leg's market+selection. Matching is
+// deliberately conservative: return undefined on any ambiguity — a missed
+// lookup means "no guard", never a wrong anchor.
+export function findConsensusMedian(
+  consensus: ConsensusOddsInput | null | undefined,
+  market: string | undefined,
+  selection: string | undefined,
+  homeTeam: string,
+  awayTeam: string,
+): { median: number; books: number } | undefined {
+  const markets = consensus?.markets;
+  if (!markets) return undefined;
+  const m = `${market ?? ""}`.toLowerCase();
+  const sel = `${selection ?? ""}`.toLowerCase();
+  const both = `${m} ${sel}`;
+
+  // Market-label resolution (order matters: cards/corners before goals).
+  let label: string | undefined;
+  if (/card|booking/.test(both)) label = "Cards Over/Under";
+  else if (/corner/.test(both)) label = "Corners Over/Under";
+  else if (/btts|both teams/.test(both)) label = "Both Teams To Score";
+  else if (/moneyline|match winner|1x2|full time result/.test(m))
+    label = "1X2 (Match Winner)";
+  else if (/goal|total/.test(both) && /over|under/.test(sel))
+    label = "Over/Under 2.5 Goals";
+  if (!label) return undefined;
+  const rows = markets[label];
+  if (!rows?.length) return undefined;
+
+  // Selection → consensus row value.
+  let wanted: ((v: string) => boolean) | undefined;
+  if (label === "1X2 (Match Winner)") {
+    const home = homeTeam.toLowerCase();
+    const away = awayTeam.toLowerCase();
+    if (sel.includes("draw")) wanted = (v) => v === "draw";
+    else if (home && sel.includes(home)) wanted = (v) => v === "home";
+    else if (away && sel.includes(away)) wanted = (v) => v === "away";
+    else if (/\bhome\b/.test(sel)) wanted = (v) => v === "home";
+    else if (/\baway\b/.test(sel)) wanted = (v) => v === "away";
+  } else if (label === "Both Teams To Score") {
+    if (/\byes\b/.test(sel)) wanted = (v) => v === "yes";
+    else if (/\bno\b/.test(sel)) wanted = (v) => v === "no";
+  } else {
+    const ou = sel.match(/(over|under)\s*([0-9]+(?:\.[0-9]+)?)/);
+    if (ou) {
+      const target = `${ou[1]} ${ou[2]}`;
+      wanted = (v) => v.replace(/\s+/g, " ").trim() === target;
+    }
+  }
+  if (!wanted) return undefined;
+
+  const row = rows.find((r) =>
+    wanted!(String(r.value ?? "").toLowerCase().replace(/\s+/g, " ").trim()),
+  );
+  const median = num(row?.median_odd);
+  const books = num(row?.books) ?? 0;
+  // Require a real consensus (3+ books) before overriding anything.
+  if (median === undefined || median <= 1 || books < 3) return undefined;
+  return { median, books };
+}
 
 // ─────────────────────────────────────────────────────────────
 // App-computed Poisson goals model (deterministic ensemble anchor)
@@ -989,6 +1072,10 @@ export function calculateResults(
     // Pins ensemble signal_1 to app arithmetic so a fabricated TRIPLE
     // ALIGNED +5 via an echoed signal_1 is impossible.
     appPoissonTotal?: number | null;
+    // Median odds across all books in the feed (extractConsensusOdds).
+    // Enforces the >10%-above-consensus stale-quote rule app-side on bets
+    // and parlay legs that lack a Pinnacle reference.
+    consensusOdds?: ConsensusOddsInput | null;
   },
 ): AnalysisResult {
   if (!rawOutput || typeof rawOutput !== "object") {
@@ -1160,6 +1247,29 @@ export function calculateResults(
       bet.ev = adjustment.adjusted_ev;
       bet.ev_confidence = adjustment.ev_confidence;
       bet.pinnacle_check_note = adjustment.note;
+      // No sharp anchor → fall back to the multi-book consensus median. A
+      // feed price >10% above the median is a stale/placeholder quote, not
+      // value — re-anchor EV to the median (same treatment as the Pinnacle
+      // >15% tier). App-enforces what was previously only a prompt rule.
+      if (pinnacleOdds === null && opts?.consensusOdds) {
+        const c = findConsensusMedian(
+          opts.consensusOdds,
+          bet.market,
+          bet.selection,
+          homeTeam,
+          awayTeam,
+        );
+        if (c !== undefined && bet.odds > c.median * 1.1) {
+          const modelP = (bet.ev + 1) / bet.odds;
+          bet.ev = round(modelP * c.median - 1);
+          bet.ev_confidence = "LOW";
+          bet.pinnacle_check_note = `No Pinnacle price and the feed odds ${bet.odds} exceed the ${c.books}-book consensus median ${c.median} by >10% — likely a stale quote, not value. EV re-anchored to the consensus median; verify the real executable price on Stake.`;
+          result.data_quality_flags = result.data_quality_flags || [];
+          result.data_quality_flags.push(
+            `${label} odds ${bet.odds} exceeded the consensus median ${c.median} by >10% — EV re-anchored (stale-quote guard).`,
+          );
+        }
+      }
     }
 
     // Bankroll-based Kelly sizing from the (adjusted) EV.
@@ -1223,7 +1333,38 @@ export function calculateResults(
   // Claude-derived correlation-adjusted product with no clean market anchor, and
   // the parlay stake is a flat 1% of bankroll regardless of EV — so calibrating
   // it would add noise without changing sizing. It stays Claude-derived.
+  // Consensus stale-quote guard for parlay legs: a leg priced >10% above the
+  // multi-book median (with no Pinnacle reference) inflates BOTH the SGP
+  // price cap and the parlay EV. Cap such legs at the median before any
+  // product is computed. Applied to bet_3 and bet_4 alike.
+  const capLegsToConsensus = (
+    legs: TierLeg[] | undefined,
+    tierLabel: string,
+  ): void => {
+    if (!legs || !opts?.consensusOdds) return;
+    for (const leg of legs) {
+      if (num(leg.pinnacle_odds) !== undefined) continue; // sharp anchor exists
+      const legOdds = num(leg.odds);
+      if (legOdds === undefined) continue;
+      const c = findConsensusMedian(
+        opts.consensusOdds,
+        leg.market,
+        leg.selection,
+        homeTeam,
+        awayTeam,
+      );
+      if (c !== undefined && legOdds > c.median * 1.1) {
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          `${tierLabel} leg "${leg.selection}" odds ${legOdds} exceeded the ${c.books}-book consensus median ${c.median} by >10% — capped to the median (stale-quote guard).`,
+        );
+        leg.odds = c.median;
+      }
+    }
+  };
+
   const b3 = result.bet_3;
+  capLegsToConsensus(b3?.legs, "bet_3");
   // Codex round-2 finding: a model-emitted parlay_ev with NO
   // parlay_ev_inputs block skipped recomputation entirely and read as a
   // finite EV to gateTier/sizeParlay. EV fields exist only if the app
@@ -1332,6 +1473,7 @@ export function calculateResults(
   // the same guard existed there — this path was simply never exercised
   // because no CLASS C match had qualified yet).
   const b4 = result.bet_4;
+  capLegsToConsensus(b4?.legs, "bet_4");
   // Same guard for the jackpot: model-emitted jackpot_ev is never trusted.
   if (b4) b4.jackpot_ev = undefined;
   if (b4?.jackpot_ev_inputs) {
