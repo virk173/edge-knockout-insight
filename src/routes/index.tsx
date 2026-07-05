@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   runAnalysis,
@@ -11,12 +11,7 @@ import {
   type AnalysedMatch,
   type TimingBand,
 } from "@/lib/fixtures";
-import {
-  readFixturesCache,
-  writeFixturesCache,
-  isStale,
-  formatAgo,
-} from "@/lib/fixturesCache";
+import { readFixturesCache, writeFixturesCache, isStale, formatAgo } from "@/lib/fixturesCache";
 import {
   collectMatchData,
   formatDataForClaude,
@@ -38,17 +33,7 @@ import {
   applyConfirmedPrice,
   verifyResultIntegrity,
 } from "@/lib/calculate";
-import {
-  plainEnsembleAlignment,
-  plainModelProbabilities,
-  plainDimensionWeights,
-} from "@/lib/plainEnglish";
-import {
-  getBankroll,
-  setBankroll,
-  settleBet,
-  removeLedgerEntry,
-} from "@/lib/bankroll";
+import { getBankroll, setBankroll, settleBet, removeLedgerEntry } from "@/lib/bankroll";
 import {
   generateRunReport,
   buildPersistedCallSummary,
@@ -62,10 +47,7 @@ import {
   extractSgpChain,
   formatResultAgo,
 } from "@/lib/resultCache";
-import {
-  BettingDashboard,
-  type ActionBetDraft,
-} from "@/components/betting/BettingDashboard";
+import { BettingDashboard, type ActionBetDraft } from "@/components/betting/BettingDashboard";
 import { SkeletonDashboard } from "@/components/betting/SkeletonDashboard";
 import { BacktestLog } from "@/components/betting/BacktestLog";
 import {
@@ -120,12 +102,7 @@ export const Route = createFileRoute("/")({
 });
 
 function formatUtc(date: Date): string {
-  return (
-    date.toISOString().slice(0, 10) +
-    " " +
-    date.toISOString().slice(11, 19) +
-    " UTC"
-  );
+  return date.toISOString().slice(0, 10) + " " + date.toISOString().slice(11, 19) + " UTC";
 }
 
 function formatLocal(iso: string): string {
@@ -281,18 +258,13 @@ function Index() {
     }));
 
   const activeMatch =
-    activeMatchId != null && matches
-      ? matches.find((m) => m.id === activeMatchId) ?? null
-      : null;
+    activeMatchId != null && matches ? (matches.find((m) => m.id === activeMatchId) ?? null) : null;
   const activeState = getState(activeMatchId);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-
-
-
 
   useEffect(() => {
     setApiCalls(getApiCallCount());
@@ -317,9 +289,7 @@ function Index() {
       setMatches(cached.matches);
       setFixturesFetchedAt(cached.fetchedAt);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
 
   // Hydrate persisted analysis results (localStorage) into matchStates whenever
   // the fixtures list changes — so a reload restores the "✓ Analysed" indicator
@@ -354,18 +324,12 @@ function Index() {
     });
   }, [matches]);
 
-
-
-
-
   function refitCalibration(entries: LogEntry[]) {
     const prev = getCalibration().lambda;
     const samples = getCalibrationSamples(entries);
     const next = fitLambda(samples);
     if (Math.abs(next - prev) >= 0.05) {
-      toast.success(
-        `Calibration updated: λ ${prev} → ${next} (n=${samples.length})`,
-      );
+      toast.success(`Calibration updated: λ ${prev} → ${next} (n=${samples.length})`);
     }
   }
 
@@ -389,9 +353,7 @@ function Index() {
       if ((next === "WON" || next === "LOST") && stake > 0 && odds > 0) {
         const led = settleBet({
           match: priorEntry?.match ?? "—",
-          bet_label: `💵 ${[rec.market, rec.selection]
-            .filter(Boolean)
-            .join(" — ")}`,
+          bet_label: `💵 ${[rec.market, rec.selection].filter(Boolean).join(" — ")}`,
           stake,
           odds,
           outcome: next,
@@ -416,9 +378,7 @@ function Index() {
     const result = activeState.analysisResult as AnalysisResult | undefined;
     const updated = appendActionBet({
       matchId: typeof activeMatchId === "number" ? activeMatchId : undefined,
-      match:
-        result?.match ??
-        (match ? `${match.home} vs ${match.away}` : undefined),
+      match: result?.match ?? (match ? `${match.home} vs ${match.away}` : undefined),
       date: result?.kickoff_UTC ?? match?.kickoffUtc,
       round: result?.round ?? match?.round ?? undefined,
       tier: draft.tier,
@@ -437,12 +397,7 @@ function Index() {
     );
   }
 
-
-  function handleSetManualClosingOdds(
-    entryId: string,
-    recIndex: number,
-    odds: number,
-  ) {
+  function handleSetManualClosingOdds(entryId: string, recIndex: number, odds: number) {
     setManualClosingOdds(entryId, recIndex, odds);
     setLogEntries(settleClv(entryId));
   }
@@ -450,7 +405,6 @@ function Index() {
   function handleClearLog() {
     setLogEntries(clearLog());
   }
-
 
   // Cycle Claude loading messages + elapsed timer while the active match analyses.
   useEffect(() => {
@@ -517,10 +471,7 @@ function Index() {
       }
     };
 
-    if (
-      mins <= LINEUP_FINAL_RECHECK_MIN &&
-      !lineupFinalRecheckRef.current.has(match.id)
-    ) {
+    if (mins <= LINEUP_FINAL_RECHECK_MIN && !lineupFinalRecheckRef.current.has(match.id)) {
       lineupFinalRecheckRef.current.add(match.id);
       void runRefetch("final");
       return;
@@ -571,11 +522,7 @@ function Index() {
   // when the prompt approached the 200k context limit.
   // Process the completed Claude response. calculateResults() runs client-side
   // on the returned raw response.
-  function processClaudeResponse(
-    match: AnalysedMatch,
-    res: ClaudeCallResult,
-    startedAt: number,
-  ) {
+  function processClaudeResponse(match: AnalysedMatch, res: ClaudeCallResult, startedAt: number) {
     const responseTimeMs = Date.now() - startedAt;
 
     if (!res || !res.ok) {
@@ -606,8 +553,7 @@ function Index() {
     const toolInput = content.find(
       (b) => b?.type === "tool_use" && b?.input && typeof b.input === "object",
     )?.input;
-    const text: string =
-      content.find((b) => b?.type === "text")?.text ?? content[0]?.text ?? "";
+    const text: string = content.find((b) => b?.type === "text")?.text ?? content[0]?.text ?? "";
     const usage = res.data?.usage;
     const tokenUsage = usage
       ? { input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 }
@@ -616,9 +562,7 @@ function Index() {
     // rawJson is what we persist/display: the structured payload when present,
     // otherwise the cleaned text blob.
     const rawJson =
-      toolInput && typeof toolInput === "object"
-        ? JSON.stringify(toolInput, null, 2)
-        : cleaned;
+      toolInput && typeof toolInput === "object" ? JSON.stringify(toolInput, null, 2) : cleaned;
 
     const tryParse = (): unknown => {
       if (toolInput && typeof toolInput === "object") return toolInput;
@@ -638,11 +582,9 @@ function Index() {
       const parsed = tryParse();
       const liveCollection = getState(match.id).collection;
       const appPoisson = liveCollection?.callResults?.["POISSON"]?.data as
-        | { expected_total_goals?: number }
-        | undefined;
+        { expected_total_goals?: number } | undefined;
       const oddsRoot = liveCollection?.callResults?.["9"]?.data as
-        | { stakeOdds?: unknown }
-        | undefined;
+        { stakeOdds?: unknown } | undefined;
       const enriched = calculateResults(parsed, {
         bankroll: getBankroll(),
         strictMode: strictMode,
@@ -684,9 +626,7 @@ function Index() {
         callSummary: savedCollection
           ? buildPersistedCallSummary(savedCollection.callResults)
           : undefined,
-        keyExtracts: savedCollection
-          ? buildKeyExtracts(savedCollection)
-          : undefined,
+        keyExtracts: savedCollection ? buildKeyExtracts(savedCollection) : undefined,
       });
       toast.success("Analysis complete");
 
@@ -696,11 +636,7 @@ function Index() {
       const updated = appendEnrichedResult(normalized, { matchId: match.id });
       setLogEntries(updated);
       const loggedCount = updated[updated.length - 1]?.recommendations.length ?? 0;
-      toast.success(
-        loggedCount > 0
-          ? "Saved to backtesting log"
-          : "Logged (no qualifying bets)",
-      );
+      toast.success(loggedCount > 0 ? "Saved to backtesting log" : "Logged (no qualifying bets)");
     } catch {
       const head = rawJson.slice(0, 500);
       const tail = rawJson.length > 500 ? rawJson.slice(-500) : "";
@@ -778,9 +714,6 @@ Start your response with { and end with }.`;
     }
   }
 
-
-
-
   // SECTION 1 — Run All Calls. API pipeline only. No Claude / tokens.
   async function handleRunCalls(match: AnalysedMatch) {
     // ── PRE-CALL TIMING GATE ──────────────────────────────────────────
@@ -809,7 +742,6 @@ Start your response with { and end with }.`;
       if (!proceed) return;
     }
 
-
     lineupRefetchedRef.current.delete(match.id);
     lineupFinalRecheckRef.current.delete(match.id);
     patchState(match.id, {
@@ -823,11 +755,9 @@ Start your response with { and end with }.`;
     });
 
     try {
-      const result = await collectMatchData(
-        match,
-        (p) => patchState(match.id, { progress: p }),
-        { debug: false },
-      );
+      const result = await collectMatchData(match, (p) => patchState(match.id, { progress: p }), {
+        debug: false,
+      });
       patchState(match.id, {
         collection: result,
         progress: null,
@@ -837,9 +767,7 @@ Start your response with { and end with }.`;
       toast.success("Calls complete — ready to analyse");
     } catch (e) {
       patchState(match.id, {
-        collectError: friendlyError(
-          e instanceof Error ? e.message : "Data collection failed.",
-        ),
+        collectError: friendlyError(e instanceof Error ? e.message : "Data collection failed."),
         progress: null,
       });
       setApiCalls(getApiCallCount());
@@ -909,7 +837,6 @@ Start your response with { and end with }.`;
     }
   }
 
-
   function handleClearMatchCache(match: AnalysedMatch) {
     clearMatchCache(match.id);
     patchState(match.id, {
@@ -958,9 +885,7 @@ Start your response with { and end with }.`;
               setView("fixtures");
             }}
             className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
-              tab === "analysis"
-                ? "bg-accent-amber text-black"
-                : "text-slate hover:text-foreground"
+              tab === "analysis" ? "bg-accent-amber text-black" : "text-slate hover:text-foreground"
             }`}
           >
             Fixtures
@@ -969,9 +894,7 @@ Start your response with { and end with }.`;
             type="button"
             onClick={() => setTab("log")}
             className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
-              tab === "log"
-                ? "bg-accent-amber text-black"
-                : "text-slate hover:text-foreground"
+              tab === "log" ? "bg-accent-amber text-black" : "text-slate hover:text-foreground"
             }`}
           >
             <BarChart3 size={14} />
@@ -983,10 +906,7 @@ Start your response with { and end with }.`;
           <button
             type="button"
             onClick={() => {
-              const input = window.prompt(
-                "Set your current bankroll ($):",
-                String(bankroll),
-              );
+              const input = window.prompt("Set your current bankroll ($):", String(bankroll));
               if (input === null) return;
               const n = Number.parseFloat(input.replace(/[^0-9.]/g, ""));
               if (!Number.isFinite(n) || n <= 0) {
@@ -1014,9 +934,7 @@ Start your response with { and end with }.`;
               }
             }}
             className={`rounded-md border px-2.5 py-1 font-mono text-xs font-semibold ${
-              strictMode
-                ? "border-accent-amber/50 text-accent-amber"
-                : "border-border text-slate"
+              strictMode ? "border-accent-amber/50 text-accent-amber" : "border-border text-slate"
             }`}
             title="Real stakes only on FULL/PARTIAL data + aligned ensemble + confirmed lineups. Everything else logs as paper."
           >
@@ -1100,12 +1018,9 @@ Start your response with { and end with }.`;
         <span className="text-xs font-semibold text-foreground">
           Edge v4.0 — WC2026 Knockout Intelligence
         </span>
-        <span className="text-xs text-slate">
-          Not financial advice. Bet responsibly.
-        </span>
+        <span className="text-xs text-slate">Not financial advice. Bet responsibly.</span>
         <span className="font-mono text-xs text-slate">
-          API calls today: <span className={apiColorClass}>{apiCalls}</span>/
-          {DAILY_LIMIT}
+          API calls today: <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
         </span>
         <span className="mt-1 font-mono text-sm text-slate" suppressHydrationWarning>
           {formatUtc(now)}
@@ -1147,19 +1062,14 @@ function FixturesView({
 }) {
   const sorted = matches
     ? [...matches].sort(
-        (a, b) =>
-          new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
+        (a, b) => new Date(a.kickoffUtc).getTime() - new Date(b.kickoffUtc).getTime(),
       )
     : null;
 
   const nowMs = now.getTime();
   const hasCache = fetchedAt != null;
   const stale = hasCache && isStale(fetchedAt, nowMs);
-  const buttonLabel = loading
-    ? "Loading fixtures…"
-    : hasCache
-      ? "↻ Refresh"
-      : "Find Fixtures";
+  const buttonLabel = loading ? "Loading fixtures…" : hasCache ? "↻ Refresh" : "Find Fixtures";
 
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-10">
@@ -1190,28 +1100,24 @@ function FixturesView({
             {buttonLabel}
           </button>
           {hasCache && !loading && (
-            <span
-              className={`font-mono text-xs ${stale ? "text-accent-amber" : "text-slate"}`}
-            >
+            <span className={`font-mono text-xs ${stale ? "text-accent-amber" : "text-slate"}`}>
               Last updated: {formatAgo(fetchedAt, nowMs)}
               {stale ? " — may be outdated" : ""}
             </span>
           )}
           <span className="font-mono text-xs text-slate">
-            API calls used today:{" "}
-            <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
+            API calls used today: <span className={apiColorClass}>{apiCalls}</span>/{DAILY_LIMIT}
           </span>
         </div>
 
         {counterCritical ? (
           <div className="w-full rounded-md border border-signal-red/60 bg-signal-red/10 px-4 py-3 text-sm font-semibold text-signal-red">
-            🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only
-            essential calls running.
+            🚫 API budget critical at {apiCalls}/{DAILY_LIMIT} today. Only essential calls running.
           </div>
         ) : counterWarning ? (
           <div className="w-full rounded-md border border-accent-amber/50 bg-accent-amber/10 px-4 py-3 text-sm text-accent-amber">
-            ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Predictions/bracket
-            calls may be skipped.
+            ⚠️ API budget at {apiCalls}/{DAILY_LIMIT} today. Predictions/bracket calls may be
+            skipped.
           </div>
         ) : null}
 
@@ -1222,23 +1128,21 @@ function FixturesView({
         )}
 
         {loading && !sorted && (
-          <p className="pt-10 text-center text-lg font-medium text-slate">
-            Loading fixtures…
-          </p>
+          <p className="pt-10 text-center text-lg font-medium text-slate">Loading fixtures…</p>
         )}
 
         {!sorted && !loading && (
           <div className="w-full rounded-md border border-border bg-card/40 px-4 py-8 text-center text-sm text-slate">
             No fixtures loaded yet. Tap{" "}
-            <span className="font-semibold text-accent-amber">Find Fixtures</span>{" "}
-            to load today's and tomorrow's matches.
+            <span className="font-semibold text-accent-amber">Find Fixtures</span> to load today's
+            and tomorrow's matches.
           </div>
         )}
 
         {sorted && sorted.length === 0 && (
           <div className="w-full rounded-md border border-border bg-card/40 px-4 py-5 text-center text-sm text-slate">
-            No World Cup matches scheduled today or tomorrow. Check back closer to
-            the next knockout fixtures.
+            No World Cup matches scheduled today or tomorrow. Check back closer to the next knockout
+            fixtures.
           </div>
         )}
 
@@ -1267,9 +1171,7 @@ function FixturesView({
                         {formatLocal(m.kickoffUtc)}
                       </span>
                       {m.round && (
-                        <span className="font-mono text-[11px] text-slate">
-                          {m.round}
-                        </span>
+                        <span className="font-mono text-[11px] text-slate">{m.round}</span>
                       )}
                       {!blocked && (
                         <span className="font-mono text-xs text-slate">
@@ -1282,9 +1184,7 @@ function FixturesView({
                         🏁 Finished
                       </span>
                     ) : (
-                      <span
-                        className={`whitespace-nowrap text-sm font-bold ${meta.className}`}
-                      >
+                      <span className={`whitespace-nowrap text-sm font-bold ${meta.className}`}>
                         {meta.emoji} {meta.label}
                       </span>
                     )}
@@ -1490,9 +1390,7 @@ function MatchView({
 
           {running && state.progress && (
             <div className="rounded-md border border-border bg-background/60 px-3 py-3">
-              <p className="font-mono text-sm text-accent-amber">
-                {state.progress.label}
-              </p>
+              <p className="font-mono text-sm text-accent-amber">{state.progress.label}</p>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border">
                 <div
                   className="h-full bg-accent-amber transition-all"
@@ -1536,8 +1434,6 @@ function MatchView({
             </div>
           )}
 
-
-
           {lineupPending && (
             <ManualLineupForm
               onSubmit={(home, away) => {
@@ -1571,8 +1467,8 @@ function MatchView({
 
           {!state.collection && !running && (
             <p className="font-mono text-xs text-slate">
-              Press “Run All Calls” to fetch API data for this match. Results are
-              cached — retry individual calls without re-running the rest.
+              Press “Run All Calls” to fetch API data for this match. Results are cached — retry
+              individual calls without re-running the rest.
             </p>
           )}
         </section>
@@ -1605,13 +1501,10 @@ function MatchView({
                   Elapsed: {analysisElapsedSec}s / {formatMaxSeconds(CLAUDE_MAX_SECONDS)} max
                 </p>
                 <p className="mt-1 font-mono text-[11px] text-slate/80">
-                  Typically completes in 1-2 minutes. Keep this tab open until
-                  it finishes.
+                  Typically completes in 1-2 minutes. Keep this tab open until it finishes.
                 </p>
               </div>
             )}
-
-
 
             {state.usedFallbackModel && state.analysisResult !== null && (
               <div className="rounded-md border border-accent-amber/50 bg-accent-amber/10 px-3 py-2 font-mono text-xs font-semibold text-accent-amber">
@@ -1620,19 +1513,13 @@ function MatchView({
               </div>
             )}
 
-
-
-
             {state.billingError && (
               <div className="rounded-lg border-2 border-signal-red bg-signal-red/15 px-4 py-4 text-signal-red">
                 <p className="text-base font-bold">⚠️ Anthropic Billing Issue</p>
                 <p className="mt-1 text-sm">
-                  Your account credit balance is too low to run analysis. Add
-                  credits at{" "}
-                  <span className="font-semibold underline">
-                    console.anthropic.com
-                  </span>{" "}
-                  before trying again.
+                  Your account credit balance is too low to run analysis. Add credits at{" "}
+                  <span className="font-semibold underline">console.anthropic.com</span> before
+                  trying again.
                 </p>
               </div>
             )}
@@ -1671,11 +1558,7 @@ function MatchView({
                     // sees (the feed is a proxy book) and re-gate it.
                     const current = state.analysisResult;
                     if (!current) return;
-                    const updated = applyConfirmedPrice(
-                      current as AnalysisResult,
-                      betKey,
-                      odds,
-                    );
+                    const updated = applyConfirmedPrice(current as AnalysisResult, betKey, odds);
                     patchState({ analysisResult: updated });
                     const bet = updated[betKey];
                     if (bet?.active) {
@@ -1724,9 +1607,7 @@ function MatchView({
                     navigator.clipboard
                       .writeText(report)
                       .then(() => toast.success("Copied!", { duration: 2000 }))
-                      .catch(() =>
-                        toast.error("Copy failed — clipboard unavailable"),
-                      );
+                      .catch(() => toast.error("Copy failed — clipboard unavailable"));
                   }}
                   className="self-start rounded-md border border-accent-amber/50 px-4 py-2 font-mono text-xs font-semibold text-accent-amber transition-colors hover:bg-accent-amber/10"
                 >
@@ -1742,8 +1623,7 @@ function MatchView({
                     {capturing ? "📸 Capturing…" : "📸 Capture Closing Line"}
                   </button>
                   <p className="text-[11px] text-slate">
-                    Snapshot fresh Pinnacle/Stake prices near kickoff for CLV
-                    tracking (best T-15m).
+                    Snapshot fresh Pinnacle/Stake prices near kickoff for CLV tracking (best T-15m).
                   </p>
                 </div>
               </>
@@ -1760,11 +1640,8 @@ function MatchView({
 
             {state.tokenUsage && (
               <p className="font-mono text-xs text-slate">
-                Tokens used:{" "}
-                <span className="text-accent-amber">{state.tokenUsage.input}</span>{" "}
-                in,{" "}
-                <span className="text-accent-amber">{state.tokenUsage.output}</span>{" "}
-                out
+                Tokens used: <span className="text-accent-amber">{state.tokenUsage.input}</span> in,{" "}
+                <span className="text-accent-amber">{state.tokenUsage.output}</span> out
               </p>
             )}
           </section>
@@ -1776,11 +1653,7 @@ function MatchView({
 
 // Manual lineup entry — shown when TheStatsAPI lineups stay pending. One player
 // per line for each side. Injects a synthetic CALL 6 SUCCESS result.
-function ManualLineupForm({
-  onSubmit,
-}: {
-  onSubmit: (home: string[], away: string[]) => void;
-}) {
+function ManualLineupForm({ onSubmit }: { onSubmit: (home: string[], away: string[]) => void }) {
   const [open, setOpen] = useState(false);
   const [home, setHome] = useState("");
   const [away, setAway] = useState("");
@@ -1851,16 +1724,91 @@ function ManualLineupForm({
   );
 }
 
+// ── Validation Checks — plain-English cards (UI cleanup 2026-07-05) ──
+// Each engine self-check renders as one card: a status badge and a sentence
+// anyone can read, with the raw technical rows tucked behind a "Technical
+// details" disclosure. Tone semantics: green = passed as-is, amber = the app
+// auto-corrected Claude's numbers (already handled, no action needed),
+// blue = informational, red = a real failure, slate = field missing.
+type CheckTone = "pass" | "fixed" | "info" | "fail" | "missing";
+
+const CHECK_TONE: Record<CheckTone, { icon: string; iconClass: string; badge: string }> = {
+  pass: {
+    icon: "✓",
+    iconClass: "text-signal-green",
+    badge: "bg-signal-green/15 text-signal-green",
+  },
+  fixed: {
+    icon: "⚠",
+    iconClass: "text-accent-amber",
+    badge: "bg-accent-amber/15 text-accent-amber",
+  },
+  info: { icon: "ℹ", iconClass: "text-signal-blue", badge: "bg-signal-blue/15 text-signal-blue" },
+  fail: { icon: "✗", iconClass: "text-destructive", badge: "bg-destructive/15 text-destructive" },
+  missing: { icon: "—", iconClass: "text-slate", badge: "bg-border/50 text-slate" },
+};
+
+function CheckCard({
+  tone,
+  title,
+  badge,
+  children,
+  tech,
+}: {
+  tone: CheckTone;
+  title: string;
+  badge: string;
+  children: ReactNode;
+  tech?: ReactNode;
+}) {
+  const t = CHECK_TONE[tone];
+  return (
+    <div className="rounded-md border border-border bg-background/80 p-3">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <span className={t.iconClass}>{t.icon}</span>
+          {title}
+        </div>
+        <span
+          className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${t.badge}`}
+        >
+          {badge}
+        </span>
+      </div>
+      <div className="space-y-1.5 text-xs leading-relaxed text-slate">{children}</div>
+      {tech ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-slate/70 hover:text-foreground">
+            Technical details
+          </summary>
+          <div className="mt-1 space-y-0.5 rounded bg-background/60 p-2 font-mono text-[11px] text-slate">
+            {tech}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+const DIMENSION_LABELS: Record<string, string> = {
+  D1: "Form",
+  D2: "Tactical",
+  D3: "Context",
+  D4: "Injuries",
+  D5: "Referee",
+  D6: "Head-to-head",
+};
+
+/** "D1: Claude used 45, expected 40 …" → structured row, or null if unparseable. */
+function parseWeightFlag(flag: string): { dim: string; used: string; expected: string } | null {
+  const m = /^(D[1-6]):\s*Claude used ([\d.]+), expected ([\d.]+)/.exec(flag);
+  return m ? { dim: m[1], used: m[2], expected: m[3] } : null;
+}
+
 function ValidationChecksView({ result }: { result: AnalysisResult }) {
   const mp = result.model_probabilities;
   const ec = result.ensemble_check;
   const dw = result.dimension_weights_validation;
-  // FIX 5 — plain-English "What does this mean?" toggle.
-  const [plain, setPlain] = useState(false);
-  const Plain = ({ text }: { text: string }) =>
-    plain ? (
-      <div className="mt-0.5 font-sans text-[11px] italic text-slate/80">{text}</div>
-    ) : null;
 
   const recomputed =
     ec &&
@@ -1869,146 +1817,222 @@ function ValidationChecksView({ result }: { result: AnalysisResult }) {
       signal_2_poisson: Number(ec.signal_2_poisson ?? 0),
       signal_3_historical: Number(ec.signal_3_historical ?? 0),
     });
+  const ensembleVerified =
+    !!recomputed &&
+    !!ec &&
+    ec.alignment === recomputed.alignment &&
+    ec.confidence_impact === recomputed.confidence_impact.toString();
+
+  const pct = (v: unknown) => `${Number(v).toFixed(0)}%`;
 
   return (
     <details className="rounded-md border border-border bg-background/60" open>
       <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-foreground">
         Validation Checks
+        <span className="ml-2 font-normal text-[11px] text-slate">
+          — how the app double-checked Claude's numbers
+        </span>
       </summary>
-      <div className="flex justify-end border-t border-border px-3 pt-2">
-        <button
-          type="button"
-          onClick={() => setPlain((v) => !v)}
-          className="rounded border border-border px-2 py-0.5 text-[11px] text-slate hover:text-foreground"
+      <div className="space-y-3 border-t border-border px-3 py-3">
+        {/* Check 1 — the three match-outcome probabilities must sum to 100 */}
+        <CheckCard
+          tone={!mp ? "missing" : mp.was_normalized ? "fixed" : "pass"}
+          title="Match probabilities add up"
+          badge={!mp ? "NOT REPORTED" : mp.was_normalized ? "AUTO-FIXED" : "PASSED"}
+          tech={
+            mp ? (
+              <>
+                <div>was_normalized: {String(mp.was_normalized ?? false)}</div>
+                <div>raw_sum: {typeof mp.raw_sum === "number" ? mp.raw_sum.toFixed(2) : "—"}</div>
+                <div>
+                  normalized: {Number(mp.home).toFixed(2)} / {Number(mp.draw).toFixed(2)} /{" "}
+                  {Number(mp.away).toFixed(2)} (sum{" "}
+                  {(Number(mp.home) + Number(mp.draw) + Number(mp.away)).toFixed(2)})
+                </div>
+              </>
+            ) : undefined
+          }
         >
-          ⓘ What does this mean? {plain ? "(on)" : "(off)"}
-        </button>
-      </div>
-      <div className="space-y-4 px-3 py-3 font-mono text-xs text-slate">
-
-        {/* model_probabilities */}
-        <div>
-          <div className="mb-1 font-semibold text-foreground">
-            model_probabilities
-          </div>
           {mp ? (
-            <div className="space-y-0.5">
-              <div>
-                was_normalized:{" "}
-                <span className="text-accent-amber">
-                  {String(mp.was_normalized ?? false)}
-                </span>
+            <>
+              <div className="font-medium text-foreground">
+                Home win {pct(mp.home)} · Draw {pct(mp.draw)} · Away win {pct(mp.away)}
               </div>
               <div>
-                raw_sum:{" "}
-                <span className="text-accent-amber">
-                  {typeof mp.raw_sum === "number" ? mp.raw_sum.toFixed(2) : "—"}
-                </span>
+                {mp.was_normalized
+                  ? `Claude's raw percentages added up to ${
+                      typeof mp.raw_sum === "number" ? mp.raw_sum.toFixed(2) : "≠100"
+                    } instead of 100, so the app rescaled them to the values above. Already handled — no action needed.`
+                  : "The three chances add up to exactly 100%, as they must. Nothing needed fixing."}
               </div>
-              <div>
-                normalized: {Number(mp.home).toFixed(2)} /{" "}
-                {Number(mp.draw).toFixed(2)} / {Number(mp.away).toFixed(2)} (sum{" "}
-                {(Number(mp.home) + Number(mp.draw) + Number(mp.away)).toFixed(2)})
-              </div>
-            </div>
+            </>
           ) : (
-            <div className="text-slate">not present in output</div>
+            <div>
+              Claude didn't include its win/draw/loss percentages this run. Cosmetic only — every
+              bet is priced from its own probability fields.
+            </div>
           )}
-          <Plain text={plainModelProbabilities(!!mp)} />
-        </div>
+        </CheckCard>
 
-
-        {/* ensemble_check.alignment */}
-        <div>
-          <div className="mb-1 font-semibold text-foreground">
-            ensemble_check.alignment
-          </div>
-          {ec ? (
-            <div className="space-y-0.5">
-              <div>
-                alignment (stored):{" "}
-                <span className="text-accent-amber">{ec.alignment}</span>
-              </div>
-              <div>
-                confidence_impact (stored):{" "}
-                <span className="text-accent-amber">{ec.confidence_impact}</span>
-              </div>
-              <div>
-                recomputed alignment:{" "}
-                <span className="text-accent-amber">{recomputed?.alignment}</span>{" "}
-                | confidence_impact:{" "}
-                <span className="text-accent-amber">
-                  {recomputed?.confidence_impact}
-                </span>{" "}
-                | maxDiff:{" "}
-                <span className="text-accent-amber">
+        {/* Check 2 — three independent estimates of expected total goals */}
+        <CheckCard
+          tone={
+            !ec
+              ? "missing"
+              : ec.alignment === "CONFLICT"
+                ? "fixed"
+                : ec.alignment === "MAJORITY"
+                  ? "info"
+                  : "pass"
+          }
+          title="Do our goal estimates agree?"
+          badge={
+            !ec
+              ? "NOT REPORTED"
+              : ec.alignment === "CONFLICT"
+                ? `Disagree · confidence ${ec.confidence_impact}`
+                : ec.alignment === "MAJORITY"
+                  ? "2 of 3 agree"
+                  : "All agree · confidence +5"
+          }
+          tech={
+            ec ? (
+              <>
+                <div>alignment (stored): {ec.alignment}</div>
+                <div>confidence_impact (stored): {ec.confidence_impact}</div>
+                <div>
+                  recomputed: {recomputed?.alignment} | confidence_impact:{" "}
+                  {recomputed?.confidence_impact} | maxDiff:{" "}
                   {recomputed?.max_pairwise_diff.toFixed(2)}
-                </span>
+                </div>
+              </>
+            ) : undefined
+          }
+        >
+          {ec ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "App Poisson model", v: ec.signal_1_model },
+                  { label: "C8 prediction model", v: ec.signal_2_poisson },
+                  { label: "Historical round average", v: ec.signal_3_historical },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded border border-border bg-background/60 px-2 py-1.5 text-center"
+                  >
+                    <div className="font-mono text-sm font-semibold text-foreground">
+                      {Number(s.v).toFixed(2)}
+                    </div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-slate/80">{s.label}</div>
+                  </div>
+                ))}
               </div>
-              <div
-                className={
-                  recomputed &&
-                  ec.alignment === recomputed.alignment &&
-                  ec.confidence_impact === recomputed.confidence_impact.toString()
-                    ? "text-signal-blue"
-                    : "text-destructive"
-                }
-              >
-                {recomputed &&
-                ec.alignment === recomputed.alignment &&
-                ec.confidence_impact === recomputed.confidence_impact.toString()
-                  ? "✓ stored matches confidence-math source"
-                  : "✗ MISMATCH between stored and recomputed"}
+              <div>
+                The engine estimates the match's expected total goals three independent ways
+                (above).{" "}
+                {ec.alignment === "CONFLICT"
+                  ? `Here they disagree — the widest gap is ${
+                      recomputed?.max_pairwise_diff.toFixed(2) ?? "—"
+                    } goals, and anything over 0.30 counts as disagreement — so the run's confidence score was docked ${
+                      ec.confidence_impact
+                    } points and the goals estimate is treated with extra caution.`
+                  : ec.alignment === "MAJORITY"
+                    ? "Two of the three land within 0.30 goals of each other — acceptable agreement, no confidence change."
+                    : "All three land within 0.30 goals of each other — strong agreement, confidence +5."}
               </div>
+              <div className={ensembleVerified ? "text-signal-green" : "text-destructive"}>
+                {ensembleVerified
+                  ? "✓ Double-checked: the app re-ran this math and got the same answer Claude stored."
+                  : "✗ Claude's stored verdict doesn't match the app's own math — the app's recomputation is what the engine uses."}
+              </div>
+            </>
+          ) : (
+            <div>Not present in this run's output.</div>
+          )}
+        </CheckCard>
+
+        {/* Check 3 — 100 analysis points split across the six dimensions */}
+        <CheckCard
+          tone={
+            !dw
+              ? "missing"
+              : dw.validation_ran === false
+                ? "fail"
+                : dw.mismatch_flags.length === 0
+                  ? "pass"
+                  : "fixed"
+          }
+          title="Analysis weight split (100 points, 6 factors)"
+          badge={
+            !dw
+              ? "NOT REPORTED"
+              : dw.validation_ran === false
+                ? "NOT RUN"
+                : dw.mismatch_flags.length === 0
+                  ? "PASSED"
+                  : "AUTO-CORRECTED"
+          }
+          tech={
+            dw && dw.mismatch_flags.length > 0 ? (
+              <>
+                {dw.mismatch_flags.map((f, i) => (
+                  <div key={i}>{f}</div>
+                ))}
+              </>
+            ) : undefined
+          }
+        >
+          {!dw ? (
+            <div>Not present in this run's output.</div>
+          ) : dw.validation_ran === false ? (
+            <div className="text-destructive">
+              The weight check could not run — the weights field was missing from Claude's output.
+            </div>
+          ) : dw.mismatch_flags.length === 0 ? (
+            <div>
+              Claude weighs its analysis by splitting 100 points across six factors — form, tactics,
+              context, injuries, referee and head-to-head. The split matches what the rules require
+              for this match's data. Nothing needed fixing.
             </div>
           ) : (
-            <div className="text-slate">not present in output</div>
-          )}
-          <Plain text={plainEnsembleAlignment(ec?.alignment ?? recomputed?.alignment)} />
-        </div>
-
-
-        {/* dimension_weights_validation */}
-        <div>
-          <div className="mb-1 font-semibold text-foreground">
-            dimension_weights_validation
-          </div>
-          {dw ? (
-            dw.validation_ran === false ? (
-              <div className="space-y-1">
-                <span className="inline-block rounded bg-destructive/20 px-2 py-0.5 font-semibold text-destructive">
-                  NOT RUN — field missing from Claude output
-                </span>
-                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
-                  {dw.mismatch_flags.map((f, i) => (
-                    <li key={i}>{f}</li>
-                  ))}
-                </ul>
+            <>
+              <div>
+                Claude weighs its analysis by splitting 100 points across six factors. For this
+                match's data it split a few of them against the rules, so the app re-balanced them{" "}
+                <span className="font-medium text-foreground">before</span> any numbers were
+                computed. Already handled — no action needed.
               </div>
-            ) : dw.mismatch_flags.length === 0 ? (
-              <span className="inline-block rounded bg-signal-blue/20 px-2 py-0.5 font-semibold text-signal-blue">
-                PASSED — weights match expected conditions
-              </span>
-            ) : (
-              <div className="space-y-1">
-                <span className="inline-block rounded bg-accent-amber/20 px-2 py-0.5 font-semibold text-accent-amber">
-                  MISMATCH DETECTED
-                </span>
-                <ul className="list-disc space-y-0.5 pl-5 text-destructive">
-                  {dw.mismatch_flags.map((f, i) => (
-                    <li key={i}>{f}</li>
-                  ))}
-                </ul>
+              <div className="overflow-hidden rounded border border-border">
+                <div className="grid grid-cols-3 gap-x-2 bg-background/60 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate/80">
+                  <div>Factor</div>
+                  <div className="text-right">Claude wrote</div>
+                  <div className="text-right">Corrected to</div>
+                </div>
+                {dw.mismatch_flags.map((f, i) => {
+                  const row = parseWeightFlag(f);
+                  return row ? (
+                    <div
+                      key={i}
+                      className="grid grid-cols-3 gap-x-2 border-t border-border px-2 py-1"
+                    >
+                      <div className="text-foreground">
+                        {DIMENSION_LABELS[row.dim] ?? row.dim}{" "}
+                        <span className="text-slate/60">({row.dim})</span>
+                      </div>
+                      <div className="text-right font-mono text-accent-amber">{row.used}</div>
+                      <div className="text-right font-mono text-signal-green">{row.expected}</div>
+                    </div>
+                  ) : (
+                    <div key={i} className="border-t border-border px-2 py-1">
+                      {f}
+                    </div>
+                  );
+                })}
               </div>
-            )
-          ) : (
-            <div className="text-slate">not present in output</div>
+            </>
           )}
-          <Plain
-            text={plainDimensionWeights(!!dw && dw.mismatch_flags.length > 0)}
-          />
-        </div>
-
+        </CheckCard>
       </div>
     </details>
   );
