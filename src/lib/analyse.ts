@@ -2429,6 +2429,32 @@ function extractLineupPlayerIds(lineup: unknown): string[] {
   return [...ids];
 }
 
+// id → player name from the lineup payload (XI + bench). The 6B block used
+// to ship stats keyed by opaque pl_… ids only, so Claude could not tell
+// which entry belonged to which player — gap-score inputs for absences were
+// guesswork (live E2E: "all four tracked attackers" were actually the first
+// four XI entries, unidentifiable by name).
+export function extractLineupPlayerNames(lineup: unknown): Map<string, string> {
+  const names = new Map<string, string>();
+  const collectSide = (side: unknown) => {
+    for (const key of ["starting_xi", "startingXi", "startingXI", "lineup", "substitutes", "subs", "bench"]) {
+      for (const p of extractArray(getField(side, [key]))) {
+        const pl = getField(p, ["player"]) ?? p;
+        const id = getField(p, ["player_id", "id"]) ?? getField(pl, ["id"]);
+        const name = getField(pl, ["name"]);
+        if (id != null && typeof name === "string" && name.trim()) {
+          names.set(String(id), name.trim());
+        }
+      }
+    }
+  };
+  const node = getField(lineup, ["data"]) ?? lineup;
+  collectSide(getField(node, ["home"]));
+  collectSide(getField(node, ["away"]));
+  for (const item of extractArray(node)) collectSide(item);
+  return names;
+}
+
 // Count the players listed in one side's starting_xi (handles the nested
 // `data.home/away` envelope and bare `home/away` shapes).
 function sideXICount(side: unknown): number {
@@ -4330,6 +4356,10 @@ export async function collectMatchData(
         lineupResult?.status === "SUCCESS"
           ? extractLineupPlayerIdsBySide(lineupResult.data)
           : { home: new Set<string>(), away: new Set<string>() };
+      const nameById =
+        lineupResult?.status === "SUCCESS"
+          ? extractLineupPlayerNames(lineupResult.data)
+          : new Map<string, string>();
 
       const perPlayer: Record<string, unknown> = {};
       let lastError: string | undefined;
@@ -4348,9 +4378,14 @@ export async function collectMatchData(
                 ? "away"
                 : null;
             const os = side ? oppStrength?.[side] : null;
+            const named = {
+              player_name: nameById.get(pid) ?? null,
+              team_side: side,
+              ...stats,
+            };
             perPlayer[pid] = os
-              ? { ...stats, opponent_strength_multiplier: os.multiplier }
-              : stats;
+              ? { ...named, opponent_strength_multiplier: os.multiplier }
+              : named;
           }
         } catch (e) {
           lastError = e instanceof Error ? e.message : String(e);

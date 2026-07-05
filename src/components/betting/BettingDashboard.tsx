@@ -150,12 +150,62 @@ function wouldStakeText(bet: { kelly_result?: { recommended_stake?: number } }):
 // ─────────────────────────────────────────────────────────────
 // Individual bet rows for the unified "Your Bets" card
 // ─────────────────────────────────────────────────────────────
+// Manual executable-price confirmation: the odds feed is a proxy retail book
+// (10Bet labeled "Stake"), so before real money moves the user types the
+// actual Stake.com price and the app re-prices/re-gates the bet at it.
+function PriceConfirm({
+  bet,
+  onConfirm,
+}: {
+  bet: StraightBet;
+  onConfirm?: (odds: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  if (!onConfirm) return null;
+  if (bet.price_confirmed) {
+    return (
+      <div className="mt-1 rounded-md border border-signal-green/40 bg-signal-green/5 px-3 py-2 text-[12px] text-signal-green">
+        ✔ {bet.price_confirm_note ?? `Executable price confirmed @ ${fmtOdds(bet.confirmed_odds)}`}
+      </div>
+    );
+  }
+  const parsed = Number.parseFloat(value);
+  const valid = Number.isFinite(parsed) && parsed > 1;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2 rounded-md border border-accent-amber/40 bg-accent-amber/5 px-3 py-2 text-[12px]">
+      <span className="text-accent-amber">
+        ⚠️ Feed price is {fmtOdds(bet.odds)} from a proxy book — confirm the real
+        Stake.com price before placing:
+      </span>
+      <input
+        type="number"
+        step="0.01"
+        min="1.01"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={fmtOdds(bet.odds)}
+        className="w-20 rounded border border-border bg-background px-2 py-1 text-[12px] text-foreground"
+      />
+      <button
+        type="button"
+        disabled={!valid}
+        onClick={() => valid && onConfirm(parsed)}
+        className="rounded bg-accent-amber/20 px-2 py-1 font-semibold text-accent-amber disabled:opacity-40"
+      >
+        Confirm price
+      </button>
+    </div>
+  );
+}
+
 function StraightBetRow({
   index,
   bet,
+  onConfirmPrice,
 }: {
   index: number;
   bet: StraightBet;
+  onConfirmPrice?: (odds: number) => void;
 }) {
   if (!bet.active) {
     return (
@@ -207,6 +257,7 @@ function StraightBetRow({
         ) : null}
       </span>
       {paper && <PaperReason reason={bet.paper_reason} />}
+      {!paper && <PriceConfirm bet={bet} onConfirm={onConfirmPrice} />}
       <NavLabel label={bet.stake_label} />
       <ExpandableText text={bet.reasoning} />
     </div>
@@ -342,7 +393,13 @@ function JackpotBetRow({ bet }: { bet: JackpotBet }) {
 // ─────────────────────────────────────────────────────────────
 // Unified "Your Bets" card (replaces the three tier cards)
 // ─────────────────────────────────────────────────────────────
-function YourBets({ result }: { result: AnalysisResult }) {
+function YourBets({
+  result,
+  onConfirmPrice,
+}: {
+  result: AnalysisResult;
+  onConfirmPrice?: (betKey: "bet_1" | "bet_2", odds: number) => void;
+}) {
   const dq = (result.data_quality ?? "").toUpperCase();
   const showDqWarning = dq.includes("PARTIAL") || dq.includes("THIN");
   const subtitle =
@@ -373,8 +430,16 @@ function YourBets({ result }: { result: AnalysisResult }) {
       </div>
 
       <div className="flex flex-col gap-4">
-        <StraightBetRow index={1} bet={result.bet_1} />
-        <StraightBetRow index={2} bet={result.bet_2} />
+        <StraightBetRow
+          index={1}
+          bet={result.bet_1}
+          onConfirmPrice={onConfirmPrice ? (o) => onConfirmPrice("bet_1", o) : undefined}
+        />
+        <StraightBetRow
+          index={2}
+          bet={result.bet_2}
+          onConfirmPrice={onConfirmPrice ? (o) => onConfirmPrice("bet_2", o) : undefined}
+        />
         <SgpBetRow bet={result.bet_3} />
         <JackpotBetRow bet={result.bet_4} />
       </div>
@@ -914,9 +979,11 @@ function BottomBar({ result }: { result: AnalysisResult }) {
 export function BettingDashboard({
   result,
   onPlaceActionBet,
+  onConfirmPrice,
 }: {
   result: AnalysisResult;
   onPlaceActionBet?: (draft: ActionBetDraft) => void;
+  onConfirmPrice?: (betKey: "bet_1" | "bet_2", odds: number) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -924,7 +991,7 @@ export function BettingDashboard({
 
       <MatchHeader result={result} />
 
-      <YourBets result={result} />
+      <YourBets result={result} onConfirmPrice={onConfirmPrice} />
 
       <CandidatesCard result={result} onPlaceActionBet={onPlaceActionBet} />
 

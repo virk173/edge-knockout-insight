@@ -109,6 +109,9 @@ export interface DimensionWeights {
   D4: number;
   D5: number;
   D6: number;
+  // Claude's stated reason for any Section 4 adjustment (carried through the
+  // app-side auto-correction so the narrative context survives).
+  adjustment_reason?: string | null;
 }
 
 export interface DimensionWeightsValidation {
@@ -252,6 +255,12 @@ export interface StraightBet {
   paper_reason?: string;
   // Shadow Pick — best available candidate when nothing qualifies (calculate.ts).
   shadow_pick?: boolean;
+  // Manual executable-price confirmation (applyConfirmedPrice in calculate.ts):
+  // the odds feed is a proxy book, so the user types the real Stake.com price
+  // before staking and the bet is re-priced/re-gated at that price.
+  price_confirmed?: boolean;
+  confirmed_odds?: number;
+  price_confirm_note?: string;
 }
 
 export interface SgpBet {

@@ -840,8 +840,10 @@ export const validateModelProbabilities = (probs: {
 
 // ─────────────────────────────────────────────────────────────
 // Validation — dimension weights (against actual trigger conditions)
-//   Surfaces mismatches as flags; does NOT auto-correct the weights
-//   because Claude's weighted reasoning already happened upstream.
+//   Returns the expected weights for the data conditions plus mismatch
+//   flags. The calculateResults call site AUTO-CORRECTS to the expected
+//   weights on any mismatch (Claude's originals stay visible in the
+//   validation object for transparency).
 // ─────────────────────────────────────────────────────────────
 export const validateDimensionWeights = (inputs: {
   weights: DimensionWeights | null;
@@ -895,7 +897,8 @@ export const validateDimensionWeights = (inputs: {
 
   const weights = inputs.weights;
   const mismatchFlags: string[] = [];
-  (Object.keys(expected) as (keyof DimensionWeights)[]).forEach((k) => {
+  const dKeys = ["D1", "D2", "D3", "D4", "D5", "D6"] as const;
+  dKeys.forEach((k) => {
     if (Math.abs(weights[k] - expected[k]) > 2) {
       mismatchFlags.push(
         `${k}: Claude used ${weights[k]}, expected ${expected[k]} given data conditions.`,
@@ -903,7 +906,7 @@ export const validateDimensionWeights = (inputs: {
     }
   });
 
-  const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+  const sum = dKeys.reduce((a, k) => a + weights[k], 0);
   const sumValid = Math.abs(sum - 100) < 1;
   if (!sumValid) {
     mismatchFlags.push(`Dimension weights sum to ${sum}, not 100.`);
@@ -928,7 +931,7 @@ export const validateDimensionWeights = (inputs: {
 export const normalizeDimensionWeights = (
   weights: DimensionWeights,
 ): DimensionWeights => {
-  const keys: (keyof DimensionWeights)[] = ["D1", "D2", "D3", "D4", "D5", "D6"];
+  const keys = ["D1", "D2", "D3", "D4", "D5", "D6"] as const;
   const sum = keys.reduce((a, k) => a + (Number(weights[k]) || 0), 0);
   if (sum <= 0) return { ...weights };
   const scaled: DimensionWeights = { ...weights };
@@ -1193,13 +1196,67 @@ export function calculateResults(
   }
 
 
-  // ── bet_4 — jackpot EV
+  // ── bet_4 — jackpot EV. RULE 28 applies here exactly as it does to bet_3:
+  // p_final/combined_odds are arithmetic over the legs, so a priced jackpot
+  // is only trusted when every leg carries a model_probability the app can
+  // recompute from (the SGP shipped a 3×-inflated joint probability before
+  // the same guard existed there — this path was simply never exercised
+  // because no CLASS C match had qualified yet).
   const b4 = result.bet_4;
   if (b4?.jackpot_ev_inputs) {
-    const ev = computeEv(
-      b4.jackpot_ev_inputs.p_final,
-      b4.jackpot_ev_inputs.combined_odds,
-    );
+    let pf = num(b4.jackpot_ev_inputs.p_final);
+    let odds = num(b4.jackpot_ev_inputs.combined_odds);
+    const priced = b4.active === true || (pf !== undefined && pf > 0);
+    if (priced) {
+      const b4Legs = b4.legs ?? [];
+      const legProbs = b4Legs
+        .map((l) => num(l.model_probability))
+        .filter((p): p is number => p !== undefined && p > 0);
+      const legOdds = b4Legs
+        .map((l) => num(l.odds))
+        .filter((o): o is number => o !== undefined && o > 1);
+      if (
+        b4Legs.length >= 4 &&
+        legProbs.length === b4Legs.length &&
+        legOdds.length === b4Legs.length
+      ) {
+        const minLeg = Math.min(...legProbs);
+        const recomputedP = Math.min(
+          legProbs.reduce((a, b) => a * b, 1),
+          minLeg,
+        );
+        const recomputedOdds = round(legOdds.reduce((a, b) => a * b, 1), 2);
+        if (pf !== undefined && Math.abs(pf - recomputedP) > 0.01) {
+          result.data_quality_flags = result.data_quality_flags || [];
+          result.data_quality_flags.push(
+            `Jackpot p_final ${pf} diverged from the app-computed product of leg probabilities (${recomputedP.toFixed(4)}) — recomputed value used (rule 28: the app does all arithmetic).`,
+          );
+        }
+        if (odds !== undefined && Math.abs(odds - recomputedOdds) > 0.05) {
+          result.data_quality_flags = result.data_quality_flags || [];
+          result.data_quality_flags.push(
+            `Jackpot combined_odds ${odds} diverged from the product of leg odds (${recomputedOdds}) — recomputed value used.`,
+          );
+        }
+        pf = recomputedP;
+        odds = recomputedOdds;
+        b4.jackpot_ev_inputs.p_final = recomputedP;
+        b4.jackpot_ev_inputs.combined_odds = recomputedOdds;
+        b4.combined_odds = recomputedOdds;
+      } else {
+        // Legs missing, fewer than the 4-leg minimum, or without per-leg
+        // probabilities/odds — the jackpot price is unverifiable; withhold.
+        result.data_quality_flags = result.data_quality_flags || [];
+        result.data_quality_flags.push(
+          "Jackpot priced but legs are missing per-leg model_probability/odds (or fewer than 4 legs) — p_final unverifiable; bet_4 withheld.",
+        );
+        b4.active = false;
+        b4.skip_reason =
+          b4.skip_reason ??
+          "Jackpot leg probabilities missing — p_final unverifiable; bet withheld.";
+      }
+    }
+    const ev = computeEv(pf, odds);
     if (ev !== undefined) b4.jackpot_ev = ev;
   }
 
@@ -1322,8 +1379,9 @@ export function calculateResults(
     }
   }
 
-  // GAP 3 — dimension weights validated against actual data conditions.
-  // Surfaced as a flag only; weights are NOT auto-corrected.
+  // GAP 3 — dimension weights validated against actual data conditions,
+  // then AUTO-CORRECTED to the Section 4 expected weights on any mismatch
+  // (the original values stay visible in dimension_weights_validation).
   if (result.dimension_weights) {
     const call4Count = result.tactical_analysis?.call4_fixture_count ?? 5;
     // H2H gate = 3+ competitive meetings in C3, passed in from the pipeline
@@ -1363,23 +1421,38 @@ export function calculateResults(
       all_players_confirmed_fit: allFit,
     });
     result.dimension_weights_validation = validation;
-    // NORMALIZE the weights so they always sum to exactly 100 before anything
-    // downstream reads them. Validation above ran against the ORIGINAL values,
-    // so any mismatch warning text is preserved.
-    result.dimension_weights = normalizeDimensionWeights({
-      D1: num(result.dimension_weights.D1) ?? 0,
-      D2: num(result.dimension_weights.D2) ?? 0,
-      D3: num(result.dimension_weights.D3) ?? 0,
-      D4: num(result.dimension_weights.D4) ?? 0,
-      D5: num(result.dimension_weights.D5) ?? 0,
-      D6: num(result.dimension_weights.D6) ?? 0,
-    });
+    // AUTO-CORRECT: when the weights deviate from what the Section 4 rules
+    // prescribe for the actual data conditions, use the expected weights —
+    // Claude's weights drift run-to-run (live E2E: a D5/D6 transposition)
+    // and flag-only validation let the drifted values flow downstream. The
+    // validation object keeps the ORIGINAL values so the deviation stays
+    // visible; the key_risk flag says the correction was applied.
+    const corrected =
+      validation.mismatch_flags.length > 0 && validation.expected_weights
+        ? validation.expected_weights
+        : {
+            D1: num(result.dimension_weights.D1) ?? 0,
+            D2: num(result.dimension_weights.D2) ?? 0,
+            D3: num(result.dimension_weights.D3) ?? 0,
+            D4: num(result.dimension_weights.D4) ?? 0,
+            D5: num(result.dimension_weights.D5) ?? 0,
+            D6: num(result.dimension_weights.D6) ?? 0,
+          };
+    const adjustmentReason = result.dimension_weights.adjustment_reason;
+    // NORMALIZE so the six weights always sum to exactly 100 before anything
+    // downstream reads them.
+    result.dimension_weights = {
+      ...normalizeDimensionWeights(corrected),
+      ...(adjustmentReason !== undefined
+        ? { adjustment_reason: adjustmentReason }
+        : {}),
+    };
     if (validation.mismatch_flags.length > 0) {
       result.key_risk_flag =
         (result.key_risk_flag || "") +
         " [WEIGHT VALIDATION: " +
         validation.mismatch_flags.join(" ") +
-        "]";
+        " Auto-corrected to the Section 4 expected weights.]";
     }
   } else {
     // Field missing from Claude output — flag this explicitly rather than
@@ -2073,3 +2146,71 @@ export const applyDeadRubberDiscount = (
         : "No dead-rubber fixtures detected in recent form.",
   };
 };
+
+// ─────────────────────────────────────────────────────────────
+// Manual executable-price confirmation
+//
+// The odds feed is a proxy retail book (10Bet labeled "Stake"), so the price
+// a bet was sized at may not be the price actually offered on Stake.com.
+// Before real money moves, the user types the executable price into the UI
+// and the bet is re-priced at it: EV from the already-calibrated model
+// probability, Kelly re-sized, and the bet re-gated against its tier's EV
+// threshold. Returns a NEW result object (never mutates the input).
+// ─────────────────────────────────────────────────────────────
+export function applyConfirmedPrice(
+  result: AnalysisResult,
+  betKey: "bet_1" | "bet_2",
+  confirmedOdds: number,
+): AnalysisResult {
+  const next = clone(result) as AnalysisResult;
+  const bet = next[betKey];
+  const p = num(bet?.model_probability);
+  const odds = num(confirmedOdds);
+  if (!bet || p === undefined || odds === undefined || odds <= 1) return next;
+
+  const minEv = betKey === "bet_1" ? 0.05 : 0.03;
+  const priorOdds = num(bet.odds);
+  const ev = round(p * odds - 1);
+  const bankroll =
+    num(next.bankroll_at_analysis) ?? BANKROLL_DEFAULTS.STARTING_BANKROLL;
+  const kelly = calculateKellyStake({
+    ev,
+    decimal_odds: odds,
+    bankroll,
+    fraction: BANKROLL_DEFAULTS.KELLY_FRACTION,
+    max_bet_pct: BANKROLL_DEFAULTS.MAX_BET_PCT,
+    min_actionable: BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE,
+  });
+
+  bet.price_confirmed = true;
+  bet.confirmed_odds = odds;
+  bet.odds = odds;
+  bet.raw_ev = bet.ev;
+  bet.ev = ev;
+  bet.kelly_result = kelly;
+  bet.kelly_inputs = { ...(bet.kelly_inputs ?? {}), decimal_odds: odds, bankroll };
+  const stillOn = ev >= minEv && !kelly.skipped_too_small;
+  bet.active = stillOn;
+  bet.stake = stillOn ? `$${kelly.recommended_stake}` : "$0";
+  if (!stillOn) {
+    bet.skip_reason = `Confirmed executable price ${odds} re-prices this bet to EV ${(ev * 100).toFixed(1)}% — below the ${(minEv * 100).toFixed(0)}% threshold (or stake under the $${BANKROLL_DEFAULTS.MIN_ACTIONABLE_STAKE} minimum). Do not place.`;
+  }
+  bet.price_confirm_note = `Executable price confirmed at ${odds}${
+    priorOdds !== undefined ? ` (feed price was ${priorOdds})` : ""
+  } — EV re-computed at the confirmed price.`;
+
+  // Keep the headline total honest after the re-price.
+  const stakes = [next.bet_1, next.bet_2].map((b) =>
+    b?.active && b.paper_bet !== true
+      ? Number.parseFloat(String(b.stake ?? "").replace(/[^0-9.]/g, "")) || 0
+      : 0,
+  );
+  const parlays = [next.bet_3, next.bet_4].map((b) =>
+    b?.active && (b as { paper_bet?: boolean }).paper_bet !== true
+      ? Number.parseFloat(String(b.stake ?? "").replace(/[^0-9.]/g, "")) || 0
+      : 0,
+  );
+  const total = [...stakes, ...parlays].reduce((a, b) => a + b, 0);
+  next.total_staked = `$${total.toFixed(2)}`;
+  return next;
+}

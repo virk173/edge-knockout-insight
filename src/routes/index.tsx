@@ -31,7 +31,11 @@ import {
 import { clearMatchCache } from "@/lib/callCache";
 import { CallStatusPanel } from "@/components/betting/CallStatusPanel";
 import type { AnalysisResult } from "@/lib/analysisResult";
-import { calculateEnsembleAlignment, calculateResults } from "@/lib/calculate";
+import {
+  calculateEnsembleAlignment,
+  calculateResults,
+  applyConfirmedPrice,
+} from "@/lib/calculate";
 import {
   plainEnsembleAlignment,
   plainModelProbabilities,
@@ -1643,6 +1647,28 @@ function MatchView({
                 <BettingDashboard
                   result={state.analysisResult as AnalysisResult}
                   onPlaceActionBet={onPlaceActionBet}
+                  onConfirmPrice={(betKey, odds) => {
+                    // Re-price the bet at the REAL Stake.com odds the user
+                    // sees (the feed is a proxy book) and re-gate it.
+                    const current = state.analysisResult;
+                    if (!current) return;
+                    const updated = applyConfirmedPrice(
+                      current as AnalysisResult,
+                      betKey,
+                      odds,
+                    );
+                    patchState({ analysisResult: updated });
+                    const bet = updated[betKey];
+                    if (bet?.active) {
+                      toast.success(
+                        `Price confirmed @ ${odds} — EV ${((bet.ev ?? 0) * 100).toFixed(1)}%, stake ${bet.stake}`,
+                      );
+                    } else {
+                      toast.warning(
+                        `Confirmed price ${odds} kills the edge — bet gated to $0. Do not place.`,
+                      );
+                    }
+                  }}
                 />
 
                 <ValidationChecksView result={state.analysisResult as AnalysisResult} />

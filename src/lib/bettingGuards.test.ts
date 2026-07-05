@@ -211,3 +211,154 @@ describe("confidence strip-regex — keep/strip table", () => {
     });
   }
 });
+
+// Jackpot (bet_4) gets the same rule-28 treatment the SGP got: p_final and
+// combined_odds are recomputed from the legs; a priced jackpot without
+// verifiable legs is withheld.
+describe("jackpot p_final guard — recompute from legs or withhold", () => {
+  const legs = (probs: number[], odds: number[]) =>
+    probs.map((p, i) => ({
+      leg_number: i + 1,
+      market: "Goal Totals",
+      selection: `Leg ${i + 1}`,
+      odds: odds[i],
+      model_probability: p,
+    }));
+
+  it("recomputes an inflated p_final from the leg product and flags it", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_4: {
+          active: true,
+          legs: legs([0.6, 0.6, 0.6, 0.6], [1.9, 1.9, 1.9, 1.9]),
+          combined_odds: 13.0,
+          // True product = 0.6^4 = 0.1296; Claude claims 0.4 (3× too high).
+          jackpot_ev_inputs: { p_final: 0.4, combined_odds: 13.0 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_4?.jackpot_ev_inputs?.p_final).toBeCloseTo(0.1296, 4);
+    expect(out.bet_4?.jackpot_ev_inputs?.combined_odds).toBeCloseTo(1.9 ** 4, 2);
+    // jackpot_ev on the RECOMPUTED values: 0.1296 × 13.0321 ≈ 0.689
+    expect(out.bet_4?.jackpot_ev).toBeCloseTo(0.1296 * 1.9 ** 4 - 1, 2);
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("p_final")),
+    ).toBe(true);
+  });
+
+  it("withholds a priced jackpot whose legs lack probabilities", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_4: {
+          active: true,
+          legs: [{ leg_number: 1, stake_label: "..." }],
+          jackpot_ev_inputs: { p_final: 0.2, combined_odds: 9.0 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_4?.active).toBe(false);
+    expect(out.bet_4?.skip_reason).toContain("unverifiable");
+  });
+
+  it("leaves an unpriced inactive jackpot (the normal CLASS-C-failed case) untouched", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        bet_4: {
+          active: false,
+          skip_reason: "CLASS C not achieved",
+          legs: [],
+          jackpot_ev_inputs: { p_final: 0, combined_odds: 0 },
+        },
+      },
+      { bankroll: 500 },
+    );
+    expect(out.bet_4?.skip_reason).toBe("CLASS C not achieved");
+    expect(
+      (out.data_quality_flags ?? []).some((f) => f.includes("Jackpot")),
+    ).toBe(false);
+  });
+});
+
+// Dimension weights now AUTO-CORRECT to the Section 4 expected values on
+// mismatch (live E2E: Claude transposed D5/D6; flag-only validation let the
+// drifted weights flow downstream).
+describe("dimension-weight auto-correction", () => {
+  it("replaces drifted weights with the expected ones and keeps the originals in the validation object", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        tactical_analysis: { call4_fixture_count: 5 },
+        player_intelligence: { absences: [{ player: "X", classification: "MINOR" }] },
+        // D5/D6 transposed vs the failed-H2H expectation (D6 must be 0).
+        dimension_weights: { D1: 40, D2: 25, D3: 20, D4: 10, D5: 0, D6: 5, adjustment_reason: "H2H gate failed" },
+      },
+      { bankroll: 500, h2hMeetings: 1 },
+    );
+    expect(out.dimension_weights).toMatchObject({ D1: 40, D2: 25, D3: 20, D4: 10, D5: 5, D6: 0 });
+    expect(out.dimension_weights?.adjustment_reason).toBe("H2H gate failed");
+    expect(out.dimension_weights_validation?.weights).toMatchObject({ D5: 0, D6: 5 });
+    expect(out.key_risk_flag).toContain("Auto-corrected");
+  });
+
+  it("leaves correct weights alone (no correction note)", () => {
+    const out = calculateResults(
+      {
+        match: "A vs B",
+        tactical_analysis: { call4_fixture_count: 5 },
+        player_intelligence: { absences: [{ player: "X", classification: "MINOR" }] },
+        dimension_weights: { D1: 40, D2: 25, D3: 20, D4: 10, D5: 5, D6: 0 },
+      },
+      { bankroll: 500, h2hMeetings: 1 },
+    );
+    expect(out.key_risk_flag ?? "").not.toContain("Auto-corrected");
+    expect(out.dimension_weights).toMatchObject({ D1: 40, D6: 0 });
+  });
+});
+
+// Manual executable-price confirmation (the odds feed is a proxy book).
+import { applyConfirmedPrice } from "./calculate";
+
+describe("applyConfirmedPrice", () => {
+  const base = () =>
+    calculateResults(
+      {
+        match: "A vs B",
+        bet_1: {
+          active: true,
+          market: "Goal Totals",
+          selection: "Over 2.5 Goals",
+          ev_inputs: { model_probability: 0.65, decimal_odds: 1.7 },
+        },
+      },
+      { bankroll: 500, lambda: 1 },
+    );
+
+  it("re-prices at the confirmed odds and keeps the bet when EV still clears", () => {
+    const out = applyConfirmedPrice(base(), "bet_1", 1.72);
+    // p 0.65 × 1.72 − 1 = 0.118 ≥ 0.05 → still on, Kelly re-sized.
+    expect(out.bet_1?.active).toBe(true);
+    expect(out.bet_1?.price_confirmed).toBe(true);
+    expect(out.bet_1?.odds).toBe(1.72);
+    expect(out.bet_1?.ev).toBeCloseTo(0.65 * 1.72 - 1, 3);
+  });
+
+  it("gates the bet to $0 when the confirmed price kills the edge", () => {
+    const out = applyConfirmedPrice(base(), "bet_1", 1.45);
+    // p 0.65 × 1.45 − 1 = −0.0575 → inactive, do-not-place reason.
+    expect(out.bet_1?.active).toBe(false);
+    expect(out.bet_1?.stake).toBe("$0");
+    expect(out.bet_1?.skip_reason).toContain("Do not place");
+  });
+
+  it("never mutates the input result", () => {
+    const before = base();
+    const snapshot = JSON.stringify(before);
+    applyConfirmedPrice(before, "bet_1", 1.45);
+    expect(JSON.stringify(before)).toBe(snapshot);
+  });
+});

@@ -578,6 +578,16 @@ Adjustments (each as type and delta):
   Poisson conflict above 0.6: -5
     force PARTIAL
 
+NO DOUBLE-COUNTING: when data_quality
+is PARTIAL SOLELY because a conflict
+rule forced it (3-signal conflict or
+Poisson conflict), apply ONLY the
+conflict delta — do NOT also apply
+the PARTIAL -7. Apply the PARTIAL -7
+only when PARTIAL is driven by data
+coverage (6-8 useful calls) or
+another independent data issue.
+
 Note: there are NO sharp-money or
 drift confidence adjustments. C9B
 carries current price levels only
@@ -979,6 +989,11 @@ BET 4 — JACKPOT ACCUMULATOR
 CLASS C matches only.
 4-5 legs. Target odds 8.0-15.0.
 Never force. Never CLASS A.
+EVERY leg must carry its own odds
+and model_probability — the app
+recomputes p_final and combined_odds
+from the leg products and withholds
+the bet if any leg lacks them.
 Output jackpot_ev_inputs:
   { p_final, combined_odds }
 Do not output a stake.
@@ -1252,11 +1267,24 @@ bet_4:
   bet_type "Jackpot Accumulator
     (4-5 Leg Parlay)",
   stake "SIZED BY APP",
-  legs array each with stake_label,
+  legs array each with:
+    leg_number, market (soccer
+      terminology), selection,
+    odds, model_probability,
+    stake_label
+    (per-leg odds AND
+     model_probability are MANDATORY
+     on every jackpot leg — the app
+     verifies p_final and
+     combined_odds against the leg
+     products and WITHHOLDS the bet
+     if any leg lacks them),
   combined_odds,
   jackpot_ev_inputs with:
     p_final, combined_odds
-  (app computes jackpot_ev)
+  (app recomputes p_final and
+   combined_odds from the legs and
+   computes jackpot_ev)
   class_c_signals array,
   returns with:
     potential_return_raw,

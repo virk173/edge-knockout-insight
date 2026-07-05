@@ -931,6 +931,15 @@ describe("bankroll exposure cap in calculateResults", () => {
     bet_3: { active: true, parlay_ev_inputs: { p_joint: 0.3, stake_sgp: 4.0 } },
     bet_4: {
       active: true,
+      // Verifiable legs: 0.669^4 ≈ 0.2003 and 1.5651^4 ≈ 6.0006, matching
+      // the claimed inputs (the jackpot guard withholds legless jackpots).
+      legs: [1, 2, 3, 4].map((n) => ({
+        leg_number: n,
+        market: "Goal Totals",
+        selection: `Leg ${n}`,
+        odds: 1.5651,
+        model_probability: 0.669,
+      })),
       jackpot_ev_inputs: { p_final: 0.2, combined_odds: 6.0 },
     },
   });

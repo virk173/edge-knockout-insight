@@ -22,6 +22,7 @@ import {
   CARDS_UNAVAILABLE_LABEL,
 } from "@/lib/dataGaps";
 import { BANKROLL_DEFAULTS } from "@/lib/bankroll";
+import { getCalibration, MIN_N_TO_FIT } from "@/lib/calibration";
 
 // The Section-3 "Copy Run Report" flattens the entire current match analysis
 // into one plain-text, clipboard-friendly block. Everything is defensive:
@@ -385,10 +386,13 @@ function buildCallData(
         field(pct, ["draw"]),
       )} away ${na(field(pct, ["away"]))}`,
     );
+    // API-Football's goals prediction uses signed-line notation ("-2.5" =
+    // "under 2.5 goals expected for this side") — label it so the report
+    // doesn't read as a nonsensical negative Poisson mean.
     p(
-      `    Poisson goals: home ${na(field(goals, ["home"]))} away ${na(
-        field(goals, ["away"]),
-      )}`,
+      `    Goals line prediction (API notation, "-2.5" = under 2.5): home ${na(
+        field(goals, ["home"]),
+      )} away ${na(field(goals, ["away"]))}`,
     );
   } else {
     p("C8  Predictions: EMPTY — skipped/failed");
@@ -797,6 +801,19 @@ export function generateRunReport(
   push(`Final: ${na(cs.final_confidence)}`);
   push(`Ensemble: ${na(r.ensemble_check?.alignment)}`);
   push(`Pinnacle: ${r.pinnacle_available ? "YES" : "NO"}`);
+  // Calibration progress: λ auto-fits from settled results once n ≥ 20
+  // (fitLambda). Surfaced here so every report shows how far along the
+  // feedback loop is — the loop only tightens if outcomes get settled.
+  {
+    const cal = getCalibration();
+    push(
+      `Calibration: λ ${cal.lambda}${
+        cal.n >= MIN_N_TO_FIT
+          ? ` (fitted from ${cal.n} settled bets${cal.brier !== null ? `, Brier ${cal.brier.toFixed(3)}` : ""})`
+          : ` (prior — ${cal.n}/${MIN_N_TO_FIT} settled bets toward first fit; settle logged outcomes to tighten probabilities)`
+      }`,
+    );
+  }
   push();
 
   // ── Dimension weights ───────────────────────────────────
