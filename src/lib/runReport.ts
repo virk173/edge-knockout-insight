@@ -416,10 +416,13 @@ function buildCallData(
     )} Away: ${stakePrice(sm, "1X2 (Match Winner)", (v) => v.includes("away"))}`,
   );
   p(
+    // The "Over/Under 2.5 Goals" bucket also carries the 1.5/3.5 lines
+    // (OPT 1), so the matcher must pin the line, not just the side —
+    // live run 2026-07-05 printed the Over 1.5 price under the 2.5 label.
     `    Over 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
-      v.includes("over"),
+      v.includes("over") && v.includes("2.5"),
     )} Under 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
-      v.includes("under"),
+      v.includes("under") && v.includes("2.5"),
     )}`,
   );
   p(
@@ -675,10 +678,12 @@ function callDataFromSaved(
     )} Away: ${stakePrice(sm, "1X2 (Match Winner)", (v) => v.includes("away"))}`,
   );
   out.push(
+    // Same line-pinning as the live C9A block above: the bucket holds
+    // 1.5/2.5/3.5 lines and first-match-wins would print the 1.5 price.
     `    Over 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
-      v.includes("over"),
+      v.includes("over") && v.includes("2.5"),
     )} Under 2.5: ${stakePrice(sm, "Over/Under 2.5 Goals", (v) =>
-      v.includes("under"),
+      v.includes("under") && v.includes("2.5"),
     )}`,
   );
   out.push(`    Overround: ${stakeOverround(sm)}`);

@@ -65,3 +65,60 @@ describe("runReport — cards data gap labeling", () => {
     expect(report).not.toContain("C9A Stake odds:");
   });
 });
+
+// The "Over/Under 2.5 Goals" extract bucket also carries the 1.5 and 3.5
+// lines (OPT 1 widened the valueFilter). A side-only matcher printed the
+// FIRST over/under rows — the 1.5-line prices — under the "Over 2.5" label
+// (live run 2026-07-05: "Over 2.5: 1.20 Under 2.5: 4.33" were the 1.5 line;
+// the true 2.5 prices were 1.62/2.30). The label must pin the line.
+describe("runReport — C9A goals prices pin the 2.5 line", () => {
+  const callStatuses = {
+    callResults: {
+      "9": {
+        status: "SUCCESS",
+        data: {
+          stakeOdds: [
+            {
+              bookmakers: [
+                {
+                  name: "10Bet",
+                  bets: [
+                    {
+                      name: "Goals Over/Under",
+                      // Feed order puts the 1.5 line first, as live.
+                      values: [
+                        { value: "Over 1.5", odd: "1.20" },
+                        { value: "Under 1.5", odd: "4.33" },
+                        { value: "Over 2.5", odd: "1.62" },
+                        { value: "Under 2.5", odd: "2.30" },
+                        { value: "Over 3.5", odd: "2.58" },
+                        { value: "Under 3.5", odd: "1.50" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  } as unknown as Parameters<typeof generateRunReport>[3];
+
+  const report = generateRunReport(
+    "Brazil vs Norway",
+    "Round of 16",
+    "2026-07-05T20:00:00Z",
+    callStatuses,
+    null,
+    "",
+    new Date("2026-07-05T19:00:00Z"),
+    { home: "Brazil", away: "Norway", fixtureId: 1568100 },
+  );
+
+  it("prints the 2.5-line prices, not the first (1.5) line in the bucket", () => {
+    expect(report).toContain("Over 2.5: 1.62 Under 2.5: 2.30");
+    expect(report).not.toContain("Over 2.5: 1.20");
+    expect(report).not.toContain("Under 2.5: 4.33");
+  });
+});
