@@ -221,11 +221,10 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
     JSON.stringify({
       model,
       max_tokens: maxTokens,
-      // Deterministic sampling: run-to-run variance in money-relevant fields
-      // (dimension weights, adjustment lists, leg probabilities) was observed
-      // across live runs on identical data. Analysis is a pricing engine, not
-      // creative writing — greedy decoding is correct here.
-      temperature: 0,
+      // NOTE: `temperature` is DEPRECATED for the Claude 5 family — the API
+      // rejects it with a 400 (verified live 2026-07-05). Run-to-run variance
+      // is instead contained downstream: every money-relevant number the
+      // model emits is recomputed or bounds-checked in calculate.ts.
       // Prompt caching (REST format): system is an array of content blocks and
       // cache_control is attached to the block, not the top level. TTL "1h"
       // keeps the large static system prompt warm across same-day matches.
@@ -402,10 +401,14 @@ export async function callClaude(input: ClaudeCallInput): Promise<ClaudeCallResu
       break;
     }
 
-    // Any other non-OK status is not retryable.
+    // Any other non-OK status is not retryable. Surface the real API message
+    // — "returned an error" alone hid a temperature-deprecation 400 during
+    // live debugging.
     return {
       ok: false,
-      error: "The analysis service returned an error.",
+      error: `The analysis service returned an error${
+        typeof apiError?.message === "string" ? `: ${apiError.message}` : "."
+      }`,
       status: response.status,
     };
   }
