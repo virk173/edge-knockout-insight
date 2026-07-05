@@ -70,15 +70,14 @@ export type ClaudeCallResult =
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 const FALLBACK_MODEL = "claude-sonnet-4-6";
-// Live measurements (claude-sonnet-5, current prompt + forced tool):
-//   2026-07-04 probe (few-shot data):        7,183 output tokens
-//   2026-07-05 E2E, full 14-call live data:  8,662 output tokens
-// The old 6500 cap truncated every run (stop_reason max_tokens); 10,000 left
-// only ~13% headroom over the live E2E. 12,000 = live measurement + ~38%
-// headroom, and at the conservative ~112 tok/s measured rate generates in
-// ~107s, leaving ~43s margin under the 150s per-attempt timeout (~16,800 is
-// the ceiling).
-const DEFAULT_MAX_TOKENS = 12_000;
+// Effectively uncapped: 64,000 is the model's own output ceiling, so the
+// analysis can never be truncated by this constant (the API requires SOME
+// max_tokens value). Live measurements for reference: 7,183 tokens (probe,
+// 2026-07-04) and 8,662 tokens (full-data E2E, 2026-07-05) — real responses
+// use ~14% of this ceiling. The per-attempt timeout below (600s) is the only
+// practical bound: even an absurd 60k-token response at the measured
+// ~112 tok/s would take ~536s and still complete inside it.
+const DEFAULT_MAX_TOKENS = 64_000;
 
 // Native Structured Outputs (Anthropic tool use). We force this single tool so
 // the model's response is a real JSON object on a `tool_use` block instead of a
@@ -152,25 +151,25 @@ const ANALYSIS_TOOL_INPUT_SCHEMA = {
   required: ["model_probabilities", "dimension_weights"],
 } as const;
 
-// Per-attempt timeout. Measured directly (live diagnostic calls): ~112-120
-// tok/s output rate, so a maxed-out 10,000-token response takes ~89s — 150s
-// leaves ~61s of margin for normal variance (richer matches, Anthropic-side
-// load). See DEFAULT_MAX_TOKENS above for the output-size measurement.
+// Per-attempt timeout: 10 minutes. Real responses complete in 50-125s
+// (measured ~112-120 tok/s output rate), so this is a generous ceiling that
+// exists only to catch a genuinely hung connection — never to race a normal
+// response. Paired with the 64k max_tokens ceiling above, an analysis can
+// no longer be cut off by either constant.
 //
-// NOTE: worst-case retry chain is now 150+10+150+10+150 = 470s. Verify hosting
-// platform function duration limit exceeds this before deploying. On Vercel
-// hobby plan the limit is 60s — this app requires a pro plan or equivalent
-// with at least 300s function timeout.
-const TIMEOUT_MS = 150_000;
+// NOTE: worst-case retry chain is now 600+10+600+10+600 = 1820s (~30min).
+// Fine for the local-only setup this app runs in; if it is ever deployed to
+// a hosting platform, its function duration limit must exceed this.
+const TIMEOUT_MS = 600_000;
 const WAIT_BETWEEN_MS = 10_000;
 const TIMEOUT_MESSAGE =
-  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 150s each). Please retry.";
+  "Analysis timed out. Anthropic did not respond within the retry budget (2x primary + 1x fallback @ 600s each). Please retry.";
 
 // Retry plan: primary model twice, then the fallback model once.
-// Attempt 1: claude-sonnet-5     (150s) -> wait 10s
-// Attempt 2: claude-sonnet-5     (150s) -> wait 10s
-// Attempt 3: claude-sonnet-4-6   (150s) [fallback]
-// Total maximum 150+10+150+10+150 = 470s before a clean "failed".
+// Attempt 1: claude-sonnet-5     (600s) -> wait 10s
+// Attempt 2: claude-sonnet-5     (600s) -> wait 10s
+// Attempt 3: claude-sonnet-4-6   (600s) [fallback]
+// Total maximum 600+10+600+10+600 = 1820s before a clean "failed".
 interface Attempt {
   model: string;
   isFallback: boolean;

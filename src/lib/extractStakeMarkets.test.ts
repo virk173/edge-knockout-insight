@@ -81,3 +81,104 @@ describe("extractStakeMarkets — cards & corners lines", () => {
     expect(over25?.odd).toBe("1.95");
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// extractConsensusOdds — median across all bookmakers
+// ─────────────────────────────────────────────────────────────
+import { extractConsensusOdds } from "./analyse";
+
+describe("extractConsensusOdds", () => {
+  const multiBook = [
+    {
+      bookmakers: [
+        {
+          name: "10Bet",
+          bets: [
+            {
+              name: "Match Winner",
+              values: [{ value: "Home", odd: "1.80" }],
+            },
+            {
+              name: "Cards Over/Under",
+              // The live-E2E placeholder pattern: both sides equal.
+              values: [{ value: "Under 3.5", odd: "1.83" }],
+            },
+          ],
+        },
+        {
+          name: "Bet365",
+          bets: [
+            { name: "Match Winner", values: [{ value: "Home", odd: "1.78" }] },
+            { name: "Cards Over/Under", values: [{ value: "Under 3.5", odd: "1.50" }] },
+          ],
+        },
+        {
+          name: "Pinnacle",
+          bets: [
+            { name: "Match Winner", values: [{ value: "Home", odd: "1.79" }] },
+            { name: "Cards Over/Under", values: [{ value: "Under 3.5", odd: "1.46" }] },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("computes the per-outcome median and book counts", () => {
+    const c = extractConsensusOdds(multiBook);
+    expect(c?.books_counted).toBe(3);
+    const home = c?.markets["1X2 (Match Winner)"]?.find((v) => v.value === "Home");
+    expect(home?.median_odd).toBe(1.79);
+    expect(home?.books).toBe(3);
+    // The stale 1.83 outlier does not drag the median to itself.
+    const cards = c?.markets["Cards Over/Under"]?.find((v) => v.value === "Under 3.5");
+    expect(cards?.median_odd).toBe(1.5);
+  });
+
+  it("returns null for empty/malformed payloads and ignores junk odds", () => {
+    expect(extractConsensusOdds(null)).toBeNull();
+    expect(extractConsensusOdds([])).toBeNull();
+    const junk = [
+      {
+        bookmakers: [
+          {
+            name: "X",
+            bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "0.5" }] }],
+          },
+        ],
+      },
+    ];
+    expect(extractConsensusOdds(junk)).toBeNull();
+  });
+});
+
+describe("extractConsensusOdds — sibling bet types must not pool", () => {
+  it("takes only the first matching bet per label per bookmaker", () => {
+    // Live E2E round 2: '1st Half Winner' / 'Result-BTTS' style siblings
+    // matched the same WANTED spec and poisoned the medians.
+    const payload = [
+      {
+        bookmakers: [
+          {
+            name: "BookA",
+            bets: [
+              { name: "Match Winner", values: [{ value: "Away", odd: "4.50" }] },
+              // Sibling that also contains a matching name pattern with a
+              // much shorter price — must be IGNORED for the consensus.
+              { name: "Match Winner", values: [{ value: "Away", odd: "2.10" }] },
+            ],
+          },
+          {
+            name: "BookB",
+            bets: [
+              { name: "Match Winner", values: [{ value: "Away", odd: "4.70" }] },
+            ],
+          },
+        ],
+      },
+    ];
+    const c = extractConsensusOdds(payload);
+    const away = c?.markets["1X2 (Match Winner)"]?.find((v) => v.value === "Away");
+    expect(away?.books).toBe(2);
+    expect(away?.median_odd).toBe(4.6);
+  });
+});

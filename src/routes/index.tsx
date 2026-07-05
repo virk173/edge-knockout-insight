@@ -710,13 +710,21 @@ function Index() {
       formattedData = "No usable API data could be formatted for analysis.";
     }
 
+    // Early-run staleness: odds and team sheets are only settled near
+    // kickoff. Flag analyses run >4h out so the model hedges accordingly.
+    const minsOut = minutesUntil(match.kickoffUtc, new Date());
+    const timingNote =
+      minsOut > 240
+        ? `\nANALYSIS TIMING: EARLY RUN — kickoff is ~${Math.round(minsOut / 60)}h away. Odds will move and lineups are provisional at this distance. Treat this analysis as provisional scouting: flag it in analyst_note and recommend re-running inside the T-90 window before staking.`
+        : "";
+
     const userMessage = `Analyse this World Cup 2026 knockout match using ONLY the injected API data below. Do not use any knowledge from training data for statistics or odds.
 
 MATCH: ${match.home} vs ${match.away}
 FIXTURE ID: ${match.id}
 ROUND: ${match.round ?? "NOT_AVAILABLE"}
 KICKOFF UTC: ${match.kickoffUtc}
-CURRENT TIME UTC: ${new Date().toISOString()}
+CURRENT TIME UTC: ${new Date().toISOString()}${timingNote}
 VENUE: ${match.venueName ?? "NOT_AVAILABLE"}
 VENUE CITY: ${match.venueCity ?? "NOT_AVAILABLE"}
 LINEUP STATUS: ${LINEUP_STATE_INFO[result.lineupState].label} — ${LINEUP_STATE_INFO[result.lineupState].note}${result.lineupState === "POPULATED" ? "" : " Apply the LINEUP-UNAVAILABLE confidence penalty; a PROPAGATING state (lineup confirmed to exist but XI not yet split out) warrants a SMALLER penalty than NOT_ANNOUNCED."}

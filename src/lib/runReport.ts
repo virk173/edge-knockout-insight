@@ -283,13 +283,25 @@ function buildCallData(
     | undefined;
   const drHome = dr?.home ?? {};
   const drAway = dr?.away ?? {};
+  // Recent-5 team stats (real per-fixture averages from CALL 4C — the old
+  // "shots avg" here read a never-populated dead-rubber field, always 0).
+  const c4c = cr["4C"]?.data as
+    | { team_stats?: { home?: Record<string, unknown>; away?: Record<string, unknown> } }
+    | null
+    | undefined;
+  const tsHome = c4c?.team_stats?.home ?? {};
+  const tsAway = c4c?.team_stats?.away ?? {};
   p("C4  Home last 5:");
   p(`      goals avg: ${na(field(drHome, ["adjusted_goals_avg"]))}`);
-  p(`      shots avg: ${na(field(drHome, ["adjusted_shots_avg"]))}`);
+  p(`      SOT avg (xG-proxy): ${na(field(tsHome, ["shots_on_target_avg"]))}`);
+  p(`      possession avg: ${na(field(tsHome, ["possession_avg_pct"]))}`);
+  p(`      yellows avg: ${na(field(tsHome, ["yellows_avg"]))}`);
   p(`      dead rubber discounted: ${na(field(drHome, ["dead_rubber_count"]))}`);
   p("    Away last 5:");
   p(`      goals avg: ${na(field(drAway, ["adjusted_goals_avg"]))}`);
-  p(`      shots avg: ${na(field(drAway, ["adjusted_shots_avg"]))}`);
+  p(`      SOT avg (xG-proxy): ${na(field(tsAway, ["shots_on_target_avg"]))}`);
+  p(`      possession avg: ${na(field(tsAway, ["possession_avg_pct"]))}`);
+  p(`      yellows avg: ${na(field(tsAway, ["yellows_avg"]))}`);
   p(`      dead rubber discounted: ${na(field(drAway, ["dead_rubber_count"]))}`);
 
   // ── C5 — Injuries ─────────────────────────────────────────
@@ -895,7 +907,7 @@ export function generateRunReport(
         b3.returns?.potential_return_realistic,
       )}`,
     );
-    push(`  p_joint:${na(pe.p_joint)} | Parlay EV:${evPct(b3.parlay_ev)}`);
+    push(`  p_joint:${num(pe.p_joint, 4)} | Parlay EV:${evPct(b3.parlay_ev)}`);
   } else {
     push(`  INACTIVE — ${na(b3.skip_reason)}`);
     push(`  Parlay EV was: ${signed(b3.parlay_ev)}`);

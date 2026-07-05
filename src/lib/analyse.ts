@@ -6,6 +6,7 @@ import { apiFetch } from "./api-proxy.functions";
 import {
   detectDeadRubber,
   applyDeadRubberDiscount,
+  computeAppPoisson,
   WC2026_QUALIFICATION,
 } from "./calculate";
 import {
@@ -267,9 +268,13 @@ function scorelinesFrom(list: unknown, limit: number): string[] {
       const hn = String(getField(getField(teams, ["home"]), ["name"]) ?? "?");
       const an = String(getField(getField(teams, ["away"]), ["name"]) ?? "?");
       const goals = getField(item, ["goals"]);
-      const hg = getField(goals, ["home"]);
-      const ag = getField(goals, ["away"]);
-      const score = `${hg ?? "-"}-${ag ?? "-"}`;
+      const scorePart = (v: unknown): string =>
+        v === null || v === undefined || v === "NOT_AVAILABLE" ? "?" : String(v);
+      const hg = scorePart(getField(goals, ["home"]));
+      const ag = scorePart(getField(goals, ["away"]));
+      // A meeting with no recorded score is still a meeting (H2H gate counts
+      // it) but "NOT_AVAILABLE-NOT_AVAILABLE" strings were pure noise.
+      const score = hg === "?" && ag === "?" ? "(score unavailable)" : `${hg}-${ag}`;
       return `${date} ${hn} ${score} ${an}${round ? ` (${round})` : ""}`;
     });
 }
@@ -337,17 +342,28 @@ function extractDoubtfulPlayerNames(rawInjuries: unknown, teamName: string | nul
 //   doubtful_absent_from_xi = doubtful − XI − substitutes (absence candidates)
 // A doubtful player IN the starting XI appears in neither (cleared to play).
 function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<string, unknown> {
+  // Drop "NOT_AVAILABLE"/null jersey numbers instead of shipping sentinel
+  // strings — the number is display-only noise when the feed lacks it.
+  const cleanPlayer = (p: unknown): Record<string, unknown> => {
+    const c = compactPlayer(p);
+    const out: Record<string, unknown> = { name: c.name, pos: c.pos };
+    if (c.num !== null && c.num !== "NOT_AVAILABLE") out.num = c.num;
+    return out;
+  };
   const starting_xi = extractArray(
     getField(side, ["starting_xi", "startXI", "startingXi", "startingXI"]),
-  ).map(compactPlayer);
+  ).map(cleanPlayer);
   const startingNamesNorm = new Set(
     starting_xi.map((p) => normalize(String(p.name ?? ""))).filter(Boolean),
   );
-  const subsNamesNorm = new Set(
-    extractArray(getField(side, ["substitutes", "subs", "bench"]))
-      .map((p) => normalize(String(compactPlayer(p).name ?? "")))
-      .filter(Boolean),
-  );
+  const benchRaw = extractArray(getField(side, ["substitutes", "subs", "bench"]));
+  // Bench NAMES were promised to Claude by SECTION 1 (rotation/props context)
+  // but never shipped — the subs list was only consumed internally for the
+  // notable_bench_changes computation.
+  const bench = benchRaw
+    .map((p) => compactPlayer(p).name)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  const subsNamesNorm = new Set(bench.map((n) => normalize(n)).filter(Boolean));
   const notInXI = doubtfulNames.filter(
     (name) => !startingNamesNorm.has(normalize(name)),
   );
@@ -357,10 +373,18 @@ function compactLineupSide(side: unknown, doubtfulNames: string[]): Record<strin
   const doubtful_absent_from_xi = notInXI.filter(
     (name) => !subsNamesNorm.has(normalize(name)),
   );
+  const captain =
+    getField(side, ["captain"]) ??
+    getField(getField(side, ["team"]), ["captain"]) ??
+    null;
   return {
     team: getField(side, ["team_name", "name"]) ?? getField(getField(side, ["team"]), ["name"]) ?? null,
     formation: getField(side, ["formation"]) ?? null,
     starting_xi,
+    ...(bench.length ? { bench } : {}),
+    ...(captain ? { captain } : {}),
+    // Empty arrays still ship: "no doubtful players missing" is a signal the
+    // prompt's C6 rules read, not noise.
     notable_bench_changes,
     doubtful_absent_from_xi,
   };
@@ -612,6 +636,35 @@ function compactForClaude(n: string, data: unknown, rawInjuries?: unknown): unkn
       return compactInjuries(data);
     case "6":
       return compactLineup(data, rawInjuries);
+    case "6B": {
+      // The prompt tells Claude to copy each team's opponent-strength
+      // multiplier VERBATIM and never derive it, so the per-opponent
+      // breakdown (raw/weighted goals, group positions, weights) is
+      // app-internal justification Claude never reads — ship multiplier+note
+      // only. Player statistics pass through unchanged.
+      const d = data as {
+        playerCount?: unknown;
+        playerStatistics?: unknown;
+        opponent_strength?: {
+          home?: { multiplier?: unknown } | null;
+          away?: { multiplier?: unknown } | null;
+          note?: unknown;
+        } | null;
+      } | null;
+      if (!d || typeof d !== "object") return data;
+      const os = d.opponent_strength;
+      return {
+        playerCount: d.playerCount ?? null,
+        playerStatistics: d.playerStatistics ?? null,
+        opponent_strength: os
+          ? {
+              home: os.home ? { multiplier: os.home.multiplier ?? null } : null,
+              away: os.away ? { multiplier: os.away.multiplier ?? null } : null,
+              note: os.note ?? null,
+            }
+          : null,
+      };
+    }
     case "7":
       return compactReferee(data);
     case "8":
@@ -632,10 +685,19 @@ function compactForClaude(n: string, data: unknown, rawInjuries?: unknown): unkn
 // the TheStatsAPI-based buildPinnacleSummary, which DOES have real
 // opening/movement data) stays untouched in callResults/cache.
 function compactPinnacleMarkets(data: unknown): unknown {
-  const d = data as { markets?: unknown } | null;
+  const d = data as { markets?: unknown; gap_check?: unknown; note?: unknown } | null;
   if (!d || !Array.isArray(d.markets)) return data;
+  // Explicit field selection (the old `...d` spread leaked matchId/bookmaker/
+  // is_pinnacle/source metadata the block header already states, plus a
+  // gap_check that duplicated stake_odds/pinnacle_odds already present in the
+  // 9A block and the markets array above — over half the block's tokens).
+  const gapCheck = extractArray(d.gap_check).map((g) => ({
+    market: getField(g, ["market"]) ?? null,
+    line: getField(g, ["line"]) ?? null,
+    gap_pct: getField(g, ["gap_pct"]) ?? null,
+    verdict: getField(g, ["verdict"]) ?? null,
+  }));
   return {
-    ...d,
     markets: d.markets.map((m: unknown) => {
       const market = getField(m, ["market"]);
       const outcomes = extractArray(getField(m, ["outcomes"])).map((o) => ({
@@ -644,6 +706,8 @@ function compactPinnacleMarkets(data: unknown): unknown {
       }));
       return { market, outcomes };
     }),
+    ...(gapCheck.length ? { gap_check: gapCheck } : {}),
+    ...(d.note !== undefined ? { note: d.note } : {}),
   };
 }
 
@@ -687,9 +751,23 @@ export function formatDataForClaude(
   // pushed a run past 200k input tokens and caused Claude 524 timeouts).
   if (combinedOdds) {
     const trimmed = extractStakeMarkets(oddsData?.stakeOdds ?? null);
+    // Market-consensus median across all books in the same response — a
+    // reality anchor against stale single-book quotes (shipped alongside the
+    // primary book's prices, ~zero extra tokens for the protection it buys).
+    const consensus = extractConsensusOdds(oddsData?.stakeOdds ?? null);
+    const withConsensus =
+      trimmed && consensus
+        ? {
+            ...trimmed,
+            consensus_median: consensus.markets,
+            consensus_books_counted: consensus.books_counted,
+            consensus_note:
+              "APP-COMPUTED median odds across all bookmakers in the feed. If the primary book's price diverges from the median by more than 10 percent, treat the primary quote as suspect (stale/placeholder) — never as value.",
+          }
+        : trimmed;
     resolved["9A"] = {
       status: trimmed === null || combinedOdds.status !== "SUCCESS" ? "EMPTY" : "SUCCESS",
-      data: trimmed,
+      data: withConsensus,
     };
   }
 
@@ -713,15 +791,49 @@ export function formatDataForClaude(
     );
   };
 
-  // CALL 4C (tier 8.2) — compact recent-5 corners summary appended to the
-  // CALL 4 block when the conditional /fixtures/statistics fetch ran.
-  const cornersInjection =
-    safeResults["4C"]?.status === "SUCCESS" ? safeResults["4C"]?.data : null;
+  // CALL 4C — compact recent-5 summaries appended to the CALL 4 block when
+  // the /fixtures/statistics fetch ran: corners (tier 8.2) plus the team
+  // stats distilled from the same responses (shots on target = the real
+  // xG-proxy, possession, yellows, fouls).
+  const c4cData =
+    safeResults["4C"]?.status === "SUCCESS"
+      ? (safeResults["4C"]?.data as {
+          home?: unknown;
+          away?: unknown;
+          team_stats?: { home?: unknown; away?: unknown };
+          note?: unknown;
+        } | null)
+      : null;
   const recentCornersSuffix = (n: string): string => {
-    if (n !== "4" || !cornersInjection) return "";
+    if (n !== "4" || !c4cData || (!c4cData.home && !c4cData.away)) return "";
     return (
       `\n\nRECENT-5 CORNERS (from /fixtures/statistics — anchor expected_corners_range and corners-market evaluation to these, they beat season averages):\n` +
-      `${JSON.stringify(cornersInjection, null, 2)}`
+      `${JSON.stringify(
+        { home: c4cData.home ?? null, away: c4cData.away ?? null, note: c4cData.note ?? null },
+        null,
+        2,
+      )}`
+    );
+  };
+  const recentStatsSuffix = (n: string): string => {
+    const ts = c4cData?.team_stats;
+    if (n !== "4" || !ts || (!ts.home && !ts.away)) return "";
+    return (
+      `\n\nRECENT-5 TEAM STATS (APP-COMPUTED from /fixtures/statistics — per-game averages over each team's last fixtures):\n` +
+      `${JSON.stringify({ home: ts.home ?? null, away: ts.away ?? null }, null, 2)}\n` +
+      `Use shots_on_target_avg as the xG-PROXY for recent form (LABEL AS xG-PROXY, never as measured xG), possession_avg_pct for the D2 possession/press classification, and yellows_avg / fouls_avg for cards-market evaluation.`
+    );
+  };
+
+  // APP-POISSON (deterministic ensemble Signal-1 anchor) — appended to the
+  // CALL 8 block so all model-probability context sits together.
+  const poissonData =
+    safeResults["POISSON"]?.status === "SUCCESS" ? safeResults["POISSON"]?.data : null;
+  const poissonSuffix = (n: string): string => {
+    if (n !== "8" || !poissonData) return "";
+    return (
+      `\n\nAPP-POISSON (APP-COMPUTED independent-Poisson goals model — anchor ensemble Signal 1 to this):\n` +
+      `${JSON.stringify(poissonData, null, 2)}`
     );
   };
 
@@ -739,11 +851,11 @@ export function formatDataForClaude(
           `[CALL 4 — recent form (last 5) — SUCCESS]\n` +
             `HOME last 5 (most recent first):\n${homeLines.join("\n") || "none"}\n\n` +
             `AWAY last 5 (most recent first):\n${awayLines.join("\n") || "none"}` +
-            `${deadRubberSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
+            `${deadRubberSuffix("4")}${recentStatsSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
         );
       } else {
         blocks.push(
-          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
+          `[CALL 4 — recent form — EMPTY]\nNo recent form data available.${deadRubberSuffix("4")}${recentStatsSuffix("4")}${recentCornersSuffix("4")}\n[END CALL 4]`,
         );
       }
       continue;
@@ -777,7 +889,7 @@ export function formatDataForClaude(
       // whitespace overhead. Every other call keeps the readable 2-space form.
       const json = n === "9B" ? JSON.stringify(shipped) : JSON.stringify(shipped, null, 2);
       blocks.push(
-        `[CALL ${n} — ${header} — SUCCESS]\n${json}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${header} — SUCCESS]\n${json}${deadRubberSuffix(n)}${poissonSuffix(n)}\n[END CALL ${n}]`,
       );
     } else if (r?.status === "EXPECTED_EMPTY") {
       // Use the recorded per-run message (names the actual next round) instead
@@ -794,7 +906,7 @@ export function formatDataForClaude(
     } else {
       const note = r?.error ? `\n${r.error}` : "";
       blocks.push(
-        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}${deadRubberSuffix(n)}\n[END CALL ${n}]`,
+        `[CALL ${n} — ${endpoint} — EMPTY]\nNo data available for this call.${note}${deadRubberSuffix(n)}${poissonSuffix(n)}\n[END CALL ${n}]`,
       );
     }
 
@@ -1646,6 +1758,73 @@ export function extractStakeMarkets(
     }
   }
   return Object.keys(markets).length ? { bookmaker: bookmakerName, markets } : null;
+}
+
+// Median odds per market/outcome across ALL bookmakers in the raw /odds
+// response (~30+ books). extractStakeMarkets ships one retail book's prices
+// (whichever carries the market first — often 10Bet), but a single soft
+// book's quote can be stale or a placeholder (live E2E 2026-07-05: both
+// sides of Cards 3.5 at 1.83 while the market sat at 2.66/1.46). The
+// consensus median gives Claude a market-reality anchor for every WANTED
+// market at zero extra API cost.
+export function extractConsensusOdds(
+  stakeOdds: unknown,
+): {
+  books_counted: number;
+  markets: Record<string, Array<{ value: string; median_odd: number; books: number }>>;
+} | null {
+  const responseArr = extractArray(stakeOdds);
+  if (!responseArr.length) return null;
+  // label -> value -> list of odds across books
+  const acc = new Map<string, Map<string, number[]>>();
+  const books = new Set<string>();
+  for (const item of responseArr) {
+    for (const bk of extractArray(getField(item, ["bookmakers"]))) {
+      const bn = getField(bk, ["name"]);
+      if (typeof bn === "string") books.add(bn);
+      // First matching bet per label PER BOOKMAKER — the same semantics as
+      // extractStakeMarkets. Without this, sibling bet types matching the
+      // same spec (1st-half winner, Result/BTTS combos, …) pool into one
+      // label and poison the median (live E2E round 2: 13 books produced 50
+      // "Away" samples and a BTTS Yes median of 2.80 vs a true ~1.6).
+      const seenLabels = new Set<string>();
+      for (const bet of extractArray(getField(bk, ["bets"]))) {
+        const betName = String(getField(bet, ["name"]) ?? "").toLowerCase();
+        const spec = WANTED_STAKE_MARKETS.find((w) => w.match(betName));
+        if (!spec || seenLabels.has(spec.label)) continue;
+        let tookAny = false;
+        for (const v of extractArray(getField(bet, ["values"]))) {
+          const value = String(getField(v, ["value"]) ?? "");
+          if (spec.valueFilter && !spec.valueFilter(value.toLowerCase())) continue;
+          const odd = parseFloat(String(getField(v, ["odd", "odds", "price"]) ?? ""));
+          if (!Number.isFinite(odd) || odd <= 1) continue;
+          let byValue = acc.get(spec.label);
+          if (!byValue) acc.set(spec.label, (byValue = new Map()));
+          let list = byValue.get(value);
+          if (!list) byValue.set(value, (list = []));
+          list.push(odd);
+          tookAny = true;
+        }
+        if (tookAny) seenLabels.add(spec.label);
+      }
+    }
+  }
+  if (!acc.size) return null;
+  const median = (xs: number[]): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    const m = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    return Math.round(m * 100) / 100;
+  };
+  const markets: Record<string, Array<{ value: string; median_odd: number; books: number }>> = {};
+  for (const [label, byValue] of acc) {
+    markets[label] = Array.from(byValue, ([value, odds]) => ({
+      value,
+      median_odd: median(odds),
+      books: odds.length,
+    }));
+  }
+  return { books_counted: books.size, markets };
 }
 
 
@@ -2548,6 +2727,83 @@ export function summariseRecentCorners(
   return {
     corners_for_avg: r1(forSum / counted),
     corners_against_avg: againstSeen ? r1(againstSum / againstSeen) : null,
+    fixtures_counted: counted,
+  };
+}
+
+// ---- Recent-5 TEAM STATS from the same /fixtures/statistics responses ----
+//
+// The 4C fetch already pays for full per-fixture statistics; historically only
+// "Corner Kicks" was kept and everything else discarded — leaving the model
+// with adjusted_shots_avg 0 (no xG-proxy), no possession (D2 press/possession
+// classification was guesswork) and no team card averages (cards markets ran
+// on referee + base rates alone). These extractors distil the rest of the
+// payload at zero additional API cost.
+
+// One numeric stat value from a team block ("62%" possession strings parse to 62).
+function statValueOf(block: unknown, type: string): number | null {
+  for (const s of extractArray(getField(block, ["statistics"]))) {
+    const t = getField(s, ["type"]);
+    if (typeof t === "string" && normalize(t) === normalize(type)) {
+      const v = getField(s, ["value"]);
+      const n =
+        typeof v === "number" ? v : parseFloat(String(v ?? "").replace("%", ""));
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+  return null;
+}
+
+export interface RecentTeamStatAverages {
+  shots_on_target_avg: number | null;
+  possession_avg_pct: number | null;
+  yellows_avg: number | null;
+  fouls_avg: number | null;
+  fixtures_counted: number;
+}
+
+// Average a team's recent shots-on-target / possession / yellows / fouls
+// across the per-fixture statistics responses it appears in.
+export function summariseRecentTeamStats(
+  statsByFixture: Array<{ fixtureId: number; stats: unknown }>,
+  teamId: number,
+  teamFixtureIds: number[],
+): RecentTeamStatAverages | null {
+  const wanted = new Set(teamFixtureIds);
+  const sums = { sot: 0, pos: 0, yel: 0, foul: 0 };
+  const seen = { sot: 0, pos: 0, yel: 0, foul: 0 };
+  let counted = 0;
+  for (const { fixtureId, stats } of statsByFixture) {
+    if (!wanted.has(fixtureId)) continue;
+    const own = extractArray(stats).find(
+      (b) => Number(getField(getField(b, ["team"]), ["id"])) === teamId,
+    );
+    if (!own) continue;
+    counted++;
+    const take = (
+      type: string,
+      key: keyof typeof sums,
+    ): void => {
+      const v = statValueOf(own, type);
+      if (v !== null) {
+        sums[key] += v;
+        seen[key]++;
+      }
+    };
+    take("Shots on Goal", "sot");
+    take("Ball Possession", "pos");
+    take("Yellow Cards", "yel");
+    take("Fouls", "foul");
+  }
+  if (!counted) return null;
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const avg = (key: keyof typeof sums): number | null =>
+    seen[key] ? r1(sums[key] / seen[key]) : null;
+  return {
+    shots_on_target_avg: avg("sot"),
+    possession_avg_pct: avg("pos"),
+    yellows_avg: avg("yel"),
+    fouls_avg: avg("foul"),
     fixtures_counted: counted,
   };
 }
@@ -3798,6 +4054,10 @@ export async function collectMatchData(
       deadRubberTriggered = homeDr.triggered || awayDr.triggered;
 
       // Adjusted averages injected into the [CALL 4] block sent to Claude.
+      // (adjusted_shots_avg is intentionally NOT shipped: the /fixtures?ids
+      // batch carries no shot stats, so it was always a misleading 0. The
+      // real recent-5 shots-on-target average now arrives via the CALL 4C
+      // team_stats block.)
       callResults["4-deadrubber"] = {
         key: "4-deadrubber",
         label: "Recency-weighted & dead-rubber-adjusted form",
@@ -3806,20 +4066,47 @@ export async function collectMatchData(
           home: {
             team: match.home,
             adjusted_goals_avg: homeDr.adjustment.adjusted_goals_avg,
-            adjusted_shots_avg: homeDr.adjustment.adjusted_shots_avg,
             dead_rubber_count: homeDr.adjustment.dead_rubber_count,
             note: homeDr.adjustment.note,
           },
           away: {
             team: match.away,
             adjusted_goals_avg: awayDr.adjustment.adjusted_goals_avg,
-            adjusted_shots_avg: awayDr.adjustment.adjusted_shots_avg,
             dead_rubber_count: awayDr.adjustment.dead_rubber_count,
             note: awayDr.adjustment.note,
           },
           dead_rubber_count: deadRubberFlagged,
         },
       };
+
+      // APP-POISSON (deterministic ensemble Signal-1 anchor): adjusted attack
+      // rates from the dead-rubber pass + season concession rates from S2.
+      {
+        const concededPg = (key: string): number | undefined => {
+          const d = callResults[key]?.data as
+            | { extracted?: { goals_against?: unknown; matches_played?: unknown } }
+            | undefined;
+          const ga = Number(d?.extracted?.goals_against);
+          const mp = Number(d?.extracted?.matches_played);
+          return Number.isFinite(ga) && Number.isFinite(mp) && mp > 0
+            ? Math.round((ga / mp) * 100) / 100
+            : undefined;
+        };
+        const poisson = computeAppPoisson({
+          home_attack_pg: homeDr.adjustment.adjusted_goals_avg,
+          away_attack_pg: awayDr.adjustment.adjusted_goals_avg,
+          home_conceded_pg: concededPg("2A"),
+          away_conceded_pg: concededPg("2B"),
+        });
+        if (poisson) {
+          callResults["POISSON"] = {
+            key: "POISSON",
+            label: "App-computed Poisson model",
+            status: "SUCCESS",
+            data: poisson,
+          };
+        }
+      }
 
       if (!deadRubberTriggered) {
         record(
@@ -3889,46 +4176,31 @@ export async function collectMatchData(
     onProgress({
       step: stepKeys.length,
       total: TOTAL_STEPS,
-      label: "Fetching recent-5 corners statistics (conditional)...",
+      label: "Fetching recent-5 statistics (corners + team stats)...",
     });
-    const stakeRoot = callResults["9"]?.data as { stakeOdds?: unknown } | undefined;
-    const retailCorners = !!extractStakeMarkets(stakeRoot?.stakeOdds ?? null)
-      ?.markets["Corners Over/Under"];
-    const c9b = callResults["9B"]?.data as
-      | { markets?: PinnacleMarketSummary[] }
-      | undefined;
-    const pinnacleCorners =
-      callResults["9B"]?.status === "SUCCESS" &&
-      !!c9b?.markets?.some((m) => m.market === "Corners");
-    const cornersEvaluable = retailCorners || pinnacleCorners;
-
+    // Since the recent-5 statistics now also feed the D1 xG-proxy (shots on
+    // target), D2 possession classification and team cards averages — not
+    // just corners — the fetch is no longer conditional on a corners price
+    // existing. Only the daily budget guard can skip it.
     const uniqueIds = Array.from(
       new Set([...homeFixtureIds, ...awayFixtureIds]),
     ).slice(0, 10);
 
-    if (!cornersEvaluable) {
+    if (counterWarning) {
       record(
         "4C",
-        "Recent-5 corners (/fixtures/statistics)",
+        "Recent-5 statistics (/fixtures/statistics)",
         "SKIPPED",
         undefined,
-        "NOT TRIGGERED — no corners price in C9A or C9B this run; corners market not evaluable, statistics fetch saved.",
-      );
-    } else if (counterWarning) {
-      record(
-        "4C",
-        "Recent-5 corners (/fixtures/statistics)",
-        "SKIPPED",
-        undefined,
-        "Skipped — daily API budget near limit (>=85); corners bets fall back to season averages.",
+        "Skipped — daily API budget near limit (>=85); recent-5 stats fall back to season averages.",
       );
     } else if (uniqueIds.length === 0) {
       record(
         "4C",
-        "Recent-5 corners (/fixtures/statistics)",
+        "Recent-5 statistics (/fixtures/statistics)",
         "EMPTY",
         undefined,
-        "Corners market evaluable but no last-5 fixture ids available from CALL 4.",
+        "No last-5 fixture ids available from CALL 4.",
       );
     } else if (!tryLoadCache("4C")) {
       try {
@@ -3944,26 +4216,32 @@ export async function collectMatchData(
         }
         const home = summariseRecentCorners(statsByFixture, match.homeId, homeFixtureIds);
         const away = summariseRecentCorners(statsByFixture, match.awayId, awayFixtureIds);
-        if (home || away) {
-          record("4C", "Recent-5 corners (/fixtures/statistics)", "SUCCESS", {
+        const homeStats = summariseRecentTeamStats(statsByFixture, match.homeId, homeFixtureIds);
+        const awayStats = summariseRecentTeamStats(statsByFixture, match.awayId, awayFixtureIds);
+        if (home || away || homeStats || awayStats) {
+          record("4C", "Recent-5 statistics (/fixtures/statistics)", "SUCCESS", {
             home: home ? { team: match.home, ...home } : null,
             away: away ? { team: match.away, ...away } : null,
+            team_stats: {
+              home: homeStats ? { team: match.home, ...homeStats } : null,
+              away: awayStats ? { team: match.away, ...awayStats } : null,
+            },
             note:
               "APP-COMPUTED recent-5 corners (for/against per game). Anchor expected_corners_range and corners-market evaluation to these over season averages.",
           });
         } else {
           record(
             "4C",
-            "Recent-5 corners (/fixtures/statistics)",
+            "Recent-5 statistics (/fixtures/statistics)",
             "EMPTY",
             undefined,
-            "No usable corner stats in the last-5 statistics responses.",
+            "No usable stats in the last-5 statistics responses.",
           );
         }
       } catch (e) {
         record(
           "4C",
-          "Recent-5 corners (/fixtures/statistics)",
+          "Recent-5 statistics (/fixtures/statistics)",
           "FAILED",
           undefined,
           e instanceof Error ? e.message : String(e),
@@ -4866,14 +5144,12 @@ export async function retrySingleCall(
             home: {
               team: match.home,
               adjusted_goals_avg: homeDr.adjustment.adjusted_goals_avg,
-              adjusted_shots_avg: homeDr.adjustment.adjusted_shots_avg,
               dead_rubber_count: homeDr.adjustment.dead_rubber_count,
               note: homeDr.adjustment.note,
             },
             away: {
               team: match.away,
               adjusted_goals_avg: awayDr.adjustment.adjusted_goals_avg,
-              adjusted_shots_avg: awayDr.adjustment.adjusted_shots_avg,
               dead_rubber_count: awayDr.adjustment.dead_rubber_count,
               note: awayDr.adjustment.note,
             },

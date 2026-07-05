@@ -294,6 +294,100 @@ export const adjustEVForPinnacleGap = (inputs: {
 };
 
 // ─────────────────────────────────────────────────────────────
+// App-computed Poisson goals model (deterministic ensemble anchor)
+//
+// Historically ensemble "Signal 1: own model" was Claude's blended estimate,
+// partly informed by the same C8 data that is Signal 2 — so the three-signal
+// check wasn't three independent legs. This model is pure arithmetic from
+// the pipeline's own adjusted attack/defence rates, injected as an
+// APP-POISSON block for Claude to anchor Signal 1 to.
+// ─────────────────────────────────────────────────────────────
+
+export interface AppPoissonModel {
+  lambda_home: number;
+  lambda_away: number;
+  expected_total_goals: number;
+  p_home_win: number;
+  p_draw: number;
+  p_away_win: number;
+  p_over_2_5: number;
+  p_btts: number;
+  inputs: {
+    home_attack_pg: number;
+    away_attack_pg: number;
+    home_conceded_pg: number;
+    away_conceded_pg: number;
+  };
+  note: string;
+}
+
+export function computeAppPoisson(inputs: {
+  home_attack_pg?: number;
+  away_attack_pg?: number;
+  home_conceded_pg?: number;
+  away_conceded_pg?: number;
+}): AppPoissonModel | null {
+  const ha = num(inputs.home_attack_pg);
+  const aa = num(inputs.away_attack_pg);
+  const hc = num(inputs.home_conceded_pg);
+  const ac = num(inputs.away_conceded_pg);
+  if (
+    ha === undefined || aa === undefined || hc === undefined || ac === undefined ||
+    ha < 0 || aa < 0 || hc < 0 || ac < 0
+  ) {
+    return null;
+  }
+  // Expected goals for each side = mean of own attack rate and opponent
+  // concession rate, clamped to a sane football range.
+  const clampL = (x: number) => Math.min(4.5, Math.max(0.2, x));
+  const lh = clampL((ha + ac) / 2);
+  const la = clampL((aa + hc) / 2);
+
+  // Independent Poisson score grid 0..10 per side (mass beyond is negligible
+  // at these lambdas).
+  const pmf = (lambda: number): number[] => {
+    const out: number[] = [Math.exp(-lambda)];
+    for (let k = 1; k <= 10; k++) out.push((out[k - 1] * lambda) / k);
+    return out;
+  };
+  const ph = pmf(lh);
+  const pa = pmf(la);
+  let pHome = 0;
+  let pDraw = 0;
+  let pAway = 0;
+  let pOver25 = 0;
+  for (let h = 0; h <= 10; h++) {
+    for (let a = 0; a <= 10; a++) {
+      const p = ph[h] * pa[a];
+      if (h > a) pHome += p;
+      else if (h === a) pDraw += p;
+      else pAway += p;
+      if (h + a >= 3) pOver25 += p;
+    }
+  }
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  return {
+    lambda_home: r2(lh),
+    lambda_away: r2(la),
+    expected_total_goals: r2(lh + la),
+    p_home_win: r3(pHome),
+    p_draw: r3(pDraw),
+    p_away_win: r3(pAway),
+    p_over_2_5: r3(pOver25),
+    p_btts: r3((1 - ph[0]) * (1 - pa[0])),
+    inputs: {
+      home_attack_pg: ha,
+      away_attack_pg: aa,
+      home_conceded_pg: hc,
+      away_conceded_pg: ac,
+    },
+    note:
+      "APP-COMPUTED independent-Poisson model from recency/dead-rubber-adjusted attack rates and season concession rates. Probabilities are 0-1. Anchor ensemble Signal 1 to expected_total_goals; deviate at most ±0.3 with cited data reasons.",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // 3 — Gap score
 //   gap = ((goals × 8) + (assists × 5)) × opponent_strength_multiplier
 //       + (shots_delta × 7) + (keypasses_delta × 5) + set_piece_weight

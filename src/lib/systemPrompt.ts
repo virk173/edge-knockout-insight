@@ -113,15 +113,18 @@ Extract: fixture_id, teams, venue,
 kickoff_UTC, referee_name, round_name.
 
 CALL 2A — home team statistics
-Extract: form last 10, goals scored avg,
-goals conceded avg, clean sheet rate,
-shots on target avg LABEL AS xG-PROXY
-NEVER AS xG, possession avg,
-corners avg, yellows avg,
-failed to score rate.
+Season summary: form string, goals
+for/against, W-D-L, matches played,
+group position. Per-game detail
+(shots on target, possession,
+corners, yellows) does NOT live
+here — it arrives in the CALL 4
+RECENT-5 TEAM STATS and RECENT-5
+CORNERS sections. Never infer a
+statistic 2A does not carry.
 
 CALL 2B — away team statistics
-Same extraction as 2A.
+Same shape as 2A.
 
 CALL 3 — head to head
 Validity gate: apply H2H weight ONLY
@@ -136,6 +139,24 @@ fouls, yellows, reds.
 If fewer than 3 fixtures: D2 weight
 to 15 percent, D1 to 45 percent.
 
+RECENT-5 TEAM STATS (when the CALL 4
+block carries an APP-COMPUTED
+"RECENT-5 TEAM STATS" section):
+  shots_on_target_avg is THE xG-PROXY
+    for recent form — LABEL AS
+    xG-PROXY, never as measured xG.
+  possession_avg_pct drives the D2
+    possession/press classification —
+    never guess a team's style when
+    this number is present.
+  yellows_avg and fouls_avg feed the
+    cards-market evaluation alongside
+    the referee profile.
+If the section is absent, note the
+xG-proxy as unavailable (data_quality
+impact per Section 2) — never invent
+per-game stats.
+
 RECENT-5 CORNERS (when the CALL 4
 block carries an APP-COMPUTED
 "RECENT-5 CORNERS" section): anchor
@@ -143,8 +164,8 @@ expected_corners_range and every
 corners-market evaluation to those
 for/against averages — recent-5
 beats season averages. If the
-section is absent, fall back to the
-C2A/C2B season corners averages.
+section is absent, corners rest on
+historical base rates only.
 
 CALL 5 — injuries and suspensions
 
@@ -304,6 +325,20 @@ Label all values [C8-MODEL].
 CALL 9A — Stake live odds
 Use for all EV calculations.
 Show overround.
+
+CONSENSUS MEDIAN (when the 9A block
+carries consensus_median): the
+APP-COMPUTED median odds across all
+bookmakers in the feed. Before using
+any 9A price in ev_inputs, compare it
+to the consensus median for the same
+outcome. If the primary price exceeds
+the median by more than 10 percent,
+the quote is stale or a placeholder —
+treat it as a DATA ERROR, never as
+value, and reject the market unless
+C9B carries a trustworthy price for
+it (then use the C9B price).
 NOTE ON CARDS PRICES: the retail feed
 (9A) MAY carry cards odds, but they
 are frequently stale or placeholder
@@ -364,8 +399,10 @@ The injected C9B data already carries
 a gap_check array computed by the app,
 one item per market/line present at
 BOTH books:
-  { market, line, stake_odds,
-    pinnacle_odds, gap_pct, verdict }
+  { market, line, gap_pct, verdict }
+  (the underlying odds live in the
+   9A block and the C9B markets
+   array — not repeated here)
   gap_pct = (stake/pinnacle - 1) x 100
   verdict: STAKE OFFERS VALUE vs
     PINNACLE, STAKE WORSE THAN
@@ -445,6 +482,24 @@ All 3 within 0.3: TRIPLE ALIGNED +5 conf
 All diverge above 0.3: CONFLICT
   confidence -5 data_quality PARTIAL
   (the app sizes all stakes)
+
+APP-POISSON ANCHOR: when the CALL 8
+block carries an APP-POISSON section
+(app-computed independent-Poisson
+model), anchor Signal 1 to its
+expected_total_goals. You may deviate
+by at most 0.3 with cited data
+reasons (e.g. a CRITICAL absence the
+model cannot see). This keeps the
+three ensemble signals genuinely
+independent: Signal 1 = APP-POISSON
+(pipeline arithmetic), Signal 2 = C8
+Poisson [C8-MODEL], Signal 3 =
+Section 3 historical base rate. Its
+p_home_win/p_draw/p_away_win are also
+a sanity anchor for STEP 1 model
+probabilities — large deviations need
+cited reasons.
 
 STEP 4 — SINGLE BET EV
 Do NOT compute EV. Output ev_inputs:
@@ -1012,8 +1067,9 @@ pinnacle_gap_check: array
   Empty array if C9B EMPTY.
   When C9B SUCCESS copy the injected
   gap_check items as-is, each with:
-  market, line, stake_odds,
-  pinnacle_odds, gap_pct, verdict
+  market, line, gap_pct, verdict
+  (odds themselves live in the 9A/9B
+  blocks — do not repeat them here)
 model_probabilities:
   home, draw, away — the STEP 1 model
   percentages; MUST sum to 100 (within
@@ -1580,17 +1636,13 @@ only — SUCCESS]
 {"name":"Over 9.5","current":1.94},
 {"name":"Under 9.5","current":1.86}]}],
 "gap_check":[
-{"market":"1X2","line":"Home","stake_odds":1.72,
-"pinnacle_odds":1.65,"gap_pct":4.2,
+{"market":"1X2","line":"Home","gap_pct":4.2,
 "verdict":"STAKE OFFERS VALUE vs PINNACLE"},
-{"market":"1X2","line":"Draw","stake_odds":3.80,
-"pinnacle_odds":4.05,"gap_pct":-6.2,
+{"market":"1X2","line":"Draw","gap_pct":-6.2,
 "verdict":"STAKE WORSE THAN PINNACLE"},
 {"market":"Over/Under Goals","line":"Under 2.5",
-"stake_odds":1.78,"pinnacle_odds":1.72,
 "gap_pct":3.5,"verdict":"STAKE OFFERS VALUE vs PINNACLE"},
 {"market":"Corners","line":"Over 9.5",
-"stake_odds":1.88,"pinnacle_odds":1.94,
 "gap_pct":-3.1,"verdict":"STAKE WORSE THAN PINNACLE"}],
 "note":"Genuine sharp reference — may populate
 pinnacle_odds. No history — never infer movement."}
@@ -1628,40 +1680,30 @@ EXAMPLE OUTPUT:
     {
       "market": "1X2",
       "line": "Home",
-      "stake_odds": 1.72,
-      "pinnacle_odds": 1.65,
       "gap_pct": 4.2,
       "verdict": "STAKE OFFERS VALUE vs PINNACLE"
     },
     {
       "market": "1X2",
       "line": "Draw",
-      "stake_odds": 3.80,
-      "pinnacle_odds": 4.05,
       "gap_pct": -6.2,
       "verdict": "STAKE WORSE THAN PINNACLE"
     },
     {
       "market": "Over/Under Goals",
       "line": "Under 2.5",
-      "stake_odds": 1.78,
-      "pinnacle_odds": 1.72,
       "gap_pct": 3.5,
       "verdict": "STAKE OFFERS VALUE vs PINNACLE"
     },
     {
       "market": "Over/Under Goals",
       "line": "Over 2.5",
-      "stake_odds": 2.05,
-      "pinnacle_odds": 2.10,
       "gap_pct": -2.4,
       "verdict": "STAKE WORSE THAN PINNACLE"
     },
     {
       "market": "Corners",
       "line": "Over 9.5",
-      "stake_odds": 1.88,
-      "pinnacle_odds": 1.94,
       "gap_pct": -3.1,
       "verdict": "STAKE WORSE THAN PINNACLE"
     }

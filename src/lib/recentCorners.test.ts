@@ -130,3 +130,74 @@ describe("tier 8.2 — CALL 4 block carries the recent-5 corners injection", () 
     expect(out).not.toContain("RECENT-5 CORNERS");
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Recent-5 TEAM STATS from the same /fixtures/statistics responses
+// ─────────────────────────────────────────────────────────────
+import { summariseRecentTeamStats } from "./analyse";
+
+describe("summariseRecentTeamStats", () => {
+  const richStats = (homeId: number, awayId: number) => [
+    {
+      team: { id: homeId, name: `team-${homeId}` },
+      statistics: [
+        { type: "Shots on Goal", value: 6 },
+        { type: "Ball Possession", value: "62%" },
+        { type: "Yellow Cards", value: 2 },
+        { type: "Fouls", value: 11 },
+        { type: "Corner Kicks", value: 7 },
+      ],
+    },
+    {
+      team: { id: awayId, name: `team-${awayId}` },
+      statistics: [
+        { type: "Shots on Goal", value: 3 },
+        { type: "Ball Possession", value: "38%" },
+        { type: "Yellow Cards", value: 3 },
+        { type: "Fouls", value: 15 },
+      ],
+    },
+  ];
+
+  it("averages SOT/possession/yellows/fouls for the team's own fixtures", () => {
+    const s = summariseRecentTeamStats(
+      [
+        { fixtureId: 1, stats: richStats(10, 20) },
+        { fixtureId: 2, stats: richStats(10, 30) },
+      ],
+      10,
+      [1, 2],
+    );
+    expect(s).toEqual({
+      shots_on_target_avg: 6,
+      possession_avg_pct: 62,
+      yellows_avg: 2,
+      fouls_avg: 11,
+      fixtures_counted: 2,
+    });
+    // Possession "%" strings parse; the away perspective reads its own block.
+    const away = summariseRecentTeamStats(
+      [{ fixtureId: 1, stats: richStats(10, 20) }],
+      20,
+      [1],
+    );
+    expect(away?.possession_avg_pct).toBe(38);
+    expect(away?.fouls_avg).toBe(15);
+  });
+
+  it("returns null when the team appears in no fixture; missing stat types stay null", () => {
+    expect(summariseRecentTeamStats([], 10, [1])).toBeNull();
+    const noSot = [
+      {
+        fixtureId: 1,
+        stats: [
+          { team: { id: 10 }, statistics: [{ type: "Corner Kicks", value: 5 }] },
+          { team: { id: 20 }, statistics: [] },
+        ],
+      },
+    ];
+    const s = summariseRecentTeamStats(noSot, 10, [1]);
+    expect(s?.shots_on_target_avg).toBeNull();
+    expect(s?.fixtures_counted).toBe(1);
+  });
+});

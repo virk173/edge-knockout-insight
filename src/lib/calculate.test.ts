@@ -11,6 +11,7 @@ import {
   calculateResults,
   applyDeadRubberDiscount,
   computeConfidence,
+  computeAppPoisson,
 } from "@/lib/calculate";
 import { resolveMarketType, generateStakeLabel } from "@/lib/bettingGlossary";
 
@@ -1213,5 +1214,52 @@ describe("calibration wired into calculateResults", () => {
     };
     const r = calculateResults(raw, { bankroll: 500, lambda: 1 });
     expect(r.bet_1?.model_probability).toBeCloseTo(0.65, 4);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// computeAppPoisson — deterministic ensemble Signal-1 anchor
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+describe("computeAppPoisson", () => {
+  it("computes lambdas, 1X2/O-U/BTTS probabilities from attack + concession rates", () => {
+    const m = computeAppPoisson({
+      home_attack_pg: 2.0,
+      away_attack_pg: 1.0,
+      home_conceded_pg: 1.0,
+      away_conceded_pg: 1.0,
+    });
+    expect(m).not.toBeNull();
+    if (!m) return;
+    expect(m.lambda_home).toBe(1.5);
+    expect(m.lambda_away).toBe(1.0);
+    expect(m.expected_total_goals).toBe(2.5);
+    // Probabilities are a proper distribution and favour the stronger side.
+    expect(m.p_home_win + m.p_draw + m.p_away_win).toBeCloseTo(1, 2);
+    expect(m.p_home_win).toBeGreaterThan(m.p_away_win);
+    // BTTS = (1 − e^−1.5)(1 − e^−1) ≈ 0.491
+    expect(m.p_btts).toBeCloseTo(0.491, 2);
+  });
+
+  it("clamps lambdas to a sane football range", () => {
+    const m = computeAppPoisson({
+      home_attack_pg: 9,
+      away_attack_pg: 0,
+      home_conceded_pg: 0,
+      away_conceded_pg: 9,
+    });
+    expect(m?.lambda_home).toBe(4.5);
+    expect(m?.lambda_away).toBe(0.2);
+  });
+
+  it("returns null on missing or negative inputs — never a guessed model", () => {
+    expect(computeAppPoisson({ home_attack_pg: 2 })).toBeNull();
+    expect(
+      computeAppPoisson({
+        home_attack_pg: -1,
+        away_attack_pg: 1,
+        home_conceded_pg: 1,
+        away_conceded_pg: 1,
+      }),
+    ).toBeNull();
   });
 });
