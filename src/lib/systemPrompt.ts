@@ -835,22 +835,41 @@ CLASS B — COMPETITIVE
 
 CLASS C — JACKPOT max 1 per day
   Must be CLASS B AND 3+ of:
-    Referee strictness 50+
+    Referee yellows_avg 4.3+ in the
+      C7 profile. Judge on the raw
+      cards average, NEVER on
+      strictness_score/label — the
+      score is dominated by whether
+      fouls data happens to be
+      present (fouls×2 adds ~45 on
+      its own), so it does not
+      separate strict referees.
     Both teams form within 1 win last 5
-    H2H 60pct+ meetings had 3+ goals
+    Both teams' last-5 average 3.0+
+      total goals per game (goals
+      for + against from the C4A/C4B
+      scorelines)
     Both teams have attacking absences
     High press vs press confirmed
     Stake beats Pinnacle on a goals
       market — positive gap_pct in the
       C9B gap check
   If none qualify: all CLASS B.
-  Never force.
+  Never force. But when 3+ signals
+  ARE confirmed, classify JACKPOT
+  and price bet_4 — do not skip a
+  qualifying match out of caution;
+  the app re-verifies every leg and
+  withholds anything unpriceable.
 
 Note: the Pinnacle gap-check signal
 is one of six CLASS C signals.
 If C9B EMPTY: evaluate remaining
 five signals. Still possible to
 qualify CLASS C without C9B.
+H2H is NOT a CLASS C signal:
+national teams meet too rarely for
+the H2H sample to gate a jackpot.
 
 ════════════════════════════════════════
 SECTION 7 — BET ARCHITECTURE
@@ -988,6 +1007,33 @@ BET 4 — JACKPOT ACCUMULATOR
 (Accumulator / Parlay)
 CLASS C matches only.
 4-5 legs. Target odds 8.0-15.0.
+Prefer 4 legs: bookmaker margin
+compounds with every leg added, so
+a 5th leg needs clear standalone
+value to earn its place.
+Build each leg FROM a confirmed
+CLASS C signal so the legs are
+positively correlated (correlated
+legs the book prices as independent
+are where accumulator value lives;
+the leg-product p_final the app
+computes then UNDERSTATES the true
+joint probability — conservative):
+  strict referee →
+    Total Cards Over
+  high-scoring form →
+    Total Goals Over 2.5 or
+    Both Teams to Score Yes
+  press vs press →
+    Total Corners Over
+  attacking absences →
+    opposing Team Total Over
+  C9B positive goals gap →
+    that exact goals market
+Every leg must be positive EV on
+its own after devig — the app
+recomputes per-leg EV and refuses
+real money if any leg fails.
 Never force. Never CLASS A.
 EVERY leg must carry its own odds
 and model_probability — the app
@@ -996,6 +1042,10 @@ from the leg products and withholds
 the bet if any leg lacks them.
 Output jackpot_ev_inputs:
   { p_final, combined_odds }
+class_c_signals: name every
+  confirmed signal with its call
+  citation, e.g.
+  "Referee yellows_avg 4.8 [C7]".
 Do not output a stake.
 stake: "SIZED BY APP"
 
@@ -1909,7 +1959,7 @@ EXAMPLE OUTPUT:
   },
   "bet_4": {
     "active": false,
-    "skip_reason": "CLASS C not achieved — only 2 of 3 required signals confirmed. Referee strictness confirmed. Both teams form within 1 win confirmed. H2H goals signal insufficient — only 2.33 goals per H2H game, below 3.0 threshold.",
+    "skip_reason": "CLASS C not achieved — only 2 of 3 required signals confirmed. Referee cards signal confirmed (4.6 yellows/game). Both teams form within 1 win confirmed. Last-5 goals signal insufficient — France's last 5 average 2.2 total goals per game, below the 3.0 threshold (consistent with the Under 2.5 lean).",
     "bet_type": "Jackpot Accumulator (4-5 Leg Parlay)",
     "stake": "SIZED BY APP",
     "legs": [],
@@ -1919,7 +1969,7 @@ EXAMPLE OUTPUT:
       "combined_odds": 0
     },
     "class_c_signals": [
-      "Referee strictness 89.95 [C7]",
+      "Referee yellows_avg 4.6 [C7]",
       "Both teams form within 1 win last 5 [C2A C2B]"
     ],
     "returns": {
@@ -2007,4 +2057,86 @@ EXAMPLE OUTPUT:
     "ev_realised": "PENDING",
     "notes": "Pinnacle available (current prices only — no movement data). ev/confidence are null per rule 28; the app recomputes and rebuilds this log from enriched values. App sizes all stakes from the live bankroll."
   }
-}`;
+}
+
+════════════════════════════════════════
+BET 4 — ACTIVE REFERENCE SHAPE
+════════════════════════════════════════
+
+The example above skipped bet_4. When
+a match DOES confirm 3+ CLASS C
+signals, classify JACKPOT and output
+bet_4 in this shape (different match;
+values illustrative — every leg maps
+to a confirmed signal, carries its own
+odds AND model_probability, and is
+positive EV alone; the app recomputes
+p_final = product of leg probabilities
+and combined_odds = product of leg
+odds, then EV = p_final × odds − 1):
+
+"bet_4": {
+  "active": true,
+  "skip_reason": null,
+  "bet_type": "Jackpot Accumulator (4-5 Leg Parlay)",
+  "stake": "SIZED BY APP",
+  "class_c_signals": [
+    "Referee yellows_avg 4.8 [C7]",
+    "Both teams form within 1 win last 5 [C2A C2B]",
+    "Both teams last-5 average 3.2 and 3.4 total goals per game [C4A C4B]",
+    "High press vs press confirmed [C2A C2B]"
+  ],
+  "legs": [
+    {
+      "leg_number": 1,
+      "market": "Total Goals Over/Under",
+      "selection": "Over 2.5 Goals",
+      "odds": 1.85,
+      "model_probability": 0.58,
+      "stake_label": "Navigate: Soccer → Colombia vs Nigeria → Goal Totals\nSelect: Over 2.5\n90 minutes only — excludes ET"
+    },
+    {
+      "leg_number": 2,
+      "market": "Both Teams to Score",
+      "selection": "BTTS Yes",
+      "odds": 1.80,
+      "model_probability": 0.60,
+      "stake_label": "Navigate: Soccer → Colombia vs Nigeria → Both Teams to Score\nSelect: Yes\n90 minutes only — excludes ET"
+    },
+    {
+      "leg_number": 3,
+      "market": "Total Cards Over/Under",
+      "selection": "Over 4.5 Cards",
+      "odds": 1.75,
+      "model_probability": 0.62,
+      "stake_label": "Navigate: Soccer → Colombia vs Nigeria → Cards\nSelect: Over 4.5 Cards\n90 minutes only — excludes ET\nNote: yellow=1 red=2 on Stake"
+    },
+    {
+      "leg_number": 4,
+      "market": "Total Corners Over/Under",
+      "selection": "Over 9.5 Corners",
+      "odds": 1.70,
+      "model_probability": 0.63,
+      "stake_label": "Navigate: Soccer → Colombia vs Nigeria → Corners\nSelect: Over 9.5 Corners\n90 minutes only — excludes ET"
+    }
+  ],
+  "combined_odds": 9.91,
+  "jackpot_ev_inputs": {
+    "p_final": 0.136,
+    "combined_odds": 9.91
+  },
+  "returns": {
+    "potential_return_raw": "APP-COMPUTED",
+    "potential_return_realistic": "APP-COMPUTED"
+  }
+}
+
+Leg discipline in this shape: cards
+leg ← strict-referee signal, goals +
+BTTS legs ← high-scoring-form signal,
+corners leg ← press-vs-press signal.
+Per-leg EVs here are +0.07, +0.08,
++0.09, +0.07 — each leg stands alone;
+the correlation between them is free
+upside the accumulator price does not
+charge for.`;

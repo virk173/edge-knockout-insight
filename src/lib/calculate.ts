@@ -1533,6 +1533,29 @@ export function calculateResults(
     if (ev !== undefined) b4.jackpot_ev = ev;
   }
 
+  // Stake-anchoring bias correction for any jackpot leg with a Pinnacle
+  // reference — identical to the bet_3 per-leg pass above. This is also what
+  // feeds qualifyJackpot's every-leg-positive-EV gate.
+  if (Array.isArray(b4?.legs)) {
+    for (const leg of b4.legs) {
+      const legOdds = num(leg.odds);
+      const legProb = num(leg.model_probability);
+      if (legOdds === undefined || legProb === undefined) continue;
+      const legRawEv = computeEv(legProb, legOdds);
+      if (legRawEv === undefined) continue;
+      const legPinnacle = num(leg.pinnacle_odds) ?? null;
+      const legAdjustment = adjustEVForPinnacleGap({
+        raw_ev: legRawEv,
+        stake_odds: legOdds,
+        pinnacle_odds: legPinnacle,
+      });
+      leg.raw_ev = legRawEv;
+      leg.ev = legAdjustment.adjusted_ev;
+      leg.ev_confidence = legAdjustment.ev_confidence;
+      leg.pinnacle_check_note = legAdjustment.note;
+    }
+  }
+
   // Auto-generate verified Stake stake_labels for each jackpot leg.
   if (Array.isArray(b4?.legs)) {
     for (const leg of b4.legs) applyStakeLabel(leg);
@@ -2268,6 +2291,15 @@ function qualifyJackpot(
   const isJackpotClass = cls.includes("JACKPOT") || cls.includes("CLASS C");
   if (!isJackpotClass) {
     return "Not a JACKPOT / CLASS C classification";
+  }
+  // Same per-leg discipline as bet_3: every jackpot leg must carry a
+  // non-negative app-computed EV or the bet rides paper only.
+  const legs = bet.legs ?? [];
+  const allLegsPositive = legs.every(
+    (l: { ev?: number }) => l.ev !== undefined && (l.ev as number) >= 0,
+  );
+  if (!legs.length || !allLegsPositive) {
+    return "A jackpot leg has missing/negative EV";
   }
   return null;
 }

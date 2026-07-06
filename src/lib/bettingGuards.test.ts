@@ -1039,3 +1039,66 @@ describe("consensus stale-quote guard — app-enforced >10% rule", () => {
     ).toBe(false);
   });
 });
+
+// Jackpot-logic rework 2026-07-05: bet_4 legs get the same app-computed
+// per-leg EV as bet_3 legs, and qualifyJackpot refuses real money when any
+// leg is missing/negative EV — mirroring the bet_3 leg gate.
+describe("jackpot per-leg EV and the every-leg-positive real-money gate", () => {
+  const jackpot = (probs: number[], oddsArr: number[]) => ({
+    match: "A vs B",
+    classification: "JACKPOT",
+    data_quality: "FULL",
+    lineup_dependency: { level: "LOW" },
+    bet_4: {
+      active: true,
+      legs: probs.map((p, i) => ({
+        leg_number: i + 1,
+        market: "Total Goals Over/Under",
+        selection: `Leg ${i + 1}`,
+        odds: oddsArr[i],
+        model_probability: p,
+      })),
+      jackpot_ev_inputs: {
+        p_final: probs.reduce((a, b) => a * b, 1),
+        combined_odds: oddsArr.reduce((a, b) => a * b, 1),
+      },
+    },
+  });
+
+  it("computes per-leg EV for every jackpot leg (no Pinnacle → raw EV, MEDIUM confidence)", () => {
+    const out = calculateResults(jackpot([0.6, 0.6, 0.6, 0.6], [1.9, 1.9, 1.9, 1.9]), {
+      bankroll: 500,
+    });
+    for (const leg of out.bet_4?.legs ?? []) {
+      expect(leg.ev).toBeCloseTo(0.6 * 1.9 - 1, 3);
+      expect(leg.ev_confidence).toBe("MEDIUM");
+    }
+  });
+
+  it("a qualifying CLASS C jackpot with all-positive legs rides real money", () => {
+    const out = calculateResults(jackpot([0.6, 0.6, 0.6, 0.6], [1.9, 1.9, 1.9, 1.9]), {
+      bankroll: 500,
+    });
+    expect(out.bet_4?.active).toBe(true);
+    expect(out.bet_4?.paper_bet).not.toBe(true);
+    expect(out.bet_4?.paper_reason).toBeUndefined();
+  });
+
+  it("one negative-EV leg forces the jackpot to paper even when total EV clears the gate", () => {
+    // Leg 4: 0.6 × 1.5 − 1 = −0.10; total EV 0.1296 × 10.29 − 1 ≈ +0.33.
+    const out = calculateResults(jackpot([0.6, 0.6, 0.6, 0.6], [1.9, 1.9, 1.9, 1.5]), {
+      bankroll: 500,
+    });
+    expect(out.bet_4?.active).toBe(true);
+    expect(out.bet_4?.jackpot_ev).toBeGreaterThan(0.05);
+    expect(out.bet_4?.paper_bet).toBe(true);
+    expect(out.bet_4?.paper_reason).toContain("jackpot leg");
+  });
+
+  it("a COMPETITIVE (non-CLASS-C) classification still paper-trades the jackpot", () => {
+    const base = jackpot([0.6, 0.6, 0.6, 0.6], [1.9, 1.9, 1.9, 1.9]);
+    const out = calculateResults({ ...base, classification: "COMPETITIVE" }, { bankroll: 500 });
+    expect(out.bet_4?.paper_bet).toBe(true);
+    expect(out.bet_4?.paper_reason).toContain("CLASS C");
+  });
+});
